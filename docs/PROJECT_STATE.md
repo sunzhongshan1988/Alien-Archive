@@ -229,6 +229,24 @@ assets/images/startup/startup_background.png
 
 游戏内角色、物体、tile 等像素素材仍放在 `assets/sprites`；地图数据放在 `assets/data/maps`。
 
+俯视角玩家素材路径：
+
+```txt
+assets/sprites/player/topdown/
+```
+
+当前占位文件：
+
+```txt
+idle_down.png
+walk_down.png
+walk_left.png
+walk_right.png
+walk_up.png
+```
+
+当前占位尺寸为 64x64 透明 PNG。后续可以替换成同名 sprite sheet，例如 `walk_down.png = 8 帧 * 64x64`。
+
 UI 字体优先文件名：
 
 ```txt

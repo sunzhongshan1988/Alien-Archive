@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/runtime", "crates/game"]
+members = ["crates/runtime", "crates/game", "tools/sprite_sheet_compactor"]
 resolver = "3"
 
 [workspace.package]

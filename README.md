@@ -54,6 +54,13 @@ assets/
   images/
     startup/ # startup/title background images
   sprites/
+    player/
+      topdown/
+        idle_down.png
+        walk_down.png
+        walk_left.png
+        walk_right.png
+        walk_up.png
   maps/
   audio/
   data/
@@ -63,6 +70,25 @@ assets/
 
 tools/        # future local web map editor
 ```
+
+Tools:
+
+- Compact oversized AI sprite sheets:
+
+```powershell
+cargo run -p sprite_sheet_compactor -- `
+  --input d:\Downloads\raw_sheet.png `
+  --output assets\sprites\player\topdown\walk_down_compact.png `
+  --frames 4 `
+  --input-columns 4 `
+  --padding 8 `
+  --cell-size 64x64
+```
+
+The tool trims each frame separately, clears detected transparent or edge-connected
+white checkerboard background, then repacks frames into uniform bottom-center
+aligned cells. Omit `--cell-size` to keep the compact natural size; use
+`--filter lanczos3` if a downscaled AI sheet looks too jagged.
 
 More project memory:
 
