@@ -22,4 +22,8 @@ impl Camera2d {
             ..Self::default()
         }
     }
+
+    pub fn follow_with_zoom(position: Vec2, zoom: f32) -> Self {
+        Self { position, zoom }
+    }
 }

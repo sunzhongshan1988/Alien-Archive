@@ -10,6 +10,7 @@ use super::{GameContext, RenderContext, Scene, SceneId};
 
 const OVERWORLD_MAP: &str = "assets/data/maps/overworld_landing_site.ron";
 const FACILITY_ENTRY_SPAWN: &str = "entry";
+const OVERWORLD_CAMERA_ZOOM: f32 = 2.0;
 
 pub struct OverworldScene {
     player: Player,
@@ -23,7 +24,7 @@ impl OverworldScene {
         let player = Player::new(world.player_spawn());
 
         Ok(Self {
-            camera: Camera2d::follow(player.position),
+            camera: Camera2d::follow_with_zoom(player.position, OVERWORLD_CAMERA_ZOOM),
             player,
             world,
         })
