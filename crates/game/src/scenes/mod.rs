@@ -1,12 +1,14 @@
-mod game_scene;
+mod facility_scene;
 mod main_menu;
+mod overworld_scene;
 mod pause_scene;
 
 use anyhow::Result;
 use runtime::{Camera2d, InputState, Renderer, SceneCommand};
 
-use game_scene::GameScene;
+use facility_scene::FacilityScene;
 use main_menu::MainMenuScene;
+use overworld_scene::OverworldScene;
 use pause_scene::PauseScene;
 
 #[allow(dead_code)]
@@ -14,7 +16,8 @@ use pause_scene::PauseScene;
 pub enum SceneId {
     Boot,
     MainMenu,
-    Game,
+    Overworld,
+    Facility,
     Codex,
     Pause,
 }
@@ -22,6 +25,8 @@ pub enum SceneId {
 #[derive(Default)]
 pub struct GameContext {
     pub should_quit: bool,
+    pub overworld_spawn_id: Option<String>,
+    pub facility_spawn_id: Option<String>,
 }
 
 pub struct RenderContext<'a> {
@@ -125,10 +130,12 @@ impl SceneStack {
             SceneCommand::None => {}
             SceneCommand::Switch(scene_id) => {
                 self.stack.clear();
-                self.stack.push(ManagedScene::new(create_scene(scene_id)?));
+                self.stack
+                    .push(ManagedScene::new(create_scene(scene_id, ctx)?));
             }
             SceneCommand::Push(scene_id) => {
-                self.stack.push(ManagedScene::new(create_scene(scene_id)?));
+                self.stack
+                    .push(ManagedScene::new(create_scene(scene_id, ctx)?));
             }
             SceneCommand::Pop => {
                 self.stack.pop();
@@ -145,10 +152,15 @@ impl SceneStack {
     }
 }
 
-fn create_scene(scene_id: SceneId) -> Result<Box<dyn Scene>> {
+fn create_scene(scene_id: SceneId, ctx: &GameContext) -> Result<Box<dyn Scene>> {
     match scene_id {
         SceneId::Boot | SceneId::MainMenu => Ok(Box::new(MainMenuScene::new())),
-        SceneId::Game => Ok(Box::new(GameScene::new()?)),
+        SceneId::Overworld => Ok(Box::new(OverworldScene::new(
+            ctx.overworld_spawn_id.as_deref(),
+        )?)),
+        SceneId::Facility => Ok(Box::new(FacilityScene::new(
+            ctx.facility_spawn_id.as_deref(),
+        )?)),
         SceneId::Pause | SceneId::Codex => Ok(Box::new(PauseScene::new())),
     }
 }

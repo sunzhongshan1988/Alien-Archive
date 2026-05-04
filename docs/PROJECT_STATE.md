@@ -39,7 +39,10 @@
 - 扩展 `Renderer`，支持加载和绘制 PNG 图片。
 - 添加启动界面，读取 `assets/images/startup/startup_background.png`。
 - 添加基础 Scene 系统和 `SceneCommand`：`Switch` / `Push` / `Pop` / `Quit`。
-- 当前场景流：`MainMenuScene -> GameScene`，并有最小 `PauseScene`。
+- 当前场景流：`MainMenuScene -> OverworldScene -> FacilityScene`，并有最小 `PauseScene`。
+- `OverworldScene` 是俯视角 2D，使用四方向移动。
+- `FacilityScene` 是侧视横版 2D，当前已有左右移动、重力和跳跃。
+- 俯视地图里的 `FacilityEntrance` 实体按 `E` 进入设施；设施里的 `FacilityExit` 实体按 `E` 返回俯视地图。
 - 主菜单已收敛为当前阶段需要的两个选项：开始游戏、退出。
 - 主菜单支持键盘选择、鼠标悬停选择和左键确认。
 - 菜单文字会预渲染为纹理，优先使用 `assets/fonts/ui.ttf`，再自动查找 `assets/fonts` 下的 `SourceHan*.ttf` / `Noto*.ttf`，最后才使用系统中文字体。
@@ -147,6 +150,8 @@ Alien-Archive/
     data/
       maps/
         demo.ron
+        overworld.ron
+        facility_ruin_01.ron
 
   tools/
 ```
@@ -175,6 +180,13 @@ assets/data/maps/demo.ron
 - `Decoration`
 
 `id` 和 `codex_id` 已经预留，之后扫描和图鉴系统会用到。
+
+当前新增实体类型：
+
+- `FacilityEntrance`
+- `FacilityExit`
+
+它们用于 `OverworldScene` 和 `FacilityScene` 之间的固定切换。
 
 ## 下一步建议
 

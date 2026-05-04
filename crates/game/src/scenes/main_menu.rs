@@ -54,7 +54,7 @@ impl MainMenuScene {
 
     fn confirm_selection(&self) -> SceneCommand<SceneId> {
         match MENU_ITEMS[self.selected_index].1 {
-            MenuAction::StartGame => SceneCommand::Switch(SceneId::Game),
+            MenuAction::StartGame => SceneCommand::Switch(SceneId::Overworld),
             MenuAction::Quit => SceneCommand::Quit,
         }
     }

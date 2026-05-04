@@ -9,7 +9,8 @@ Current milestone:
 - renders rectangles through a small renderer abstraction
 - loads and renders PNG images through the renderer
 - shows `assets/images/startup/startup_background.png` as the startup screen
-- has a basic scene stack: `MainMenuScene -> GameScene`, plus a minimal `PauseScene`
+- has a basic scene stack: `MainMenuScene -> OverworldScene -> FacilityScene`, plus a minimal `PauseScene`
+- switches from the top-down overworld into a side-view facility through map entities
 - draws a focused Start/Quit main menu over the background image
 - moves the player rectangle with keyboard input
 - loads a custom RON map from `assets/data/maps/demo.ron`
@@ -36,7 +37,8 @@ Font:
 Controls:
 
 - Main menu: `WASD` / arrow keys / mouse hover to select, `Enter` / `Space` / left click to confirm
-- In game: `WASD` or arrow keys to move
+- Overworld: `WASD` or arrow keys for four-direction movement, `E` near the purple entrance to enter the facility
+- Facility: `A/D` or left/right to move, `W` or `Space` to jump, `E` near the yellow exit to return
 - `Esc` in game: pause
 - `Esc` in the main menu: quit
 
@@ -56,6 +58,8 @@ assets/
   audio/
   data/
     maps/     # custom Alien Archive map files
+      overworld.ron
+      facility_ruin_01.ron
 
 tools/        # future local web map editor
 ```

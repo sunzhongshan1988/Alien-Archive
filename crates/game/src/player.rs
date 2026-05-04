@@ -16,12 +16,17 @@ impl Player {
         self.position += input.movement() * PLAYER_SPEED * dt;
     }
 
-    pub fn draw(&self, renderer: &mut dyn Renderer) {
-        let origin = Vec2::new(
-            self.position.x - PLAYER_SIZE.x * 0.5,
-            self.position.y - PLAYER_SIZE.y * 0.5,
-        );
+    pub fn rect(&self) -> Rect {
+        Rect::new(
+            Vec2::new(
+                self.position.x - PLAYER_SIZE.x * 0.5,
+                self.position.y - PLAYER_SIZE.y * 0.5,
+            ),
+            PLAYER_SIZE,
+        )
+    }
 
-        renderer.draw_rect(Rect::new(origin, PLAYER_SIZE), Color::rgb(0.40, 0.92, 1.00));
+    pub fn draw(&self, renderer: &mut dyn Renderer) {
+        renderer.draw_rect(self.rect(), Color::rgb(0.40, 0.92, 1.00));
     }
 }

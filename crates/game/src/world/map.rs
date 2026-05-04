@@ -1,4 +1,8 @@
-use std::{collections::HashMap, fs, path::Path};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result, bail};
 use runtime::{Color, Rect, Renderer, Vec2};
@@ -12,8 +16,8 @@ pub struct Map {
 
 impl Map {
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
-        let path = path.as_ref();
-        let source = fs::read_to_string(path)
+        let path = resolve_asset_path(path.as_ref());
+        let source = fs::read_to_string(&path)
             .with_context(|| format!("failed to read map file {}", path.display()))?;
         let file: MapFile = ron::from_str(&source)
             .with_context(|| format!("failed to parse map file {}", path.display()))?;
@@ -23,6 +27,10 @@ impl Map {
 
     pub fn entities(&self) -> &[MapEntity] {
         &self.entities
+    }
+
+    pub fn entity_by_id(&self, id: &str) -> Option<&MapEntity> {
+        self.entities.iter().find(|entity| entity.id == id)
     }
 
     pub fn draw(&self, renderer: &mut dyn Renderer) {
@@ -133,6 +141,8 @@ pub struct MapEntity {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 pub enum MapEntityKind {
     PlayerSpawn,
+    FacilityEntrance,
+    FacilityExit,
     ScanTarget,
     Door,
     Decoration,
@@ -175,4 +185,14 @@ fn grid_to_world(origin: Vec2, tile_size: f32, column: usize, row: usize) -> Vec
 
 fn color_from(color: [f32; 4]) -> Color {
     Color::rgba(color[0], color[1], color[2], color[3])
+}
+
+fn resolve_asset_path(path: &Path) -> PathBuf {
+    if path.exists() {
+        return path.to_path_buf();
+    }
+
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(path)
 }
