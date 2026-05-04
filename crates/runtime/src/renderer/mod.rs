@@ -15,4 +15,5 @@ pub trait Renderer {
     fn screen_size(&self) -> Vec2;
     fn draw_rect(&mut self, rect: Rect, color: Color);
     fn draw_image(&mut self, texture_id: &str, rect: Rect, tint: Color);
+    fn draw_image_region(&mut self, texture_id: &str, rect: Rect, source: Rect, tint: Color);
 }

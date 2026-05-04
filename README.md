@@ -12,8 +12,9 @@ Current milestone:
 - has a basic scene stack: `MainMenuScene -> OverworldScene -> FacilityScene`, plus a minimal `PauseScene`
 - switches from the top-down overworld into a side-view facility through map entities
 - draws a focused Start/Quit main menu over the background image
-- moves the player rectangle with keyboard input
-- loads a custom RON map from `assets/data/maps/demo.ron`
+- loads the top-down idle player sprite sheet and draws the current frame in game
+- moves the player with keyboard input
+- loads custom RON maps from `assets/data/maps/overworld.ron` and `assets/data/maps/facility_ruin_01.ron`
 
 Map strategy:
 
@@ -70,6 +71,12 @@ assets/
 
 tools/        # future local web map editor
 ```
+
+Player sprite sheet convention:
+
+- `assets/sprites/player/topdown/{idle_down,walk_down,walk_left,walk_right,walk_up}.png` are real `512x128` sheets
+- The runtime treats each sheet as 4 horizontal frames, each `128x128`
+- The top-down player renderer selects `walk_*` by movement direction and draws one source frame instead of stretching the full sheet
 
 Tools:
 

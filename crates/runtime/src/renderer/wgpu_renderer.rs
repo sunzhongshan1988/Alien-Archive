@@ -135,6 +135,7 @@ struct RectCommand {
 struct ImageCommand {
     texture_id: String,
     rect: Rect,
+    source: Option<Rect>,
     tint: Color,
 }
 
@@ -451,7 +452,11 @@ impl WgpuRenderer {
                         continue;
                     }
 
-                    let vertices = self.build_image_vertices(command);
+                    let Some(texture) = self.textures.get(&command.texture_id) else {
+                        continue;
+                    };
+
+                    let vertices = self.build_image_vertices(command, texture.size);
                     prepared.push(PreparedCommand::Image {
                         texture_id: command.texture_id.clone(),
                         buffer: self.create_vertex_buffer("Image Vertex Buffer", &vertices),
@@ -518,7 +523,7 @@ impl WgpuRenderer {
         ]
     }
 
-    fn build_image_vertices(&self, command: &ImageCommand) -> [ImageVertex; 6] {
+    fn build_image_vertices(&self, command: &ImageCommand, texture_size: Vec2) -> [ImageVertex; 6] {
         let rect = command.rect;
         let tint = [
             command.tint.r,
@@ -526,6 +531,13 @@ impl WgpuRenderer {
             command.tint.b,
             command.tint.a,
         ];
+        let source = command
+            .source
+            .unwrap_or_else(|| Rect::new(Vec2::ZERO, texture_size));
+        let uv_left = source.origin.x / texture_size.x;
+        let uv_top = source.origin.y / texture_size.y;
+        let uv_right = source.right() / texture_size.x;
+        let uv_bottom = source.bottom() / texture_size.y;
 
         let top_left = self.world_to_clip(rect.origin);
         let top_right = self.world_to_clip(Vec2::new(rect.right(), rect.origin.y));
@@ -535,32 +547,32 @@ impl WgpuRenderer {
         [
             ImageVertex {
                 position: top_left,
-                uv: [0.0, 0.0],
+                uv: [uv_left, uv_top],
                 tint,
             },
             ImageVertex {
                 position: bottom_left,
-                uv: [0.0, 1.0],
+                uv: [uv_left, uv_bottom],
                 tint,
             },
             ImageVertex {
                 position: bottom_right,
-                uv: [1.0, 1.0],
+                uv: [uv_right, uv_bottom],
                 tint,
             },
             ImageVertex {
                 position: top_left,
-                uv: [0.0, 0.0],
+                uv: [uv_left, uv_top],
                 tint,
             },
             ImageVertex {
                 position: bottom_right,
-                uv: [1.0, 1.0],
+                uv: [uv_right, uv_bottom],
                 tint,
             },
             ImageVertex {
                 position: top_right,
-                uv: [1.0, 0.0],
+                uv: [uv_right, uv_top],
                 tint,
             },
         ]
@@ -692,6 +704,16 @@ impl Renderer for WgpuRenderer {
         self.commands.push(RenderCommand::Image(ImageCommand {
             texture_id: texture_id.to_owned(),
             rect,
+            source: None,
+            tint,
+        }));
+    }
+
+    fn draw_image_region(&mut self, texture_id: &str, rect: Rect, source: Rect, tint: Color) {
+        self.commands.push(RenderCommand::Image(ImageCommand {
+            texture_id: texture_id.to_owned(),
+            rect,
+            source: Some(source),
             tint,
         }));
     }

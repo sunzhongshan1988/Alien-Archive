@@ -50,6 +50,49 @@ fn main() -> Result<()> {
 
     let slot_width = source.width() / input_columns;
     let slot_height = source.height() / input_rows;
+    let output_columns = config.output_columns.unwrap_or(input_columns);
+    if output_columns == 0 {
+        bail!("output columns must be greater than zero");
+    }
+
+    if config.preserve_canvas {
+        if config.output_cell_size.is_some() {
+            bail!("--preserve-canvas cannot be combined with --cell-size or --frame-size");
+        }
+
+        let output = clean_sheet_preserving_canvas(
+            &source,
+            input_columns,
+            output_columns,
+            slot_width,
+            slot_height,
+            has_alpha,
+            &config,
+        );
+        save_output(&output, &config.output)?;
+
+        println!(
+            "input: {}x{}; slot: {}x{}; frames: {}",
+            source.width(),
+            source.height(),
+            slot_width,
+            slot_height,
+            config.frames
+        );
+        println!(
+            "preserved canvas; output cell: {}x{}",
+            slot_width, slot_height
+        );
+        println!(
+            "output: {}x{}; saved: {}",
+            output.width(),
+            output.height(),
+            config.output.display()
+        );
+
+        return Ok(());
+    }
+
     let mut frames = Vec::new();
 
     for frame_index in 0..config.frames {
@@ -77,10 +120,6 @@ fn main() -> Result<()> {
         .max()
         .unwrap_or(1);
 
-    let output_columns = config.output_columns.unwrap_or(input_columns);
-    if output_columns == 0 {
-        bail!("output columns must be greater than zero");
-    }
     let output_rows = div_ceil(config.frames, output_columns);
     let auto_cell_width = max_frame_width + config.padding * 2;
     let auto_cell_height = max_frame_height + config.padding * 2;
@@ -131,16 +170,7 @@ fn main() -> Result<()> {
         imageops::overlay(&mut output, &frame_image, x.into(), y.into());
     }
 
-    if let Some(parent) = config.output.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {}", parent.display()))?;
-        }
-    }
-
-    output
-        .save(&config.output)
-        .with_context(|| format!("failed to save {}", config.output.display()))?;
+    save_output(&output, &config.output)?;
 
     println!(
         "input: {}x{}; slot: {}x{}; frames: {}",
@@ -188,6 +218,7 @@ struct Config {
     output_cell_size: Option<Size>,
     padding: u32,
     filter: ResizeFilter,
+    preserve_canvas: bool,
     background_mode: BackgroundMode,
     alpha_threshold: u8,
     white_threshold: u8,
@@ -207,6 +238,7 @@ impl Config {
             output_cell_size: None,
             padding: 4,
             filter: ResizeFilter::Nearest,
+            preserve_canvas: false,
             background_mode: BackgroundMode::Auto,
             alpha_threshold: 8,
             white_threshold: 225,
@@ -257,6 +289,7 @@ impl Config {
                 "--alpha-threshold" => config.alpha_threshold = next_u8(&mut args, &arg)?,
                 "--white-threshold" => config.white_threshold = next_u8(&mut args, &arg)?,
                 "--white-chroma" => config.white_chroma = next_u8(&mut args, &arg)?,
+                "--preserve-canvas" => config.preserve_canvas = true,
                 "--keep-background" => config.keep_background = true,
                 value => bail!("unknown argument: {value}"),
             }
@@ -331,9 +364,98 @@ fn resize_frame(frame: &ExtractedFrame, scale: f32, filter: ResizeFilter) -> Rgb
     imageops::resize(&frame.image, width, height, filter.filter_type())
 }
 
+fn save_output(output: &RgbaImage, path: &PathBuf) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
+    }
+
+    output
+        .save(path)
+        .with_context(|| format!("failed to save {}", path.display()))
+}
+
 struct ExtractedFrame {
     image: RgbaImage,
     bounds: Option<Rect>,
+}
+
+fn clean_sheet_preserving_canvas(
+    source: &RgbaImage,
+    input_columns: u32,
+    output_columns: u32,
+    slot_width: u32,
+    slot_height: u32,
+    has_alpha: bool,
+    config: &Config,
+) -> RgbaImage {
+    let output_rows = div_ceil(config.frames, output_columns);
+    let mut output = RgbaImage::from_pixel(
+        slot_width * output_columns,
+        slot_height * output_rows,
+        Rgba([0, 0, 0, 0]),
+    );
+
+    for frame_index in 0..config.frames {
+        let source_column = frame_index % input_columns;
+        let source_row = frame_index / input_columns;
+        let output_column = frame_index % output_columns;
+        let output_row = frame_index / output_columns;
+        let cleaned = clean_slot_preserving_canvas(
+            source,
+            source_column * slot_width,
+            source_row * slot_height,
+            slot_width,
+            slot_height,
+            has_alpha,
+            config,
+        );
+
+        imageops::overlay(
+            &mut output,
+            &cleaned,
+            (output_column * slot_width).into(),
+            (output_row * slot_height).into(),
+        );
+    }
+
+    output
+}
+
+fn clean_slot_preserving_canvas(
+    source: &RgbaImage,
+    slot_x: u32,
+    slot_y: u32,
+    slot_width: u32,
+    slot_height: u32,
+    has_alpha: bool,
+    config: &Config,
+) -> RgbaImage {
+    let background = build_background_mask(
+        source,
+        slot_x,
+        slot_y,
+        slot_width,
+        slot_height,
+        has_alpha,
+        config,
+    );
+    let mut image = RgbaImage::new(slot_width, slot_height);
+
+    for y in 0..slot_height {
+        for x in 0..slot_width {
+            let source_pixel = *source.get_pixel(slot_x + x, slot_y + y);
+            if background[index_of(x, y, slot_width)] && !config.keep_background {
+                image.put_pixel(x, y, Rgba([0, 0, 0, 0]));
+            } else {
+                image.put_pixel(x, y, source_pixel);
+            }
+        }
+    }
+
+    image
 }
 
 fn extract_frame(
@@ -663,6 +785,7 @@ Options:
       --alpha-threshold <0-255>  Alpha value treated as transparent. Defaults to 8.
       --white-threshold <0-255>  Minimum RGB channel for white background. Defaults to 225.
       --white-chroma <0-255>     Max RGB spread for white background. Defaults to 28.
+      --preserve-canvas          Clear background but keep each input frame canvas size.
       --keep-background          Keep detected edge background pixels instead of clearing them.
   -h, --help                     Show this help.
 "#

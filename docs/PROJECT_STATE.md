@@ -235,7 +235,7 @@ assets/images/startup/startup_background.png
 assets/sprites/player/topdown/
 ```
 
-当前占位文件：
+当前俯视角玩家文件：
 
 ```txt
 idle_down.png
@@ -245,7 +245,14 @@ walk_right.png
 walk_up.png
 ```
 
-当前占位尺寸为 64x64 透明 PNG。后续可以替换成同名 sprite sheet，例如 `walk_down.png = 8 帧 * 64x64`。
+这些文件都已经替换为真实 sprite sheet：
+
+```txt
+assets/sprites/player/topdown/*.png = 512x128
+4 frames * 128x128
+```
+
+运行时代码会把它们当作横向排列的正方形帧表读取，只绘制当前帧，不会把整张 sheet 拉伸成一个角色。俯视角移动时按方向选择 `walk_down` / `walk_left` / `walk_right` / `walk_up`，停止时使用 `idle_down`。
 
 UI 字体优先文件名：
 

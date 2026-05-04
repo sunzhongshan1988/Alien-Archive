@@ -1,5 +1,5 @@
 use anyhow::Result;
-use runtime::{Button, Camera2d, InputState, SceneCommand, collision::rects_overlap};
+use runtime::{Button, Camera2d, InputState, Renderer, SceneCommand, collision::rects_overlap};
 
 use crate::{
     player::Player,
@@ -45,6 +45,10 @@ impl Scene for OverworldScene {
         "OverworldScene"
     }
 
+    fn setup(&mut self, renderer: &mut dyn Renderer) -> Result<()> {
+        Player::load_topdown_assets(renderer)
+    }
+
     fn update(
         &mut self,
         ctx: &mut GameContext,
@@ -70,7 +74,7 @@ impl Scene for OverworldScene {
 
     fn render(&mut self, ctx: &mut RenderContext<'_>) -> Result<()> {
         self.world.draw(ctx.renderer);
-        self.player.draw(ctx.renderer);
+        self.player.draw_topdown(ctx.renderer);
         Ok(())
     }
 

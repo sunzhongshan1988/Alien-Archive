@@ -74,6 +74,7 @@ cargo run -p sprite_sheet_compactor -- `
 - `--alpha-threshold <0-255>`：低于该 alpha 值的像素视为透明，默认 `8`。
 - `--white-threshold <0-255>`：浅色背景检测的最低 RGB 通道值，默认 `225`。
 - `--white-chroma <0-255>`：浅色背景检测允许的 RGB 通道差，默认 `28`。
+- `--preserve-canvas`：只清背景，不裁切每帧画布。适合地形 tile 这类需要保持统一画布尺寸的素材。
 - `--keep-background`：保留检测到的边缘背景像素，只裁间隙，不清透明。
 
 ## 缩放规则
