@@ -1,0 +1,12 @@
+[package]
+name = "alien_archive"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+ron.workspace = true
+rusttype.workspace = true
+runtime = { package = "alien_archive_runtime", path = "../runtime" }
+serde.workspace = true
