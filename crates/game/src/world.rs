@@ -36,6 +36,10 @@ impl World {
         self.map.draw(renderer);
     }
 
+    pub fn load_assets(&self, renderer: &mut dyn Renderer) -> Result<()> {
+        self.map.load_assets(renderer)
+    }
+
     pub fn first_entity(&self, kind: MapEntityKind) -> Option<&MapEntity> {
         self.map
             .entities()
@@ -55,8 +59,23 @@ mod tests {
 
     #[test]
     fn loads_overworld_map() {
+        let world = World::load(
+            "assets/data/maps/overworld_landing_site.ron",
+            Some("player_start"),
+        )
+        .expect("overworld map should load");
+
+        assert!(
+            world
+                .first_entity(MapEntityKind::FacilityEntrance)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn still_loads_legacy_overworld_map() {
         let world = World::load("assets/data/maps/overworld.ron", Some("player_start"))
-            .expect("overworld map should load");
+            .expect("legacy overworld map should load");
 
         assert!(
             world

@@ -4,4 +4,7 @@
 *.tmp
 *.ron.bak
 
-/assets/
+/assets/*
+!/assets/data/
+!/assets/data/maps/
+!/assets/data/maps/*.ron

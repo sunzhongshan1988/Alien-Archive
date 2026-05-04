@@ -1,0 +1,22 @@
+(
+    id: "overworld_landing_site",
+    mode: "Overworld",
+    tile_size: 32,
+    width: 80,
+    height: 60,
+    layers: (
+        ground: [],
+        decals: [],
+        objects: [],
+        entities: [],
+        zones: [],
+        collision: [],
+    ),
+    spawns: [
+        /*[0]*/ (
+            id: "player_start",
+            x: 8.0,
+            y: 12.0,
+        ),
+    ],
+)

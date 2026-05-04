@@ -8,7 +8,7 @@ use crate::{
 
 use super::{GameContext, RenderContext, Scene, SceneId};
 
-const OVERWORLD_MAP: &str = "assets/data/maps/overworld.ron";
+const OVERWORLD_MAP: &str = "assets/data/maps/overworld_landing_site.ron";
 const FACILITY_ENTRY_SPAWN: &str = "entry";
 
 pub struct OverworldScene {
@@ -46,6 +46,7 @@ impl Scene for OverworldScene {
     }
 
     fn setup(&mut self, renderer: &mut dyn Renderer) -> Result<()> {
+        self.world.load_assets(renderer)?;
         Player::load_topdown_assets(renderer)
     }
 
