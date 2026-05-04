@@ -158,7 +158,7 @@ fn main() -> Result<()> {
             continue;
         }
 
-        let frame_image = resize_frame(frame, scale, config.filter);
+        let frame_image = prepare_frame_image(frame, scale, &cell_size, &config);
         let column = index as u32 % output_columns;
         let row = index as u32 / output_columns;
         let x = column * cell_size.width
@@ -184,7 +184,9 @@ fn main() -> Result<()> {
         "trimmed max frame: {}x{}; output cell: {}x{}",
         max_frame_width, max_frame_height, cell_size.width, cell_size.height
     );
-    if config.output_cell_size.is_some() {
+    if config.stretch_to_cell {
+        println!("stretched to cell; filter: {}", config.filter.name());
+    } else if config.output_cell_size.is_some() {
         println!(
             "shared scale: {:.4}; filter: {}",
             scale,
@@ -219,6 +221,8 @@ struct Config {
     padding: u32,
     filter: ResizeFilter,
     preserve_canvas: bool,
+    fill_transparent: bool,
+    stretch_to_cell: bool,
     background_mode: BackgroundMode,
     alpha_threshold: u8,
     white_threshold: u8,
@@ -239,6 +243,8 @@ impl Config {
             padding: 4,
             filter: ResizeFilter::Nearest,
             preserve_canvas: false,
+            fill_transparent: false,
+            stretch_to_cell: false,
             background_mode: BackgroundMode::Auto,
             alpha_threshold: 8,
             white_threshold: 225,
@@ -290,6 +296,8 @@ impl Config {
                 "--white-threshold" => config.white_threshold = next_u8(&mut args, &arg)?,
                 "--white-chroma" => config.white_chroma = next_u8(&mut args, &arg)?,
                 "--preserve-canvas" => config.preserve_canvas = true,
+                "--fill-transparent" => config.fill_transparent = true,
+                "--stretch-to-cell" => config.stretch_to_cell = true,
                 "--keep-background" => config.keep_background = true,
                 value => bail!("unknown argument: {value}"),
             }
@@ -303,6 +311,9 @@ impl Config {
         }
         if config.frames == 0 {
             bail!("--frames must be greater than zero");
+        }
+        if config.stretch_to_cell && config.output_cell_size.is_none() {
+            bail!("--stretch-to-cell requires --cell-size or --frame-size");
         }
 
         Ok(config)
@@ -354,14 +365,95 @@ struct Rect {
     height: u32,
 }
 
-fn resize_frame(frame: &ExtractedFrame, scale: f32, filter: ResizeFilter) -> RgbaImage {
-    if (scale - 1.0).abs() <= f32::EPSILON {
-        return frame.image.clone();
+fn prepare_frame_image(
+    frame: &ExtractedFrame,
+    scale: f32,
+    cell_size: &Size,
+    config: &Config,
+) -> RgbaImage {
+    let mut image = if config.fill_transparent {
+        fill_transparent_with_nearest(&frame.image, config.alpha_threshold)
+    } else {
+        frame.image.clone()
+    };
+
+    if config.stretch_to_cell {
+        let width = cell_size.width - config.padding * 2;
+        let height = cell_size.height - config.padding * 2;
+        return imageops::resize(&image, width, height, config.filter.filter_type());
     }
 
-    let width = ((frame.image.width() as f32 * scale).round() as u32).max(1);
-    let height = ((frame.image.height() as f32 * scale).round() as u32).max(1);
-    imageops::resize(&frame.image, width, height, filter.filter_type())
+    if (scale - 1.0).abs() > f32::EPSILON {
+        let width = ((image.width() as f32 * scale).round() as u32).max(1);
+        let height = ((image.height() as f32 * scale).round() as u32).max(1);
+        image = imageops::resize(&image, width, height, config.filter.filter_type());
+    }
+
+    image
+}
+
+fn fill_transparent_with_nearest(image: &RgbaImage, alpha_threshold: u8) -> RgbaImage {
+    let width = image.width();
+    let height = image.height();
+    let mut output = image.clone();
+    let mut filled = vec![false; (width * height) as usize];
+    let mut queue = VecDeque::new();
+
+    for y in 0..height {
+        for x in 0..width {
+            let index = index_of(x, y, width);
+            if image.get_pixel(x, y)[3] > alpha_threshold {
+                filled[index] = true;
+                let pixel = output.get_pixel_mut(x, y);
+                pixel[3] = 255;
+                queue.push_back((x, y));
+            }
+        }
+    }
+
+    if queue.is_empty() {
+        return output;
+    }
+
+    while let Some((x, y)) = queue.pop_front() {
+        let color = *output.get_pixel(x, y);
+        for (next_x, next_y) in neighbors4(x, y, width, height) {
+            let index = index_of(next_x, next_y, width);
+            if filled[index] {
+                continue;
+            }
+
+            output.put_pixel(next_x, next_y, color);
+            filled[index] = true;
+            queue.push_back((next_x, next_y));
+        }
+    }
+
+    output
+}
+
+fn neighbors4(x: u32, y: u32, width: u32, height: u32) -> impl Iterator<Item = (u32, u32)> {
+    let mut neighbors = [(0, 0); 4];
+    let mut count = 0;
+
+    if x > 0 {
+        neighbors[count] = (x - 1, y);
+        count += 1;
+    }
+    if x + 1 < width {
+        neighbors[count] = (x + 1, y);
+        count += 1;
+    }
+    if y > 0 {
+        neighbors[count] = (x, y - 1);
+        count += 1;
+    }
+    if y + 1 < height {
+        neighbors[count] = (x, y + 1);
+        count += 1;
+    }
+
+    neighbors.into_iter().take(count)
 }
 
 fn save_output(output: &RgbaImage, path: &PathBuf) -> Result<()> {
@@ -786,6 +878,8 @@ Options:
       --white-threshold <0-255>  Minimum RGB channel for white background. Defaults to 225.
       --white-chroma <0-255>     Max RGB spread for white background. Defaults to 28.
       --preserve-canvas          Clear background but keep each input frame canvas size.
+      --fill-transparent         Fill transparent pixels from nearest visible pixels.
+      --stretch-to-cell          Stretch each trimmed frame to fill --cell-size exactly.
       --keep-background          Keep detected edge background pixels instead of clearing them.
   -h, --help                     Show this help.
 "#

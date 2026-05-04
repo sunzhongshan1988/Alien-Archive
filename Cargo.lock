@@ -43,6 +43,7 @@ version = "0.1.0"
 dependencies = [
  "alien_archive_runtime",
  "anyhow",
+ "image",
  "ron",
  "rusttype",
  "serde",

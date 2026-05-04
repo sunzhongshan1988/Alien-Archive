@@ -5,10 +5,3138 @@
     width: 80,
     height: 60,
     layers: (
-        ground: [],
+        ground: [
+            /*[0]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 9,
+                y: 22,
+            ),
+            /*[1]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 10,
+                y: 22,
+            ),
+            /*[2]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 11,
+                y: 22,
+            ),
+            /*[3]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 12,
+                y: 22,
+            ),
+            /*[4]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 13,
+                y: 22,
+            ),
+            /*[5]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 14,
+                y: 22,
+            ),
+            /*[6]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 15,
+                y: 22,
+            ),
+            /*[7]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 16,
+                y: 22,
+            ),
+            /*[8]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 17,
+                y: 22,
+            ),
+            /*[9]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 18,
+                y: 21,
+            ),
+            /*[10]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 19,
+                y: 21,
+            ),
+            /*[11]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 20,
+                y: 21,
+            ),
+            /*[12]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 21,
+                y: 21,
+            ),
+            /*[13]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 22,
+                y: 21,
+            ),
+            /*[14]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 23,
+                y: 21,
+            ),
+            /*[15]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 24,
+                y: 21,
+            ),
+            /*[16]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 24,
+                y: 22,
+            ),
+            /*[17]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 25,
+                y: 22,
+            ),
+            /*[18]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 26,
+                y: 22,
+            ),
+            /*[19]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 23,
+                y: 22,
+            ),
+            /*[20]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 22,
+                y: 22,
+            ),
+            /*[21]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 21,
+                y: 22,
+            ),
+            /*[22]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 20,
+                y: 22,
+            ),
+            /*[23]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 19,
+                y: 22,
+            ),
+            /*[24]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 18,
+                y: 22,
+            ),
+            /*[25]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 17,
+                y: 21,
+            ),
+            /*[26]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 16,
+                y: 21,
+            ),
+            /*[27]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 15,
+                y: 21,
+            ),
+            /*[28]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 14,
+                y: 21,
+            ),
+            /*[29]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 13,
+                y: 21,
+            ),
+            /*[30]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 13,
+                y: 20,
+            ),
+            /*[31]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 12,
+                y: 20,
+            ),
+            /*[32]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 11,
+                y: 20,
+            ),
+            /*[33]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 10,
+                y: 20,
+            ),
+            /*[34]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 9,
+                y: 20,
+            ),
+            /*[35]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 8,
+                y: 20,
+            ),
+            /*[36]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 7,
+                y: 20,
+            ),
+            /*[37]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 6,
+                y: 20,
+            ),
+            /*[38]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 5,
+                y: 20,
+            ),
+            /*[39]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 4,
+                y: 20,
+            ),
+            /*[40]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 3,
+                y: 20,
+            ),
+            /*[41]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 2,
+                y: 20,
+            ),
+            /*[42]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 1,
+                y: 20,
+            ),
+            /*[43]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 0,
+                y: 20,
+            ),
+            /*[44]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 0,
+                y: 21,
+            ),
+            /*[45]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 1,
+                y: 21,
+            ),
+            /*[46]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 2,
+                y: 21,
+            ),
+            /*[47]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 3,
+                y: 21,
+            ),
+            /*[48]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 4,
+                y: 21,
+            ),
+            /*[49]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 5,
+                y: 21,
+            ),
+            /*[50]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 6,
+                y: 21,
+            ),
+            /*[51]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 7,
+                y: 21,
+            ),
+            /*[52]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 8,
+                y: 21,
+            ),
+            /*[53]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 9,
+                y: 21,
+            ),
+            /*[54]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 10,
+                y: 21,
+            ),
+            /*[55]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 11,
+                y: 21,
+            ),
+            /*[56]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 12,
+                y: 21,
+            ),
+            /*[57]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 25,
+                y: 21,
+            ),
+            /*[58]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 26,
+                y: 21,
+            ),
+            /*[59]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 26,
+                y: 20,
+            ),
+            /*[60]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 25,
+                y: 20,
+            ),
+            /*[61]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 24,
+                y: 20,
+            ),
+            /*[62]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 23,
+                y: 20,
+            ),
+            /*[63]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 22,
+                y: 20,
+            ),
+            /*[64]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 21,
+                y: 20,
+            ),
+            /*[65]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 20,
+                y: 20,
+            ),
+            /*[66]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 19,
+                y: 20,
+            ),
+            /*[67]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 18,
+                y: 20,
+            ),
+            /*[68]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 17,
+                y: 20,
+            ),
+            /*[69]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 16,
+                y: 20,
+            ),
+            /*[70]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 15,
+                y: 20,
+            ),
+            /*[71]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 14,
+                y: 20,
+            ),
+            /*[72]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 12,
+                y: 19,
+            ),
+            /*[73]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 11,
+                y: 19,
+            ),
+            /*[74]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 10,
+                y: 19,
+            ),
+            /*[75]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 9,
+                y: 19,
+            ),
+            /*[76]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 8,
+                y: 19,
+            ),
+            /*[77]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 7,
+                y: 19,
+            ),
+            /*[78]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 6,
+                y: 19,
+            ),
+            /*[79]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 5,
+                y: 19,
+            ),
+            /*[80]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 4,
+                y: 19,
+            ),
+            /*[81]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 3,
+                y: 19,
+            ),
+            /*[82]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 3,
+                y: 18,
+            ),
+            /*[83]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 2,
+                y: 18,
+            ),
+            /*[84]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 1,
+                y: 18,
+            ),
+            /*[85]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 0,
+                y: 18,
+            ),
+            /*[86]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 0,
+                y: 19,
+            ),
+            /*[87]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 1,
+                y: 19,
+            ),
+            /*[88]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 2,
+                y: 19,
+            ),
+            /*[89]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 13,
+                y: 19,
+            ),
+            /*[90]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 14,
+                y: 19,
+            ),
+            /*[91]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 15,
+                y: 19,
+            ),
+            /*[92]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 16,
+                y: 19,
+            ),
+            /*[93]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 17,
+                y: 19,
+            ),
+            /*[94]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 18,
+                y: 19,
+            ),
+            /*[95]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 19,
+                y: 19,
+            ),
+            /*[96]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 20,
+                y: 19,
+            ),
+            /*[97]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 21,
+                y: 19,
+            ),
+            /*[98]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 22,
+                y: 19,
+            ),
+            /*[99]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 23,
+                y: 19,
+            ),
+            /*[100]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 24,
+                y: 19,
+            ),
+            /*[101]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 25,
+                y: 19,
+            ),
+            /*[102]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 26,
+                y: 19,
+            ),
+            /*[103]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 26,
+                y: 18,
+            ),
+            /*[104]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 25,
+                y: 18,
+            ),
+            /*[105]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 24,
+                y: 18,
+            ),
+            /*[106]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 23,
+                y: 18,
+            ),
+            /*[107]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 22,
+                y: 18,
+            ),
+            /*[108]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 21,
+                y: 18,
+            ),
+            /*[109]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 20,
+                y: 18,
+            ),
+            /*[110]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 19,
+                y: 18,
+            ),
+            /*[111]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 18,
+                y: 18,
+            ),
+            /*[112]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 17,
+                y: 18,
+            ),
+            /*[113]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 16,
+                y: 18,
+            ),
+            /*[114]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 15,
+                y: 18,
+            ),
+            /*[115]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 14,
+                y: 18,
+            ),
+            /*[116]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 13,
+                y: 18,
+            ),
+            /*[117]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 12,
+                y: 18,
+            ),
+            /*[118]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 11,
+                y: 18,
+            ),
+            /*[119]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 10,
+                y: 18,
+            ),
+            /*[120]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 9,
+                y: 18,
+            ),
+            /*[121]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 8,
+                y: 18,
+            ),
+            /*[122]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 7,
+                y: 18,
+            ),
+            /*[123]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 6,
+                y: 18,
+            ),
+            /*[124]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 5,
+                y: 18,
+            ),
+            /*[125]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 5,
+                y: 17,
+            ),
+            /*[126]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 4,
+                y: 17,
+            ),
+            /*[127]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 3,
+                y: 17,
+            ),
+            /*[128]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 2,
+                y: 17,
+            ),
+            /*[129]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 4,
+                y: 18,
+            ),
+            /*[130]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 1,
+                y: 17,
+            ),
+            /*[131]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 0,
+                y: 17,
+            ),
+            /*[132]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 6,
+                y: 17,
+            ),
+            /*[133]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 7,
+                y: 17,
+            ),
+            /*[134]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 8,
+                y: 17,
+            ),
+            /*[135]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 9,
+                y: 17,
+            ),
+            /*[136]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 10,
+                y: 17,
+            ),
+            /*[137]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 11,
+                y: 17,
+            ),
+            /*[138]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 12,
+                y: 17,
+            ),
+            /*[139]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 13,
+                y: 17,
+            ),
+            /*[140]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 14,
+                y: 17,
+            ),
+            /*[141]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 15,
+                y: 17,
+            ),
+            /*[142]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 16,
+                y: 17,
+            ),
+            /*[143]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 17,
+                y: 17,
+            ),
+            /*[144]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 18,
+                y: 17,
+            ),
+            /*[145]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 19,
+                y: 17,
+            ),
+            /*[146]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 20,
+                y: 17,
+            ),
+            /*[147]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 21,
+                y: 17,
+            ),
+            /*[148]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 22,
+                y: 17,
+            ),
+            /*[149]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 23,
+                y: 17,
+            ),
+            /*[150]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 24,
+                y: 17,
+            ),
+            /*[151]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 25,
+                y: 17,
+            ),
+            /*[152]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 26,
+                y: 17,
+            ),
+            /*[153]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 26,
+                y: 16,
+            ),
+            /*[154]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 26,
+                y: 15,
+            ),
+            /*[155]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 26,
+                y: 14,
+            ),
+            /*[156]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 26,
+                y: 13,
+            ),
+            /*[157]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 26,
+                y: 12,
+            ),
+            /*[158]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 26,
+                y: 11,
+            ),
+            /*[159]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 26,
+                y: 10,
+            ),
+            /*[160]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 26,
+                y: 9,
+            ),
+            /*[161]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 26,
+                y: 8,
+            ),
+            /*[162]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 26,
+                y: 7,
+            ),
+            /*[163]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 26,
+                y: 6,
+            ),
+            /*[164]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 26,
+                y: 4,
+            ),
+            /*[165]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 26,
+                y: 3,
+            ),
+            /*[166]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 26,
+                y: 2,
+            ),
+            /*[167]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 26,
+                y: 1,
+            ),
+            /*[168]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 26,
+                y: 0,
+            ),
+            /*[169]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 25,
+                y: 4,
+            ),
+            /*[170]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 26,
+                y: 5,
+            ),
+            /*[171]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 25,
+                y: 6,
+            ),
+            /*[172]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 25,
+                y: 7,
+            ),
+            /*[173]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 25,
+                y: 8,
+            ),
+            /*[174]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 25,
+                y: 9,
+            ),
+            /*[175]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 25,
+                y: 10,
+            ),
+            /*[176]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 25,
+                y: 11,
+            ),
+            /*[177]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 25,
+                y: 12,
+            ),
+            /*[178]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 25,
+                y: 13,
+            ),
+            /*[179]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 25,
+                y: 14,
+            ),
+            /*[180]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 25,
+                y: 15,
+            ),
+            /*[181]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 24,
+                y: 15,
+            ),
+            /*[182]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 24,
+                y: 16,
+            ),
+            /*[183]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 25,
+                y: 16,
+            ),
+            /*[184]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 25,
+                y: 5,
+            ),
+            /*[185]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 25,
+                y: 3,
+            ),
+            /*[186]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 25,
+                y: 2,
+            ),
+            /*[187]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 25,
+                y: 1,
+            ),
+            /*[188]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 25,
+                y: 0,
+            ),
+            /*[189]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 24,
+                y: 0,
+            ),
+            /*[190]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 23,
+                y: 0,
+            ),
+            /*[191]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 23,
+                y: 1,
+            ),
+            /*[192]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 24,
+                y: 2,
+            ),
+            /*[193]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 24,
+                y: 3,
+            ),
+            /*[194]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 24,
+                y: 4,
+            ),
+            /*[195]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 24,
+                y: 5,
+            ),
+            /*[196]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 24,
+                y: 6,
+            ),
+            /*[197]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 24,
+                y: 7,
+            ),
+            /*[198]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 24,
+                y: 8,
+            ),
+            /*[199]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 24,
+                y: 9,
+            ),
+            /*[200]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 24,
+                y: 10,
+            ),
+            /*[201]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 24,
+                y: 11,
+            ),
+            /*[202]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 24,
+                y: 12,
+            ),
+            /*[203]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 24,
+                y: 13,
+            ),
+            /*[204]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 24,
+                y: 14,
+            ),
+            /*[205]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 23,
+                y: 13,
+            ),
+            /*[206]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 23,
+                y: 12,
+            ),
+            /*[207]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 23,
+                y: 11,
+            ),
+            /*[208]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 23,
+                y: 10,
+            ),
+            /*[209]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 23,
+                y: 9,
+            ),
+            /*[210]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 23,
+                y: 8,
+            ),
+            /*[211]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 24,
+                y: 1,
+            ),
+            /*[212]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 23,
+                y: 4,
+            ),
+            /*[213]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 23,
+                y: 5,
+            ),
+            /*[214]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 23,
+                y: 6,
+            ),
+            /*[215]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 23,
+                y: 7,
+            ),
+            /*[216]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 22,
+                y: 10,
+            ),
+            /*[217]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 22,
+                y: 11,
+            ),
+            /*[218]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 22,
+                y: 12,
+            ),
+            /*[219]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 22,
+                y: 13,
+            ),
+            /*[220]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 22,
+                y: 9,
+            ),
+            /*[221]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 22,
+                y: 8,
+            ),
+            /*[222]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 22,
+                y: 7,
+            ),
+            /*[223]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 22,
+                y: 6,
+            ),
+            /*[224]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 22,
+                y: 5,
+            ),
+            /*[225]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 23,
+                y: 3,
+            ),
+            /*[226]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 23,
+                y: 2,
+            ),
+            /*[227]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 23,
+                y: 14,
+            ),
+            /*[228]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 23,
+                y: 15,
+            ),
+            /*[229]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 23,
+                y: 16,
+            ),
+            /*[230]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 22,
+                y: 16,
+            ),
+            /*[231]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 22,
+                y: 15,
+            ),
+            /*[232]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 22,
+                y: 14,
+            ),
+            /*[233]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 21,
+                y: 12,
+            ),
+            /*[234]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 21,
+                y: 11,
+            ),
+            /*[235]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 21,
+                y: 10,
+            ),
+            /*[236]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 21,
+                y: 9,
+            ),
+            /*[237]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 21,
+                y: 8,
+            ),
+            /*[238]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 21,
+                y: 6,
+            ),
+            /*[239]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 21,
+                y: 4,
+            ),
+            /*[240]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 21,
+                y: 3,
+            ),
+            /*[241]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 21,
+                y: 1,
+            ),
+            /*[242]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 21,
+                y: 0,
+            ),
+            /*[243]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 21,
+                y: 2,
+            ),
+            /*[244]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 20,
+                y: 6,
+            ),
+            /*[245]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 20,
+                y: 7,
+            ),
+            /*[246]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 20,
+                y: 8,
+            ),
+            /*[247]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 20,
+                y: 9,
+            ),
+            /*[248]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 20,
+                y: 10,
+            ),
+            /*[249]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 20,
+                y: 11,
+            ),
+            /*[250]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 22,
+                y: 0,
+            ),
+            /*[251]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 22,
+                y: 1,
+            ),
+            /*[252]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 22,
+                y: 2,
+            ),
+            /*[253]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 22,
+                y: 3,
+            ),
+            /*[254]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 22,
+                y: 4,
+            ),
+            /*[255]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 20,
+                y: 12,
+            ),
+            /*[256]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 20,
+                y: 4,
+            ),
+            /*[257]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 21,
+                y: 5,
+            ),
+            /*[258]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 21,
+                y: 7,
+            ),
+            /*[259]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 20,
+                y: 5,
+            ),
+            /*[260]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 20,
+                y: 3,
+            ),
+            /*[261]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 20,
+                y: 2,
+            ),
+            /*[262]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 20,
+                y: 1,
+            ),
+            /*[263]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 20,
+                y: 0,
+            ),
+            /*[264]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 20,
+                y: 13,
+            ),
+            /*[265]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 20,
+                y: 14,
+            ),
+            /*[266]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 20,
+                y: 15,
+            ),
+            /*[267]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 19,
+                y: 15,
+            ),
+            /*[268]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 19,
+                y: 16,
+            ),
+            /*[269]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 20,
+                y: 16,
+            ),
+            /*[270]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 21,
+                y: 15,
+            ),
+            /*[271]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 21,
+                y: 14,
+            ),
+            /*[272]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 21,
+                y: 13,
+            ),
+            /*[273]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 21,
+                y: 16,
+            ),
+            /*[274]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 18,
+                y: 15,
+            ),
+            /*[275]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 17,
+                y: 15,
+            ),
+            /*[276]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 16,
+                y: 15,
+            ),
+            /*[277]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 16,
+                y: 16,
+            ),
+            /*[278]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 17,
+                y: 16,
+            ),
+            /*[279]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 18,
+                y: 16,
+            ),
+            /*[280]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 15,
+                y: 16,
+            ),
+            /*[281]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 14,
+                y: 16,
+            ),
+            /*[282]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 13,
+                y: 16,
+            ),
+            /*[283]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 12,
+                y: 16,
+            ),
+            /*[284]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 11,
+                y: 16,
+            ),
+            /*[285]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 10,
+                y: 16,
+            ),
+            /*[286]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 9,
+                y: 16,
+            ),
+            /*[287]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 8,
+                y: 16,
+            ),
+            /*[288]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 7,
+                y: 16,
+            ),
+            /*[289]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 6,
+                y: 16,
+            ),
+            /*[290]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 5,
+                y: 16,
+            ),
+            /*[291]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 4,
+                y: 16,
+            ),
+            /*[292]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 3,
+                y: 16,
+            ),
+            /*[293]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 2,
+                y: 15,
+            ),
+            /*[294]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 1,
+                y: 15,
+            ),
+            /*[295]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 0,
+                y: 15,
+            ),
+            /*[296]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 0,
+                y: 16,
+            ),
+            /*[297]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 1,
+                y: 16,
+            ),
+            /*[298]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 2,
+                y: 16,
+            ),
+            /*[299]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 0,
+                y: 14,
+            ),
+            /*[300]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 0,
+                y: 13,
+            ),
+            /*[301]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 0,
+                y: 8,
+            ),
+            /*[302]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 0,
+                y: 7,
+            ),
+            /*[303]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 0,
+                y: 6,
+            ),
+            /*[304]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 0,
+                y: 5,
+            ),
+            /*[305]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 0,
+                y: 4,
+            ),
+            /*[306]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 0,
+                y: 3,
+            ),
+            /*[307]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 0,
+                y: 2,
+            ),
+            /*[308]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 0,
+                y: 1,
+            ),
+            /*[309]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 0,
+                y: 0,
+            ),
+            /*[310]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 0,
+                y: 11,
+            ),
+            /*[311]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 0,
+                y: 10,
+            ),
+            /*[312]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 0,
+                y: 9,
+            ),
+            /*[313]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 0,
+                y: 12,
+            ),
+            /*[314]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 1,
+                y: 13,
+            ),
+            /*[315]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 1,
+                y: 14,
+            ),
+            /*[316]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 1,
+                y: 12,
+            ),
+            /*[317]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 1,
+                y: 11,
+            ),
+            /*[318]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 2,
+                y: 11,
+            ),
+            /*[319]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 2,
+                y: 10,
+            ),
+            /*[320]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 2,
+                y: 9,
+            ),
+            /*[321]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 2,
+                y: 8,
+            ),
+            /*[322]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 2,
+                y: 7,
+            ),
+            /*[323]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 2,
+                y: 6,
+            ),
+            /*[324]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 2,
+                y: 5,
+            ),
+            /*[325]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 2,
+                y: 4,
+            ),
+            /*[326]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 2,
+                y: 3,
+            ),
+            /*[327]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 2,
+                y: 2,
+            ),
+            /*[328]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 2,
+                y: 1,
+            ),
+            /*[329]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 2,
+                y: 0,
+            ),
+            /*[330]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 1,
+                y: 0,
+            ),
+            /*[331]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 1,
+                y: 1,
+            ),
+            /*[332]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 1,
+                y: 2,
+            ),
+            /*[333]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 1,
+                y: 3,
+            ),
+            /*[334]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 1,
+                y: 4,
+            ),
+            /*[335]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 1,
+                y: 5,
+            ),
+            /*[336]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 1,
+                y: 6,
+            ),
+            /*[337]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 1,
+                y: 10,
+            ),
+            /*[338]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 1,
+                y: 9,
+            ),
+            /*[339]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 1,
+                y: 8,
+            ),
+            /*[340]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 1,
+                y: 7,
+            ),
+            /*[341]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 2,
+                y: 13,
+            ),
+            /*[342]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 2,
+                y: 12,
+            ),
+            /*[343]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 2,
+                y: 14,
+            ),
+            /*[344]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 3,
+                y: 15,
+            ),
+            /*[345]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 3,
+                y: 14,
+            ),
+            /*[346]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 3,
+                y: 13,
+            ),
+            /*[347]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 3,
+                y: 12,
+            ),
+            /*[348]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 3,
+                y: 11,
+            ),
+            /*[349]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 3,
+                y: 10,
+            ),
+            /*[350]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 3,
+                y: 9,
+            ),
+            /*[351]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 4,
+                y: 8,
+            ),
+            /*[352]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 4,
+                y: 7,
+            ),
+            /*[353]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 4,
+                y: 6,
+            ),
+            /*[354]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 4,
+                y: 5,
+            ),
+            /*[355]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 4,
+                y: 4,
+            ),
+            /*[356]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 4,
+                y: 3,
+            ),
+            /*[357]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 4,
+                y: 2,
+            ),
+            /*[358]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 4,
+                y: 1,
+            ),
+            /*[359]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 3,
+                y: 1,
+            ),
+            /*[360]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 3,
+                y: 0,
+            ),
+            /*[361]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 3,
+                y: 2,
+            ),
+            /*[362]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 3,
+                y: 3,
+            ),
+            /*[363]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 3,
+                y: 4,
+            ),
+            /*[364]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 3,
+                y: 5,
+            ),
+            /*[365]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 3,
+                y: 6,
+            ),
+            /*[366]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 3,
+                y: 7,
+            ),
+            /*[367]*/ (
+                asset: "ow_tile_cliff_edge",
+                x: 3,
+                y: 8,
+            ),
+            /*[368]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 4,
+                y: 13,
+            ),
+            /*[369]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 4,
+                y: 14,
+            ),
+            /*[370]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 4,
+                y: 15,
+            ),
+            /*[371]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 4,
+                y: 12,
+            ),
+            /*[372]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 4,
+                y: 11,
+            ),
+            /*[373]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 4,
+                y: 10,
+            ),
+            /*[374]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 4,
+                y: 9,
+            ),
+            /*[375]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 4,
+                y: 0,
+            ),
+            /*[376]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 5,
+                y: 0,
+            ),
+            /*[377]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 5,
+                y: 1,
+            ),
+            /*[378]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 5,
+                y: 2,
+            ),
+            /*[379]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 5,
+                y: 3,
+            ),
+            /*[380]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 5,
+                y: 4,
+            ),
+            /*[381]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 5,
+                y: 5,
+            ),
+            /*[382]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 5,
+                y: 6,
+            ),
+            /*[383]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 5,
+                y: 7,
+            ),
+            /*[384]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 5,
+                y: 8,
+            ),
+            /*[385]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 5,
+                y: 9,
+            ),
+            /*[386]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 5,
+                y: 10,
+            ),
+            /*[387]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 5,
+                y: 11,
+            ),
+            /*[388]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 5,
+                y: 12,
+            ),
+            /*[389]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 5,
+                y: 13,
+            ),
+            /*[390]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 5,
+                y: 14,
+            ),
+            /*[391]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 5,
+                y: 15,
+            ),
+            /*[392]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 6,
+                y: 15,
+            ),
+            /*[393]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 6,
+                y: 14,
+            ),
+            /*[394]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 6,
+                y: 13,
+            ),
+            /*[395]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 6,
+                y: 12,
+            ),
+            /*[396]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 6,
+                y: 11,
+            ),
+            /*[397]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 6,
+                y: 10,
+            ),
+            /*[398]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 6,
+                y: 9,
+            ),
+            /*[399]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 6,
+                y: 8,
+            ),
+            /*[400]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 6,
+                y: 7,
+            ),
+            /*[401]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 6,
+                y: 6,
+            ),
+            /*[402]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 6,
+                y: 5,
+            ),
+            /*[403]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 6,
+                y: 4,
+            ),
+            /*[404]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 6,
+                y: 3,
+            ),
+            /*[405]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 6,
+                y: 2,
+            ),
+            /*[406]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 6,
+                y: 1,
+            ),
+            /*[407]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 6,
+                y: 0,
+            ),
+            /*[408]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 7,
+                y: 0,
+            ),
+            /*[409]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 7,
+                y: 1,
+            ),
+            /*[410]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 7,
+                y: 2,
+            ),
+            /*[411]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 7,
+                y: 3,
+            ),
+            /*[412]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 7,
+                y: 4,
+            ),
+            /*[413]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 7,
+                y: 5,
+            ),
+            /*[414]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 7,
+                y: 6,
+            ),
+            /*[415]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 7,
+                y: 7,
+            ),
+            /*[416]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 7,
+                y: 8,
+            ),
+            /*[417]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 7,
+                y: 9,
+            ),
+            /*[418]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 7,
+                y: 10,
+            ),
+            /*[419]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 7,
+                y: 11,
+            ),
+            /*[420]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 7,
+                y: 12,
+            ),
+            /*[421]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 7,
+                y: 13,
+            ),
+            /*[422]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 7,
+                y: 14,
+            ),
+            /*[423]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 7,
+                y: 15,
+            ),
+            /*[424]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 8,
+                y: 15,
+            ),
+            /*[425]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 8,
+                y: 14,
+            ),
+            /*[426]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 8,
+                y: 13,
+            ),
+            /*[427]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 8,
+                y: 12,
+            ),
+            /*[428]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 8,
+                y: 11,
+            ),
+            /*[429]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 8,
+                y: 10,
+            ),
+            /*[430]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 8,
+                y: 9,
+            ),
+            /*[431]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 8,
+                y: 8,
+            ),
+            /*[432]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 8,
+                y: 7,
+            ),
+            /*[433]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 8,
+                y: 6,
+            ),
+            /*[434]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 8,
+                y: 5,
+            ),
+            /*[435]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 8,
+                y: 4,
+            ),
+            /*[436]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 8,
+                y: 3,
+            ),
+            /*[437]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 8,
+                y: 2,
+            ),
+            /*[438]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 8,
+                y: 1,
+            ),
+            /*[439]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 8,
+                y: 0,
+            ),
+            /*[440]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 9,
+                y: 0,
+            ),
+            /*[441]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 9,
+                y: 1,
+            ),
+            /*[442]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 10,
+                y: 2,
+            ),
+            /*[443]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 10,
+                y: 3,
+            ),
+            /*[444]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 10,
+                y: 4,
+            ),
+            /*[445]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 10,
+                y: 5,
+            ),
+            /*[446]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 10,
+                y: 6,
+            ),
+            /*[447]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 10,
+                y: 7,
+            ),
+            /*[448]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 10,
+                y: 8,
+            ),
+            /*[449]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 10,
+                y: 9,
+            ),
+            /*[450]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 10,
+                y: 10,
+            ),
+            /*[451]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 10,
+                y: 11,
+            ),
+            /*[452]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 9,
+                y: 11,
+            ),
+            /*[453]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 9,
+                y: 12,
+            ),
+            /*[454]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 9,
+                y: 13,
+            ),
+            /*[455]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 9,
+                y: 14,
+            ),
+            /*[456]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 9,
+                y: 15,
+            ),
+            /*[457]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 10,
+                y: 15,
+            ),
+            /*[458]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 10,
+                y: 14,
+            ),
+            /*[459]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 9,
+                y: 10,
+            ),
+            /*[460]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 9,
+                y: 9,
+            ),
+            /*[461]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 9,
+                y: 8,
+            ),
+            /*[462]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 9,
+                y: 7,
+            ),
+            /*[463]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 9,
+                y: 6,
+            ),
+            /*[464]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 9,
+                y: 5,
+            ),
+            /*[465]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 9,
+                y: 4,
+            ),
+            /*[466]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 9,
+                y: 3,
+            ),
+            /*[467]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 9,
+                y: 2,
+            ),
+            /*[468]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 10,
+                y: 12,
+            ),
+            /*[469]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 10,
+                y: 13,
+                w: 12,
+            ),
+            /*[470]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 11,
+                y: 15,
+            ),
+            /*[471]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 11,
+                y: 14,
+            ),
+            /*[472]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 11,
+                y: 13,
+            ),
+            /*[473]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 11,
+                y: 12,
+            ),
+            /*[474]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 11,
+                y: 11,
+            ),
+            /*[475]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 11,
+                y: 10,
+            ),
+            /*[476]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 11,
+                y: 9,
+            ),
+            /*[477]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 11,
+                y: 8,
+            ),
+            /*[478]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 11,
+                y: 7,
+            ),
+            /*[479]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 11,
+                y: 6,
+            ),
+            /*[480]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 11,
+                y: 5,
+            ),
+            /*[481]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 11,
+                y: 4,
+            ),
+            /*[482]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 11,
+                y: 3,
+            ),
+            /*[483]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 11,
+                y: 2,
+            ),
+            /*[484]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 11,
+                y: 1,
+            ),
+            /*[485]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 11,
+                y: 0,
+            ),
+            /*[486]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 10,
+                y: 0,
+            ),
+            /*[487]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 10,
+                y: 1,
+            ),
+            /*[488]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 12,
+                y: 0,
+            ),
+            /*[489]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 12,
+                y: 1,
+            ),
+            /*[490]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 12,
+                y: 2,
+            ),
+            /*[491]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 13,
+                y: 3,
+            ),
+            /*[492]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 13,
+                y: 4,
+            ),
+            /*[493]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 13,
+                y: 5,
+            ),
+            /*[494]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 13,
+                y: 6,
+            ),
+            /*[495]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 13,
+                y: 7,
+            ),
+            /*[496]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 13,
+                y: 8,
+            ),
+            /*[497]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 13,
+                y: 9,
+            ),
+            /*[498]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 13,
+                y: 10,
+            ),
+            /*[499]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 13,
+                y: 11,
+            ),
+            /*[500]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 13,
+                y: 12,
+            ),
+            /*[501]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 12,
+                y: 12,
+            ),
+            /*[502]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 12,
+                y: 13,
+            ),
+            /*[503]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 12,
+                y: 14,
+            ),
+            /*[504]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 12,
+                y: 15,
+            ),
+            /*[505]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 12,
+                y: 11,
+            ),
+            /*[506]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 12,
+                y: 10,
+            ),
+            /*[507]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 12,
+                y: 9,
+            ),
+            /*[508]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 12,
+                y: 8,
+            ),
+            /*[509]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 12,
+                y: 7,
+            ),
+            /*[510]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 12,
+                y: 6,
+            ),
+            /*[511]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 12,
+                y: 5,
+            ),
+            /*[512]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 12,
+                y: 4,
+            ),
+            /*[513]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 12,
+                y: 3,
+            ),
+            /*[514]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 13,
+                y: 0,
+            ),
+            /*[515]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 13,
+                y: 1,
+            ),
+            /*[516]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 13,
+                y: 2,
+            ),
+            /*[517]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 13,
+                y: 13,
+            ),
+            /*[518]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 13,
+                y: 14,
+            ),
+            /*[519]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 13,
+                y: 15,
+            ),
+            /*[520]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 14,
+                y: 15,
+            ),
+            /*[521]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 14,
+                y: 14,
+            ),
+            /*[522]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 14,
+                y: 13,
+            ),
+            /*[523]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 14,
+                y: 12,
+            ),
+            /*[524]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 14,
+                y: 11,
+            ),
+            /*[525]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 14,
+                y: 10,
+            ),
+            /*[526]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 14,
+                y: 9,
+            ),
+            /*[527]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 14,
+                y: 8,
+            ),
+            /*[528]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 14,
+                y: 7,
+            ),
+            /*[529]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 14,
+                y: 6,
+            ),
+            /*[530]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 14,
+                y: 5,
+            ),
+            /*[531]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 14,
+                y: 4,
+            ),
+            /*[532]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 14,
+                y: 3,
+            ),
+            /*[533]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 14,
+                y: 2,
+            ),
+            /*[534]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 14,
+                y: 1,
+            ),
+            /*[535]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 14,
+                y: 0,
+            ),
+            /*[536]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 15,
+                y: 0,
+            ),
+            /*[537]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 15,
+                y: 1,
+            ),
+            /*[538]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 15,
+                y: 2,
+            ),
+            /*[539]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 15,
+                y: 3,
+            ),
+            /*[540]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 15,
+                y: 4,
+            ),
+            /*[541]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 15,
+                y: 5,
+            ),
+            /*[542]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 15,
+                y: 6,
+            ),
+            /*[543]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 15,
+                y: 7,
+            ),
+            /*[544]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 15,
+                y: 8,
+            ),
+            /*[545]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 15,
+                y: 9,
+            ),
+            /*[546]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 15,
+                y: 10,
+            ),
+            /*[547]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 15,
+                y: 11,
+            ),
+            /*[548]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 15,
+                y: 12,
+            ),
+            /*[549]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 15,
+                y: 13,
+            ),
+            /*[550]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 15,
+                y: 14,
+            ),
+            /*[551]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 15,
+                y: 15,
+            ),
+            /*[552]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 16,
+                y: 14,
+            ),
+            /*[553]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 16,
+                y: 13,
+            ),
+            /*[554]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 16,
+                y: 12,
+            ),
+            /*[555]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 16,
+                y: 11,
+            ),
+            /*[556]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 16,
+                y: 10,
+            ),
+            /*[557]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 16,
+                y: 9,
+            ),
+            /*[558]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 16,
+                y: 8,
+            ),
+            /*[559]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 16,
+                y: 7,
+            ),
+            /*[560]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 16,
+                y: 6,
+            ),
+            /*[561]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 16,
+                y: 5,
+            ),
+            /*[562]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 16,
+                y: 4,
+            ),
+            /*[563]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 16,
+                y: 3,
+            ),
+            /*[564]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 16,
+                y: 2,
+            ),
+            /*[565]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 16,
+                y: 1,
+            ),
+            /*[566]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 16,
+                y: 0,
+            ),
+            /*[567]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 17,
+                y: 0,
+            ),
+            /*[568]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 17,
+                y: 1,
+            ),
+            /*[569]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 17,
+                y: 2,
+            ),
+            /*[570]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 17,
+                y: 3,
+            ),
+            /*[571]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 17,
+                y: 4,
+            ),
+            /*[572]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 17,
+                y: 5,
+            ),
+            /*[573]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 17,
+                y: 6,
+            ),
+            /*[574]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 17,
+                y: 7,
+            ),
+            /*[575]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 17,
+                y: 8,
+            ),
+            /*[576]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 17,
+                y: 9,
+            ),
+            /*[577]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 17,
+                y: 10,
+            ),
+            /*[578]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 17,
+                y: 11,
+            ),
+            /*[579]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 17,
+                y: 12,
+            ),
+            /*[580]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 17,
+                y: 13,
+            ),
+            /*[581]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 17,
+                y: 14,
+            ),
+            /*[582]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 18,
+                y: 14,
+            ),
+            /*[583]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 18,
+                y: 13,
+            ),
+            /*[584]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 18,
+                y: 12,
+            ),
+            /*[585]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 18,
+                y: 11,
+            ),
+            /*[586]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 18,
+                y: 10,
+            ),
+            /*[587]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 18,
+                y: 9,
+            ),
+            /*[588]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 18,
+                y: 8,
+            ),
+            /*[589]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 18,
+                y: 7,
+            ),
+            /*[590]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 18,
+                y: 6,
+            ),
+            /*[591]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 18,
+                y: 5,
+            ),
+            /*[592]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 18,
+                y: 4,
+            ),
+            /*[593]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 18,
+                y: 3,
+            ),
+            /*[594]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 18,
+                y: 2,
+            ),
+            /*[595]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 18,
+                y: 1,
+            ),
+            /*[596]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 18,
+                y: 0,
+            ),
+            /*[597]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 19,
+                y: 0,
+            ),
+            /*[598]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 19,
+                y: 1,
+            ),
+            /*[599]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 19,
+                y: 2,
+            ),
+            /*[600]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 19,
+                y: 3,
+            ),
+            /*[601]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 19,
+                y: 4,
+            ),
+            /*[602]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 19,
+                y: 5,
+            ),
+            /*[603]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 19,
+                y: 6,
+            ),
+            /*[604]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 19,
+                y: 7,
+            ),
+            /*[605]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 19,
+                y: 8,
+            ),
+            /*[606]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 19,
+                y: 9,
+            ),
+            /*[607]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 19,
+                y: 10,
+            ),
+            /*[608]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 19,
+                y: 11,
+            ),
+            /*[609]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 19,
+                y: 12,
+            ),
+            /*[610]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 19,
+                y: 13,
+            ),
+            /*[611]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 19,
+                y: 14,
+            ),
+            /*[612]*/ (
+                asset: "ow_tile_cliff_edge",
+                x: 0,
+                y: 23,
+                w: 27,
+            ),
+            /*[613]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 8,
+                y: 22,
+            ),
+            /*[614]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 7,
+                y: 22,
+            ),
+            /*[615]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 6,
+                y: 22,
+            ),
+            /*[616]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 5,
+                y: 22,
+            ),
+            /*[617]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 4,
+                y: 22,
+            ),
+            /*[618]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 3,
+                y: 22,
+            ),
+            /*[619]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 2,
+                y: 22,
+            ),
+            /*[620]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 1,
+                y: 22,
+            ),
+            /*[621]*/ (
+                asset: "ow_tile_sand_ground",
+                x: 0,
+                y: 22,
+            ),
+        ],
         decals: [],
         objects: [],
-        entities: [],
+        entities: [
+            /*[0]*/ (
+                id: "ent_001",
+                asset: "ow_struct_crashed_capsule",
+                entity_type: "Decoration",
+                x: 3.0,
+                y: 10.0,
+            ),
+            /*[1]*/ (
+                id: "ent_002",
+                asset: "ow_struct_beacon_terminal",
+                entity_type: "ScanTarget",
+                x: 9.0,
+                y: 12.0,
+            ),
+        ],
         zones: [],
         collision: [],
     ),

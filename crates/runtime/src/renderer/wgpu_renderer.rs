@@ -137,6 +137,8 @@ struct ImageCommand {
     rect: Rect,
     source: Option<Rect>,
     tint: Color,
+    flip_x: bool,
+    rotation: i32,
 }
 
 enum RenderCommand {
@@ -534,15 +536,20 @@ impl WgpuRenderer {
         let source = command
             .source
             .unwrap_or_else(|| Rect::new(Vec2::ZERO, texture_size));
-        let uv_left = source.origin.x / texture_size.x;
+        let mut uv_left = source.origin.x / texture_size.x;
         let uv_top = source.origin.y / texture_size.y;
-        let uv_right = source.right() / texture_size.x;
+        let mut uv_right = source.right() / texture_size.x;
         let uv_bottom = source.bottom() / texture_size.y;
+        if command.flip_x {
+            std::mem::swap(&mut uv_left, &mut uv_right);
+        }
 
-        let top_left = self.world_to_clip(rect.origin);
-        let top_right = self.world_to_clip(Vec2::new(rect.right(), rect.origin.y));
-        let bottom_right = self.world_to_clip(Vec2::new(rect.right(), rect.bottom()));
-        let bottom_left = self.world_to_clip(Vec2::new(rect.origin.x, rect.bottom()));
+        let [top_left, top_right, bottom_right, bottom_left] =
+            transformed_rect_points(rect, command.rotation);
+        let top_left = self.world_to_clip(top_left);
+        let top_right = self.world_to_clip(top_right);
+        let bottom_right = self.world_to_clip(bottom_right);
+        let bottom_left = self.world_to_clip(bottom_left);
 
         [
             ImageVertex {
@@ -706,6 +713,26 @@ impl Renderer for WgpuRenderer {
             rect,
             source: None,
             tint,
+            flip_x: false,
+            rotation: 0,
+        }));
+    }
+
+    fn draw_image_transformed(
+        &mut self,
+        texture_id: &str,
+        rect: Rect,
+        tint: Color,
+        flip_x: bool,
+        rotation: i32,
+    ) {
+        self.commands.push(RenderCommand::Image(ImageCommand {
+            texture_id: texture_id.to_owned(),
+            rect,
+            source: None,
+            tint,
+            flip_x,
+            rotation,
         }));
     }
 
@@ -715,6 +742,8 @@ impl Renderer for WgpuRenderer {
             rect,
             source: Some(source),
             tint,
+            flip_x: false,
+            rotation: 0,
         }));
     }
 }
@@ -726,4 +755,28 @@ fn to_wgpu_color(color: Color) -> wgpu::Color {
         b: color.b as f64,
         a: color.a as f64,
     }
+}
+
+fn transformed_rect_points(rect: Rect, rotation: i32) -> [Vec2; 4] {
+    let center = Vec2::new(
+        rect.origin.x + rect.size.x * 0.5,
+        rect.origin.y + rect.size.y * 0.5,
+    );
+    let half = Vec2::new(rect.size.x * 0.5, rect.size.y * 0.5);
+    let rotation = (rotation.rem_euclid(360) as f32).to_radians();
+    let cos = rotation.cos();
+    let sin = rotation.sin();
+    let offsets = [
+        Vec2::new(-half.x, -half.y),
+        Vec2::new(half.x, -half.y),
+        Vec2::new(half.x, half.y),
+        Vec2::new(-half.x, half.y),
+    ];
+
+    offsets.map(|offset| {
+        Vec2::new(
+            center.x + offset.x * cos - offset.y * sin,
+            center.y + offset.x * sin + offset.y * cos,
+        )
+    })
 }

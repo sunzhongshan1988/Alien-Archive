@@ -6,7 +6,7 @@
 
 - [`sprite_sheet_compactor`](sprite_sheet_compactor/README.md)
 
-  用来处理 AI 生成的 sprite sheet：按帧裁掉过大的空白间隙，清理透明或浅色棋盘格背景，并可把每帧缩放到指定分辨率，例如 `64x64`。
+  用来处理 AI 生成的 sprite sheet 和 tile：按帧裁掉过大的空白间隙，清理透明或浅色棋盘格背景，并可把每帧缩放到指定分辨率，例如 `64x64`。地形 tile 可以用 `--fill-transparent --stretch-to-cell` 生成铺满格子的方形图。
 
 ## 运行方式
 

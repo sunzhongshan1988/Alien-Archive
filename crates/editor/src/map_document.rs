@@ -91,6 +91,15 @@ impl MapDocument {
     }
 
     pub fn place_tile(&mut self, asset: &str, x: i32, y: i32) {
+        self.place_tile_sized(asset, x, y, 1, 1);
+    }
+
+    pub fn place_tile_sized(&mut self, asset: &str, x: i32, y: i32, w: i32, h: i32) {
+        let max_width = (self.width as i32 - x).max(1);
+        let max_height = (self.height as i32 - y).max(1);
+        let w = w.clamp(1, max_width);
+        let h = h.clamp(1, max_height);
+
         if let Some(tile) = self
             .layers
             .ground
@@ -98,6 +107,8 @@ impl MapDocument {
             .find(|tile| tile.x == x && tile.y == y)
         {
             tile.asset = asset.to_owned();
+            tile.w = w;
+            tile.h = h;
             return;
         }
 
@@ -105,6 +116,10 @@ impl MapDocument {
             asset: asset.to_owned(),
             x,
             y,
+            w,
+            h,
+            flip_x: false,
+            rotation: 0,
         });
     }
 
@@ -115,6 +130,8 @@ impl MapDocument {
             asset: asset.to_owned(),
             x,
             y,
+            flip_x: false,
+            rotation: 0,
         });
     }
 
@@ -125,6 +142,8 @@ impl MapDocument {
             asset: asset.to_owned(),
             x,
             y,
+            flip_x: false,
+            rotation: 0,
         });
     }
 
@@ -136,6 +155,8 @@ impl MapDocument {
             entity_type: infer_entity_type(asset).to_owned(),
             x,
             y,
+            flip_x: false,
+            rotation: 0,
         });
     }
 
@@ -157,7 +178,10 @@ impl MapDocument {
 
     pub fn erase_at(&mut self, layer: LayerKind, x: i32, y: i32) {
         match layer {
-            LayerKind::Ground => self.layers.ground.retain(|tile| tile.x != x || tile.y != y),
+            LayerKind::Ground => self
+                .layers
+                .ground
+                .retain(|tile| !tile_contains_cell(tile, x, y)),
             LayerKind::Decals => retain_outside_cell(&mut self.layers.decals, x, y),
             LayerKind::Objects => retain_outside_cell(&mut self.layers.objects, x, y),
             LayerKind::Entities => retain_entities_outside_cell(&mut self.layers.entities, x, y),
@@ -185,6 +209,14 @@ pub struct TileInstance {
     pub asset: String,
     pub x: i32,
     pub y: i32,
+    #[serde(default = "default_tile_extent", skip_serializing_if = "is_one_i32")]
+    pub w: i32,
+    #[serde(default = "default_tile_extent", skip_serializing_if = "is_one_i32")]
+    pub h: i32,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub flip_x: bool,
+    #[serde(default, skip_serializing_if = "is_zero_i32")]
+    pub rotation: i32,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -193,6 +225,10 @@ pub struct ObjectInstance {
     pub asset: String,
     pub x: f32,
     pub y: f32,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub flip_x: bool,
+    #[serde(default, skip_serializing_if = "is_zero_i32")]
+    pub rotation: i32,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -202,6 +238,10 @@ pub struct EntityInstance {
     pub entity_type: String,
     pub x: f32,
     pub y: f32,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub flip_x: bool,
+    #[serde(default, skip_serializing_if = "is_zero_i32")]
+    pub rotation: i32,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -259,6 +299,12 @@ fn retain_entities_outside_cell(instances: &mut Vec<EntityInstance>, x: i32, y: 
     instances.retain(|instance| instance.x.floor() as i32 != x || instance.y.floor() as i32 != y);
 }
 
+fn tile_contains_cell(tile: &TileInstance, x: i32, y: i32) -> bool {
+    let width = tile.w.max(1);
+    let height = tile.h.max(1);
+    x >= tile.x && x < tile.x + width && y >= tile.y && y < tile.y + height
+}
+
 fn infer_entity_type(asset: &str) -> &'static str {
     if asset.contains("gate") || asset.contains("door") || asset.contains("entrance") {
         "FacilityEntrance"
@@ -267,4 +313,20 @@ fn infer_entity_type(asset: &str) -> &'static str {
     } else {
         "Decoration"
     }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+fn is_zero_i32(value: &i32) -> bool {
+    *value == 0
+}
+
+fn is_one_i32(value: &i32) -> bool {
+    *value == 1
+}
+
+fn default_tile_extent() -> i32 {
+    1
 }

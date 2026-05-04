@@ -96,6 +96,8 @@ The tool trims each frame separately, clears detected transparent or edge-connec
 white checkerboard background, then repacks frames into uniform bottom-center
 aligned cells. Omit `--cell-size` to keep the compact natural size; use
 `--filter lanczos3` if a downscaled AI sheet looks too jagged.
+For terrain tiles that must fill the whole map cell, add
+`--fill-transparent --stretch-to-cell` with a square `--cell-size`.
 
 More project memory:
 

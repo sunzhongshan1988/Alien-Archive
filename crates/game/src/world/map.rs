@@ -41,26 +41,36 @@ impl Map {
             match &tile.visual {
                 MapVisual::Color(color) => renderer.draw_rect(tile.rect, *color),
                 MapVisual::Texture(texture_id) => {
-                    renderer.draw_image(texture_id, tile.rect, Color::rgba(1.0, 1.0, 1.0, 1.0));
+                    renderer.draw_image_transformed(
+                        texture_id,
+                        tile.rect,
+                        Color::rgba(1.0, 1.0, 1.0, 1.0),
+                        tile.flip_x,
+                        tile.rotation,
+                    );
                 }
             }
         }
 
         for sprite in &self.sprites {
-            renderer.draw_image(
+            renderer.draw_image_transformed(
                 &sprite.texture_id,
                 sprite.rect,
                 Color::rgba(1.0, 1.0, 1.0, 1.0),
+                sprite.flip_x,
+                sprite.rotation,
             );
         }
 
         for entity in &self.entities {
             if entity.kind != MapEntityKind::PlayerSpawn {
                 if let Some(texture_id) = &entity.texture_id {
-                    renderer.draw_image(
+                    renderer.draw_image_transformed(
                         texture_id,
                         entity.sprite_rect,
                         Color::rgba(1.0, 1.0, 1.0, 1.0),
+                        entity.flip_x,
+                        entity.rotation,
                     );
                 } else {
                     renderer.draw_rect(entity.rect, entity.color);
@@ -129,6 +139,8 @@ impl Map {
                     rect: Rect::new(position, Vec2::new(file.tile_size, file.tile_size)),
                     visual: MapVisual::Color(color_from(entry.color)),
                     solid: entry.solid,
+                    flip_x: false,
+                    rotation: 0,
                 });
             }
         }
@@ -157,6 +169,8 @@ impl Map {
                     solid: entity.solid,
                     codex_id: entity.codex_id,
                     texture_id: None,
+                    flip_x: false,
+                    rotation: 0,
                 }
             })
             .collect();
@@ -194,11 +208,17 @@ impl Map {
                 .with_context(|| format!("unknown tile asset {}", tile.asset))?;
             textures.insert(asset.id.clone(), asset.path.clone());
             let position = grid_to_world(origin, tile_size, tile.x, tile.y);
+            let size = Vec2::new(
+                tile_size * tile.w.max(1) as f32,
+                tile_size * tile.h.max(1) as f32,
+            );
 
             tiles.push(MapTile {
-                rect: Rect::new(position, Vec2::new(tile_size, tile_size)),
+                rect: Rect::new(position, size),
                 visual: MapVisual::Texture(asset.id.clone()),
                 solid: false,
+                flip_x: tile.flip_x,
+                rotation: tile.rotation,
             });
         }
 
@@ -236,6 +256,8 @@ impl Map {
                 solid: false,
                 codex_id: None,
                 texture_id: None,
+                flip_x: false,
+                rotation: 0,
             });
         }
 
@@ -258,6 +280,8 @@ impl Map {
                 solid: false,
                 codex_id: scan_codex_id(&entity.asset),
                 texture_id: Some(asset.id.clone()),
+                flip_x: entity.flip_x,
+                rotation: entity.rotation,
             });
         }
 
@@ -289,6 +313,8 @@ struct MapTile {
     rect: Rect,
     visual: MapVisual,
     solid: bool,
+    flip_x: bool,
+    rotation: i32,
 }
 
 #[derive(Clone, Debug)]
@@ -301,6 +327,8 @@ enum MapVisual {
 struct MapSprite {
     texture_id: String,
     rect: Rect,
+    flip_x: bool,
+    rotation: i32,
 }
 
 #[derive(Clone, Debug)]
@@ -314,6 +342,8 @@ pub struct MapEntity {
     pub solid: bool,
     pub codex_id: Option<String>,
     texture_id: Option<String>,
+    flip_x: bool,
+    rotation: i32,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -388,6 +418,14 @@ struct EditorTileInstance {
     asset: String,
     x: i32,
     y: i32,
+    #[serde(default = "default_tile_extent")]
+    w: i32,
+    #[serde(default = "default_tile_extent")]
+    h: i32,
+    #[serde(default)]
+    flip_x: bool,
+    #[serde(default)]
+    rotation: i32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -397,6 +435,10 @@ struct EditorObjectInstance {
     asset: String,
     x: f32,
     y: f32,
+    #[serde(default)]
+    flip_x: bool,
+    #[serde(default)]
+    rotation: i32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -406,6 +448,10 @@ struct EditorEntityInstance {
     entity_type: String,
     x: f32,
     y: f32,
+    #[serde(default)]
+    flip_x: bool,
+    #[serde(default)]
+    rotation: i32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -467,6 +513,8 @@ fn push_sprite(
     sprites.push(MapSprite {
         texture_id: asset.id.clone(),
         rect: bottom_centered_rect(anchor, asset.default_size),
+        flip_x: instance.flip_x,
+        rotation: instance.rotation,
     });
 
     Ok(())
@@ -561,8 +609,13 @@ fn scan_overworld_assets() -> Result<HashMap<String, OverworldAsset>> {
                 id.clone(),
                 OverworldAsset {
                     id,
+                    default_size: default_asset_size(
+                        category,
+                        image::image_dimensions(&path).with_context(|| {
+                            format!("failed to read image size {}", path.display())
+                        })?,
+                    ),
                     path,
-                    default_size: default_asset_size(category),
                 },
             );
         }
@@ -584,14 +637,23 @@ const OVERWORLD_CATEGORIES: &[&str] = &[
     "zones",
 ];
 
-fn default_asset_size(category: &str) -> Vec2 {
-    match category {
-        "tiles" => Vec2::new(32.0, 32.0),
-        "decals" | "zones" => Vec2::new(48.0, 48.0),
-        "ruins" | "structures" => Vec2::new(128.0, 128.0),
-        "interactables" | "fauna" | "pickups" => Vec2::new(72.0, 72.0),
-        _ => Vec2::new(72.0, 72.0),
-    }
+fn default_asset_size(category: &str, source_size: (u32, u32)) -> Vec2 {
+    let target_height = match category {
+        "tiles" => 32.0,
+        "decals" | "zones" => 48.0,
+        "ruins" | "structures" => 128.0,
+        "interactables" | "fauna" | "pickups" => 72.0,
+        _ => 72.0,
+    };
+    let width = source_size.0.max(1) as f32;
+    let height = source_size.1.max(1) as f32;
+    let scale = target_height / height;
+
+    Vec2::new(width * scale, target_height)
+}
+
+fn default_tile_extent() -> i32 {
+    1
 }
 
 fn parse_map_file(source: &str) -> Result<AnyMapFile> {

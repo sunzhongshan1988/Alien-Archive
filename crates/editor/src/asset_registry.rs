@@ -60,6 +60,8 @@ impl AssetRegistry {
                 };
 
                 let kind = infer_asset_kind(category);
+                let source_size = image::image_dimensions(&path)
+                    .with_context(|| format!("failed to read image size {}", path.display()))?;
                 let relative_path = path
                     .strip_prefix(project_root)
                     .unwrap_or(&path)
@@ -73,7 +75,7 @@ impl AssetRegistry {
                     relative_path,
                     kind,
                     default_layer: default_layer(category, kind),
-                    default_size: default_size(category, kind),
+                    default_size: default_size(category, kind, source_size),
                 });
             }
         }
@@ -150,14 +152,24 @@ fn default_layer(category: &str, kind: AssetKind) -> LayerKind {
     }
 }
 
-fn default_size(category: &str, kind: AssetKind) -> [f32; 2] {
-    match kind {
-        AssetKind::Tile => [32.0, 32.0],
-        AssetKind::Decal | AssetKind::Zone => [48.0, 48.0],
+fn default_size(category: &str, kind: AssetKind, source_size: (u32, u32)) -> [f32; 2] {
+    let target_height = match kind {
+        AssetKind::Tile => 32.0,
+        AssetKind::Decal | AssetKind::Zone => 48.0,
         AssetKind::Entity => match category {
-            "ruins" | "structures" => [128.0, 128.0],
-            _ => [72.0, 72.0],
+            "ruins" | "structures" => 128.0,
+            _ => 72.0,
         },
-        AssetKind::Object => [72.0, 72.0],
-    }
+        AssetKind::Object => 72.0,
+    };
+
+    scale_to_height(source_size, target_height)
+}
+
+fn scale_to_height(source_size: (u32, u32), target_height: f32) -> [f32; 2] {
+    let width = source_size.0.max(1) as f32;
+    let height = source_size.1.max(1) as f32;
+    let scale = target_height / height;
+
+    [width * scale, target_height]
 }

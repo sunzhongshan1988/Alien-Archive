@@ -74,7 +74,9 @@ cargo run -p sprite_sheet_compactor -- `
 - `--alpha-threshold <0-255>`：低于该 alpha 值的像素视为透明，默认 `8`。
 - `--white-threshold <0-255>`：浅色背景检测的最低 RGB 通道值，默认 `225`。
 - `--white-chroma <0-255>`：浅色背景检测允许的 RGB 通道差，默认 `28`。
-- `--preserve-canvas`：只清背景，不裁切每帧画布。适合地形 tile 这类需要保持统一画布尺寸的素材。
+- `--preserve-canvas`：只清背景，不裁切每帧画布。适合需要保留原始画布定位的素材。
+- `--fill-transparent`：把透明像素用最近的非透明像素补满。适合地形 tile，避免拼地图时露出透明缝。
+- `--stretch-to-cell`：配合 `--cell-size` 使用，把裁剪后的帧直接拉伸填满目标 cell。适合需要铺满格子的 tile，不适合角色动画。
 - `--keep-background`：保留检测到的边缘背景像素，只裁间隙，不清透明。
 
 ## 缩放规则
@@ -87,6 +89,23 @@ cargo run -p sprite_sheet_compactor -- `
 - 缩放后仍按底部居中贴入各自 cell。
 
 这样可以避免动画播放时角色大小一帧一帧跳动。
+
+地形 tile 如果需要铺满格子，可以额外加 `--fill-transparent --stretch-to-cell`：
+
+```powershell
+cargo run -p sprite_sheet_compactor -- `
+  --input "C:\Users\sunzh\OneDrive\Project\me.mozhengxi\Alien Archive\assets\tiles\overworld\ow_tile_sand_ground.png" `
+  --output assets\sprites\tiles\overworld\ow_tile_sand_ground.png `
+  --frames 1 `
+  --input-columns 1 `
+  --padding 0 `
+  --cell-size 256x256 `
+  --filter lanczos3 `
+  --white-threshold 238 `
+  --white-chroma 18 `
+  --fill-transparent `
+  --stretch-to-cell
+```
 
 ## 滤镜建议
 
