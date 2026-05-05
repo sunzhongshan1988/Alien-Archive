@@ -42,7 +42,7 @@ const THEME_COLLISION: Color32 = Color32::from_rgb(205, 92, 66);
 const THEME_SELECTION: Color32 = Color32::from_rgb(213, 176, 92);
 const THEME_MULTI_SELECTION: Color32 = Color32::from_rgb(169, 163, 131);
 const TOOLBAR_HEIGHT: f32 = 32.0;
-const TOOL_BUTTON_SIZE: Vec2 = Vec2::new(64.0, 26.0);
+const TOOL_BUTTON_SIZE: Vec2 = Vec2::new(34.0, 28.0);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MenuCommand {
@@ -413,6 +413,7 @@ impl EditorApp {
         let project_root = project_root();
         configure_editor_fonts(&cc.egui_ctx);
         configure_editor_theme(&cc.egui_ctx);
+        configure_tool_icons(&cc.egui_ctx);
         let map_path = project_root.join(DEFAULT_MAP_PATH);
         let map_entries = scan_map_entries(&project_root);
         let config = load_editor_config(&project_root);
@@ -1594,7 +1595,7 @@ impl EditorApp {
             ui.set_height(TOOLBAR_HEIGHT);
             toolbar_label(ui, "工具");
             for tool in ToolKind::ALL {
-                if toolbar_tool_button(ui, self.tool == tool, tool.label()).clicked() {
+                if toolbar_tool_button(ui, self.tool == tool, tool).clicked() {
                     self.tool = tool;
                     if tool == ToolKind::Collision {
                         self.active_layer = LayerKind::Collision;
@@ -1606,34 +1607,42 @@ impl EditorApp {
 
             ui.separator();
             toolbar_label(ui, "图层");
-            egui::ComboBox::from_id_salt("active_layer")
-                .selected_text(self.active_layer.zh_label())
-                .width(92.0)
-                .show_ui(ui, |ui| {
-                    for layer in LayerKind::ALL {
-                        ui.selectable_value(&mut self.active_layer, layer, layer.zh_label());
-                    }
-                });
+            toolbar_centered(ui, vec2(96.0, 26.0), |ui| {
+                egui::ComboBox::from_id_salt("active_layer")
+                    .selected_text(self.active_layer.zh_label())
+                    .width(92.0)
+                    .show_ui(ui, |ui| {
+                        for layer in LayerKind::ALL {
+                            ui.selectable_value(&mut self.active_layer, layer, layer.zh_label());
+                        }
+                    });
+            });
 
             if self.active_layer == LayerKind::Ground {
                 ui.separator();
                 toolbar_label(ui, "画笔尺寸");
-                ui.add(
-                    egui::DragValue::new(&mut self.ground_footprint_w)
-                        .range(1..=self.document.width as i32)
-                        .speed(0.1)
-                        .prefix("W "),
-                );
-                ui.add(
-                    egui::DragValue::new(&mut self.ground_footprint_h)
-                        .range(1..=self.document.height as i32)
-                        .speed(0.1)
-                        .prefix("H "),
-                );
+                toolbar_centered(ui, vec2(54.0, 26.0), |ui| {
+                    ui.add(
+                        egui::DragValue::new(&mut self.ground_footprint_w)
+                            .range(1..=self.document.width as i32)
+                            .speed(0.1)
+                            .prefix("W "),
+                    );
+                });
+                toolbar_centered(ui, vec2(54.0, 26.0), |ui| {
+                    ui.add(
+                        egui::DragValue::new(&mut self.ground_footprint_h)
+                            .range(1..=self.document.height as i32)
+                            .speed(0.1)
+                            .prefix("H "),
+                    );
+                });
             }
             if self.tool == ToolKind::Rectangle {
                 ui.separator();
-                ui.checkbox(&mut self.rectangle_erase_mode, "矩形擦除");
+                toolbar_centered(ui, vec2(86.0, 26.0), |ui| {
+                    ui.checkbox(&mut self.rectangle_erase_mode, "矩形擦除");
+                });
             }
 
             ui.separator();
@@ -1653,31 +1662,41 @@ impl EditorApp {
             if let Some([mut width, mut height]) = self.ground_size_for_selection() {
                 ui.separator();
                 toolbar_label(ui, "选中地块");
-                let width_changed = ui
-                    .add(
+                let width_changed = toolbar_centered(ui, vec2(54.0, 26.0), |ui| {
+                    ui.add(
                         egui::DragValue::new(&mut width)
                             .range(1..=self.document.width as i32)
                             .speed(0.1)
                             .prefix("W "),
                     )
-                    .changed();
-                let height_changed = ui
-                    .add(
+                    .changed()
+                })
+                .inner;
+                let height_changed = toolbar_centered(ui, vec2(54.0, 26.0), |ui| {
+                    ui.add(
                         egui::DragValue::new(&mut height)
                             .range(1..=self.document.height as i32)
                             .speed(0.1)
                             .prefix("H "),
                     )
-                    .changed();
+                    .changed()
+                })
+                .inner;
                 if width_changed || height_changed {
                     self.set_ground_size_for_selection(width, height);
                 }
             }
 
             ui.separator();
-            ui.checkbox(&mut self.show_grid, "网格");
-            ui.checkbox(&mut self.show_collision, "碰撞");
-            ui.checkbox(&mut self.show_entity_bounds, "实体边界");
+            toolbar_centered(ui, vec2(58.0, 26.0), |ui| {
+                ui.checkbox(&mut self.show_grid, "网格");
+            });
+            toolbar_centered(ui, vec2(58.0, 26.0), |ui| {
+                ui.checkbox(&mut self.show_collision, "碰撞");
+            });
+            toolbar_centered(ui, vec2(82.0, 26.0), |ui| {
+                ui.checkbox(&mut self.show_entity_bounds, "实体边界");
+            });
         });
     }
 
@@ -5021,15 +5040,120 @@ fn toolbar_label(ui: &mut egui::Ui, text: &str) {
     );
 }
 
-fn toolbar_tool_button(ui: &mut egui::Ui, selected: bool, text: &str) -> egui::Response {
-    ui.add_sized(
-        TOOL_BUTTON_SIZE,
-        egui::Button::selectable(selected, text).corner_radius(3.0),
-    )
+fn toolbar_centered<R>(
+    ui: &mut egui::Ui,
+    size: Vec2,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+        ui.with_layout(
+            egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+            add_contents,
+        )
+        .inner
+    })
+}
+
+fn toolbar_tool_button(ui: &mut egui::Ui, selected: bool, tool: ToolKind) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(TOOL_BUTTON_SIZE, Sense::click());
+    let visuals = ui.style().interact_selectable(&response, selected);
+    ui.painter().rect_filled(rect, 3.0, visuals.weak_bg_fill);
+    ui.painter()
+        .rect_stroke(rect, 3.0, visuals.bg_stroke, StrokeKind::Inside);
+    draw_tool_icon(
+        ui,
+        tool,
+        rect.shrink2(vec2(5.0, 3.0)),
+        if selected {
+            THEME_ACCENT_STRONG
+        } else {
+            visuals.fg_stroke.color
+        },
+    );
+    response.on_hover_text(tool.label())
 }
 
 fn toolbar_command_button(ui: &mut egui::Ui, text: &str, width: f32) -> egui::Response {
     ui.add_sized([width, 26.0], egui::Button::new(text).corner_radius(3.0))
+}
+
+fn draw_tool_icon(ui: &egui::Ui, tool: ToolKind, rect: Rect, color: Color32) {
+    egui::Image::from_uri(tool_icon_uri(tool))
+        .tint(color)
+        .paint_at(ui, rect);
+}
+
+fn tool_icon_uri(tool: ToolKind) -> &'static str {
+    match tool {
+        ToolKind::Select => "bytes://editor/tools/select.svg",
+        ToolKind::Brush => "bytes://editor/tools/brush.svg",
+        ToolKind::Bucket => "bytes://editor/tools/bucket.svg",
+        ToolKind::Rectangle => "bytes://editor/tools/rectangle.svg",
+        ToolKind::Erase => "bytes://editor/tools/erase.svg",
+        ToolKind::Eyedropper => "bytes://editor/tools/eyedropper.svg",
+        ToolKind::Collision => "bytes://editor/tools/collision.svg",
+        ToolKind::Zone => "bytes://editor/tools/zone.svg",
+        ToolKind::Pan => "bytes://editor/tools/pan.svg",
+        ToolKind::Zoom => "bytes://editor/tools/zoom.svg",
+    }
+}
+
+fn configure_tool_icons(ctx: &EguiContext) {
+    egui_extras::install_image_loaders(ctx);
+
+    for (uri, svg) in [
+        (
+            "bytes://editor/tools/select.svg",
+            include_str!("../assets/icons/tools/select.svg"),
+        ),
+        (
+            "bytes://editor/tools/brush.svg",
+            include_str!("../assets/icons/tools/brush.svg"),
+        ),
+        (
+            "bytes://editor/tools/bucket.svg",
+            include_str!("../assets/icons/tools/bucket.svg"),
+        ),
+        (
+            "bytes://editor/tools/rectangle.svg",
+            include_str!("../assets/icons/tools/rectangle.svg"),
+        ),
+        (
+            "bytes://editor/tools/erase.svg",
+            include_str!("../assets/icons/tools/erase.svg"),
+        ),
+        (
+            "bytes://editor/tools/eyedropper.svg",
+            include_str!("../assets/icons/tools/eyedropper.svg"),
+        ),
+        (
+            "bytes://editor/tools/collision.svg",
+            include_str!("../assets/icons/tools/collision.svg"),
+        ),
+        (
+            "bytes://editor/tools/zone.svg",
+            include_str!("../assets/icons/tools/zone.svg"),
+        ),
+        (
+            "bytes://editor/tools/pan.svg",
+            include_str!("../assets/icons/tools/pan.svg"),
+        ),
+        (
+            "bytes://editor/tools/zoom.svg",
+            include_str!("../assets/icons/tools/zoom.svg"),
+        ),
+    ] {
+        let bytes = normalize_svg_icon(svg).into_bytes().into_boxed_slice();
+        ctx.include_bytes(uri, egui::load::Bytes::Shared(Arc::from(bytes)));
+    }
+}
+
+fn normalize_svg_icon(svg: &str) -> String {
+    svg.replace("currentColor", "#ffffff")
+        .replace("black", "#ffffff")
+        .replace("#000000", "#ffffff")
+        .replace("#000", "#ffffff")
 }
 
 fn load_thumbnail(ctx: &EguiContext, asset: &AssetEntry) -> Result<TextureHandle> {
