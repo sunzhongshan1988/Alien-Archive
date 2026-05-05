@@ -1,7 +1,7 @@
 mod asset_registry;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     fs,
     path::{Path, PathBuf},
     sync::Arc,
@@ -41,6 +41,7 @@ fn main() -> eframe::Result<()> {
 enum ToolKind {
     Select,
     Brush,
+    Bucket,
     Rectangle,
     Erase,
     Eyedropper,
@@ -51,9 +52,10 @@ enum ToolKind {
 }
 
 impl ToolKind {
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 10] = [
         Self::Select,
         Self::Brush,
+        Self::Bucket,
         Self::Rectangle,
         Self::Erase,
         Self::Eyedropper,
@@ -67,6 +69,7 @@ impl ToolKind {
         match self {
             Self::Select => "选择",
             Self::Brush => "画笔",
+            Self::Bucket => "油漆桶",
             Self::Rectangle => "矩形",
             Self::Erase => "橡皮",
             Self::Eyedropper => "吸管",
@@ -99,6 +102,7 @@ enum ClipboardItem {
     Decal(content::ObjectInstance),
     Object(content::ObjectInstance),
     Entity(content::EntityInstance),
+    Zone(content::ZoneInstance),
 }
 
 #[derive(Clone, Debug)]
@@ -143,6 +147,53 @@ struct ResizeDrag {
     selection: SelectedItem,
 }
 
+#[derive(Clone, Debug)]
+struct ZoneVertexDrag {
+    zone_id: String,
+    vertex_index: usize,
+}
+
+#[derive(Clone, Debug)]
+struct SelectionMarquee {
+    start: Pos2,
+    current: Pos2,
+    additive: bool,
+}
+
+#[derive(Clone, Debug)]
+struct MultiMoveDrag {
+    start: [f32; 2],
+    origins: Vec<MoveOrigin>,
+}
+
+#[derive(Clone, Debug)]
+enum MoveOrigin {
+    Ground {
+        selection: SelectedItem,
+        x: i32,
+        y: i32,
+    },
+    ObjectLike {
+        selection: SelectedItem,
+        x: f32,
+        y: f32,
+    },
+    Zone {
+        selection: SelectedItem,
+        points: Vec<[f32; 2]>,
+    },
+}
+
+impl MoveOrigin {
+    fn layer(&self) -> LayerKind {
+        match self {
+            Self::Ground { selection, .. }
+            | Self::ObjectLike { selection, .. }
+            | Self::Zone { selection, .. } => selection.layer,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct EditorConfig {
     recent_maps: Vec<String>,
@@ -181,14 +232,16 @@ struct EditorApp {
     document: MapDocument,
     undo_stack: Vec<MapDocument>,
     redo_stack: Vec<MapDocument>,
-    clipboard: Option<ClipboardItem>,
+    clipboard: Vec<ClipboardItem>,
     selected_asset: Option<String>,
     selected_item: Option<SelectedItem>,
+    selected_items: Vec<SelectedItem>,
     active_layer: LayerKind,
     layer_states: HashMap<LayerKind, LayerUiState>,
     tool: ToolKind,
     ground_footprint_w: i32,
     ground_footprint_h: i32,
+    rectangle_erase_mode: bool,
     asset_search: String,
     asset_kind_filter: Option<AssetKind>,
     show_grid: bool,
@@ -204,6 +257,11 @@ struct EditorApp {
     rectangle_drag_current: Option<[i32; 2]>,
     lock_aspect_ratio: bool,
     resize_drag: Option<ResizeDrag>,
+    selection_marquee: Option<SelectionMarquee>,
+    multi_move_drag: Option<MultiMoveDrag>,
+    zone_draft_points: Vec<[f32; 2]>,
+    zone_vertex_drag: Option<ZoneVertexDrag>,
+    show_zone_labels: bool,
     pan: Vec2,
     zoom: f32,
     mouse_tile: Option<[i32; 2]>,
@@ -240,14 +298,16 @@ impl EditorApp {
             document,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
-            clipboard: None,
+            clipboard: Vec::new(),
             selected_asset: None,
             selected_item: None,
+            selected_items: Vec::new(),
             active_layer: LayerKind::Ground,
             layer_states: default_layer_states(),
             tool: ToolKind::Brush,
             ground_footprint_w: 4,
             ground_footprint_h: 4,
+            rectangle_erase_mode: false,
             asset_search: String::new(),
             asset_kind_filter: None,
             show_grid: true,
@@ -263,6 +323,11 @@ impl EditorApp {
             rectangle_drag_current: None,
             lock_aspect_ratio: true,
             resize_drag: None,
+            selection_marquee: None,
+            multi_move_drag: None,
+            zone_draft_points: Vec::new(),
+            zone_vertex_drag: None,
+            show_zone_labels: true,
             pan: vec2(48.0, 48.0),
             zoom: 1.0,
             mouse_tile: None,
@@ -324,17 +389,24 @@ impl EditorApp {
                 self.tool = ToolKind::Brush;
             }
             if input.key_pressed(Key::Num3) {
-                self.tool = ToolKind::Rectangle;
+                self.tool = ToolKind::Bucket;
             }
             if input.key_pressed(Key::Num4) {
-                self.tool = ToolKind::Erase;
+                self.tool = ToolKind::Rectangle;
             }
             if input.key_pressed(Key::Num5) {
-                self.tool = ToolKind::Eyedropper;
+                self.tool = ToolKind::Erase;
             }
             if input.key_pressed(Key::Num6) {
+                self.tool = ToolKind::Eyedropper;
+            }
+            if input.key_pressed(Key::Num7) {
                 self.tool = ToolKind::Collision;
                 self.active_layer = LayerKind::Collision;
+            }
+            if input.key_pressed(Key::Escape) && !self.zone_draft_points.is_empty() {
+                self.zone_draft_points.clear();
+                self.status = "已取消区域绘制".to_owned();
             }
         });
     }
@@ -399,7 +471,7 @@ impl EditorApp {
                 self.map_path = path.clone();
                 self.document = document;
                 self.save_as_id = self.document.id.clone();
-                self.selected_item = None;
+                self.clear_selection();
                 self.selected_asset = None;
                 self.pending_open_path = None;
                 self.open_confirm_path = None;
@@ -457,7 +529,7 @@ impl EditorApp {
         };
         self.redo_stack.push(self.document.clone());
         self.document = previous;
-        self.selected_item = None;
+        self.clear_selection();
         self.mark_dirty();
         self.status = "已撤销".to_owned();
     }
@@ -469,7 +541,7 @@ impl EditorApp {
         };
         self.undo_stack.push(self.document.clone());
         self.document = next;
-        self.selected_item = None;
+        self.clear_selection();
         self.mark_dirty();
         self.status = "已重做".to_owned();
     }
@@ -516,7 +588,7 @@ impl EditorApp {
                         self.map_path = maps_dir(&self.project_root).join(format!("{id}.ron"));
                         self.selected_map_path = self.map_path.clone();
                         self.save_as_id = id;
-                        self.selected_item = None;
+                        self.clear_selection();
                         self.selected_asset = None;
                         self.undo_stack.clear();
                         self.redo_stack.clear();
@@ -564,69 +636,131 @@ impl EditorApp {
         self.layer_state(self.active_layer).locked
     }
 
+    fn set_single_selection(&mut self, selection: Option<SelectedItem>) {
+        self.selected_item = selection.clone();
+        self.selected_items = selection.into_iter().collect();
+    }
+
+    fn set_selection(&mut self, mut selections: Vec<SelectedItem>) {
+        let mut deduped = Vec::with_capacity(selections.len());
+        for selection in selections.drain(..) {
+            if !deduped.contains(&selection) {
+                deduped.push(selection);
+            }
+        }
+        self.selected_item = deduped.first().cloned();
+        self.selected_items = deduped;
+    }
+
+    fn clear_selection(&mut self) {
+        self.selected_item = None;
+        self.selected_items.clear();
+    }
+
+    fn current_selection_list(&self) -> Vec<SelectedItem> {
+        if !self.selected_items.is_empty() {
+            self.selected_items.clone()
+        } else {
+            self.selected_item.clone().into_iter().collect()
+        }
+    }
+
+    fn toggle_selection(&mut self, selection: SelectedItem) {
+        let mut selections = self.current_selection_list();
+        if let Some(index) = selections.iter().position(|item| item == &selection) {
+            selections.remove(index);
+        } else {
+            selections.push(selection);
+        }
+        self.set_selection(selections);
+    }
+
     fn copy_selected_item(&mut self) {
-        let Some(selection) = self.selected_item.clone() else {
+        let selections = self.current_selection_list();
+        if selections.is_empty() {
             self.status = "请先选择对象".to_owned();
             return;
-        };
-        self.clipboard = self.clipboard_for_selection(&selection);
-        self.status = if self.clipboard.is_some() {
-            format!("已复制 {}", selection.label())
-        } else {
+        }
+
+        self.clipboard = selections
+            .iter()
+            .filter_map(|selection| self.clipboard_for_selection(selection))
+            .collect();
+        self.status = if self.clipboard.is_empty() {
             "当前选择不能复制".to_owned()
+        } else if self.clipboard.len() == 1 {
+            format!("已复制 {}", selections[0].label())
+        } else {
+            format!("已复制 {} 个对象", self.clipboard.len())
         };
     }
 
     fn paste_clipboard(&mut self) {
-        let Some(item) = self.clipboard.clone() else {
+        if self.clipboard.is_empty() {
             self.status = "剪贴板为空".to_owned();
             return;
-        };
+        }
         self.push_undo_snapshot();
-        let selection = match item {
-            ClipboardItem::Ground(mut tile) => {
-                tile.x = (tile.x + 1).clamp(0, self.document.width.saturating_sub(1) as i32);
-                tile.y = (tile.y + 1).clamp(0, self.document.height.saturating_sub(1) as i32);
-                self.document.layers.ground.push(tile.clone());
-                SelectedItem {
-                    layer: LayerKind::Ground,
-                    id: ground_selection_id(tile.x, tile.y),
+        let mut next_selection = Vec::new();
+        for item in self.clipboard.clone() {
+            let selection = match item {
+                ClipboardItem::Ground(mut tile) => {
+                    tile.x = (tile.x + 1).clamp(0, self.document.width.saturating_sub(1) as i32);
+                    tile.y = (tile.y + 1).clamp(0, self.document.height.saturating_sub(1) as i32);
+                    self.document.layers.ground.push(tile.clone());
+                    SelectedItem {
+                        layer: LayerKind::Ground,
+                        id: ground_selection_id(tile.x, tile.y),
+                    }
                 }
-            }
-            ClipboardItem::Decal(mut instance) => {
-                instance.id = next_editor_object_id("decal", &self.document.layers.decals);
-                instance.x += 1.0;
-                instance.y += 1.0;
-                self.document.layers.decals.push(instance.clone());
-                SelectedItem {
-                    layer: LayerKind::Decals,
-                    id: instance.id,
+                ClipboardItem::Decal(mut instance) => {
+                    instance.id = next_editor_object_id("decal", &self.document.layers.decals);
+                    instance.x += 1.0;
+                    instance.y += 1.0;
+                    self.document.layers.decals.push(instance.clone());
+                    SelectedItem {
+                        layer: LayerKind::Decals,
+                        id: instance.id,
+                    }
                 }
-            }
-            ClipboardItem::Object(mut instance) => {
-                instance.id = next_editor_object_id("obj", &self.document.layers.objects);
-                instance.x += 1.0;
-                instance.y += 1.0;
-                self.document.layers.objects.push(instance.clone());
-                SelectedItem {
-                    layer: LayerKind::Objects,
-                    id: instance.id,
+                ClipboardItem::Object(mut instance) => {
+                    instance.id = next_editor_object_id("obj", &self.document.layers.objects);
+                    instance.x += 1.0;
+                    instance.y += 1.0;
+                    self.document.layers.objects.push(instance.clone());
+                    SelectedItem {
+                        layer: LayerKind::Objects,
+                        id: instance.id,
+                    }
                 }
-            }
-            ClipboardItem::Entity(mut instance) => {
-                instance.id = next_editor_entity_id("ent", &self.document.layers.entities);
-                instance.x += 1.0;
-                instance.y += 1.0;
-                self.document.layers.entities.push(instance.clone());
-                SelectedItem {
-                    layer: LayerKind::Entities,
-                    id: instance.id,
+                ClipboardItem::Entity(mut instance) => {
+                    instance.id = next_editor_entity_id("ent", &self.document.layers.entities);
+                    instance.x += 1.0;
+                    instance.y += 1.0;
+                    self.document.layers.entities.push(instance.clone());
+                    SelectedItem {
+                        layer: LayerKind::Entities,
+                        id: instance.id,
+                    }
                 }
-            }
-        };
-        self.selected_item = Some(selection);
+                ClipboardItem::Zone(mut zone) => {
+                    zone.id = next_editor_zone_id("zone", &self.document.layers.zones);
+                    for point in &mut zone.points {
+                        point[0] += 1.0;
+                        point[1] += 1.0;
+                    }
+                    self.document.layers.zones.push(zone.clone());
+                    SelectedItem {
+                        layer: LayerKind::Zones,
+                        id: zone.id,
+                    }
+                }
+            };
+            next_selection.push(selection);
+        }
+        self.set_selection(next_selection);
         self.mark_dirty();
-        self.status = "已粘贴".to_owned();
+        self.status = format!("已粘贴 {} 个对象", self.selected_items.len().max(1));
     }
 
     fn duplicate_selected_item(&mut self) {
@@ -635,19 +769,28 @@ impl EditorApp {
     }
 
     fn delete_current_selection(&mut self) {
-        let Some(selection) = self.selected_item.clone() else {
+        let selections = self.current_selection_list();
+        if selections.is_empty() {
             self.status = "请先选择对象".to_owned();
             return;
-        };
-        if self.layer_state(selection.layer).locked {
-            self.status = format!("{} 已锁定", selection.layer.zh_label());
+        }
+
+        let editable = selections
+            .into_iter()
+            .filter(|selection| !self.layer_state(selection.layer).locked)
+            .collect::<Vec<_>>();
+        if editable.is_empty() {
+            self.status = "所选图层已锁定".to_owned();
             return;
         }
+
         self.push_undo_snapshot();
-        self.delete_selected_item(&selection);
-        self.selected_item = None;
+        for selection in &editable {
+            self.delete_selected_item(selection);
+        }
+        self.clear_selection();
         self.mark_dirty();
-        self.status = format!("已删除 {}", selection.label());
+        self.status = format!("已删除 {} 个对象", editable.len());
     }
 
     fn clipboard_for_selection(&self, selection: &SelectedItem) -> Option<ClipboardItem> {
@@ -686,7 +829,15 @@ impl EditorApp {
                 .find(|instance| instance.id == selection.id)
                 .cloned()
                 .map(ClipboardItem::Entity),
-            LayerKind::Zones | LayerKind::Collision => None,
+            LayerKind::Zones => self
+                .document
+                .layers
+                .zones
+                .iter()
+                .find(|zone| zone.id == selection.id)
+                .cloned()
+                .map(ClipboardItem::Zone),
+            LayerKind::Collision => None,
         }
     }
 
@@ -817,7 +968,7 @@ impl EditorApp {
                     ui.close();
                 }
                 if ui
-                    .add_enabled(self.clipboard.is_some(), egui::Button::new("粘贴"))
+                    .add_enabled(!self.clipboard.is_empty(), egui::Button::new("粘贴"))
                     .clicked()
                 {
                     self.paste_clipboard();
@@ -838,6 +989,7 @@ impl EditorApp {
                 ui.checkbox(&mut self.show_collision, "碰撞");
                 ui.checkbox(&mut self.show_entity_bounds, "实体边界");
                 ui.checkbox(&mut self.show_zones, "区域");
+                ui.checkbox(&mut self.show_zone_labels, "区域标签");
                 ui.separator();
                 if ui.button("重置视图").clicked() {
                     self.pan = vec2(48.0, 48.0);
@@ -942,7 +1094,7 @@ impl EditorApp {
 
             if self.active_layer == LayerKind::Ground {
                 ui.separator();
-                ui.label("地块尺寸");
+                ui.label("画笔尺寸");
                 ui.add(
                     egui::DragValue::new(&mut self.ground_footprint_w)
                         .range(1..=self.document.width as i32)
@@ -955,6 +1107,10 @@ impl EditorApp {
                         .speed(0.1)
                         .prefix("H "),
                 );
+            }
+            if self.tool == ToolKind::Rectangle {
+                ui.separator();
+                ui.checkbox(&mut self.rectangle_erase_mode, "矩形擦除");
             }
 
             ui.separator();
@@ -1019,57 +1175,141 @@ impl EditorApp {
         ui.separator();
 
         let search = self.asset_search.to_ascii_lowercase();
-        for category in self.registry.categories() {
-            egui::CollapsingHeader::new(category_label(category))
+        let categories = self
+            .registry
+            .categories()
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        for category in categories {
+            egui::CollapsingHeader::new(category_label(&category))
                 .default_open(category == "tiles" || category == "props")
                 .show(ui, |ui| {
-                    for asset in self.registry.in_category(category) {
-                        if self
-                            .asset_kind_filter
-                            .is_some_and(|kind| kind != asset.kind)
-                        {
-                            continue;
-                        }
-                        if !search.is_empty() && !asset_matches_search(asset, &search) {
-                            continue;
-                        }
-                        let selected = self.selected_asset.as_deref() == Some(asset.id.as_str());
-                        let response = ui
-                            .horizontal(|ui| {
-                                if let Some(texture) = self.thumbnails.get(&asset.id) {
-                                    let (slot_rect, _) =
-                                        ui.allocate_exact_size(vec2(40.0, 40.0), Sense::hover());
-                                    let image_rect =
-                                        fit_centered_rect(slot_rect, texture.size_vec2());
-                                    ui.painter().image(
-                                        texture.id(),
-                                        image_rect,
-                                        Rect::from_min_max(
-                                            Pos2::new(0.0, 0.0),
-                                            Pos2::new(1.0, 1.0),
-                                        ),
-                                        Color32::WHITE,
-                                    );
-                                } else {
-                                    let (rect, _) =
-                                        ui.allocate_exact_size(vec2(40.0, 40.0), Sense::hover());
-                                    ui.painter().rect_filled(rect, 2.0, Color32::DARK_GRAY);
-                                }
+                    let assets = self
+                        .registry
+                        .in_category(&category)
+                        .filter(|asset| {
+                            !self
+                                .asset_kind_filter
+                                .is_some_and(|kind| kind != asset.kind)
+                                && (search.is_empty() || asset_matches_search(asset, &search))
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>();
 
-                                ui.selectable_label(selected, &asset.id)
-                            })
-                            .inner;
+                    if category == "tiles" {
+                        self.draw_tile_asset_grid(ui, &assets);
+                        return;
+                    }
 
-                        if response.clicked() {
-                            self.selected_asset = Some(asset.id.clone());
-                            self.selected_item = None;
-                            self.active_layer = asset.default_layer;
-                            self.tool = ToolKind::Brush;
-                            self.status = format!("Selected {}", asset.id);
-                        }
+                    for asset in assets {
+                        self.draw_asset_list_row(ui, &asset);
                     }
                 });
         }
+    }
+
+    fn draw_tile_asset_grid(&mut self, ui: &mut egui::Ui, assets: &[AssetEntry]) {
+        let slot = vec2(56.0, 64.0);
+        let columns = (ui.available_width() / slot.x).floor().max(1.0) as usize;
+        egui::Grid::new("tile_asset_grid")
+            .num_columns(columns)
+            .spacing(vec2(6.0, 6.0))
+            .show(ui, |ui| {
+                for (index, asset) in assets.iter().enumerate() {
+                    let selected = self.selected_asset.as_deref() == Some(asset.id.as_str());
+                    let (rect, response) = ui.allocate_exact_size(slot, Sense::click());
+                    let fill = if selected {
+                        Color32::from_rgb(62, 88, 82)
+                    } else {
+                        Color32::from_rgb(31, 35, 37)
+                    };
+                    ui.painter().rect_filled(rect, 3.0, fill);
+                    ui.painter().rect_stroke(
+                        rect,
+                        3.0,
+                        Stroke::new(
+                            if selected { 2.0 } else { 1.0 },
+                            if selected {
+                                Color32::from_rgb(120, 235, 170)
+                            } else {
+                                Color32::from_rgb(65, 72, 75)
+                            },
+                        ),
+                        StrokeKind::Inside,
+                    );
+                    let image_slot =
+                        Rect::from_min_size(rect.min + vec2(8.0, 4.0), vec2(40.0, 40.0));
+                    if let Some(texture) = self.thumbnails.get(&asset.id) {
+                        let image_rect = fit_centered_rect(image_slot, texture.size_vec2());
+                        ui.painter().image(
+                            texture.id(),
+                            image_rect,
+                            Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0)),
+                            Color32::WHITE,
+                        );
+                    }
+                    let label_rect =
+                        Rect::from_min_size(rect.min + vec2(4.0, 46.0), vec2(48.0, 14.0));
+                    ui.painter().text(
+                        label_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        compact_asset_label(&asset.id),
+                        egui::TextStyle::Small.resolve(ui.style()),
+                        Color32::from_rgb(220, 228, 224),
+                    );
+
+                    if response.clicked() {
+                        self.select_asset(asset);
+                    }
+                    response.on_hover_text(&asset.id);
+
+                    if (index + 1) % columns == 0 {
+                        ui.end_row();
+                    }
+                }
+            });
+    }
+
+    fn draw_asset_list_row(&mut self, ui: &mut egui::Ui, asset: &AssetEntry) {
+        if self
+            .asset_kind_filter
+            .is_some_and(|kind| kind != asset.kind)
+        {
+            return;
+        }
+        let selected = self.selected_asset.as_deref() == Some(asset.id.as_str());
+        let response = ui
+            .horizontal(|ui| {
+                if let Some(texture) = self.thumbnails.get(&asset.id) {
+                    let (slot_rect, _) = ui.allocate_exact_size(vec2(40.0, 40.0), Sense::hover());
+                    let image_rect = fit_centered_rect(slot_rect, texture.size_vec2());
+                    ui.painter().image(
+                        texture.id(),
+                        image_rect,
+                        Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0)),
+                        Color32::WHITE,
+                    );
+                } else {
+                    let (rect, _) = ui.allocate_exact_size(vec2(40.0, 40.0), Sense::hover());
+                    ui.painter().rect_filled(rect, 2.0, Color32::DARK_GRAY);
+                }
+
+                ui.selectable_label(selected, &asset.id)
+            })
+            .inner;
+
+        if response.clicked() {
+            self.select_asset(asset);
+        }
+    }
+
+    fn select_asset(&mut self, asset: &AssetEntry) {
+        self.selected_asset = Some(asset.id.clone());
+        self.clear_selection();
+        self.active_layer = asset.default_layer;
+        self.tool = ToolKind::Brush;
+        self.status = format!("Selected {}", asset.id);
     }
 
     fn draw_layer_panel(&mut self, ui: &mut egui::Ui) {
@@ -1105,12 +1345,73 @@ impl EditorApp {
         ui.heading("Inspector");
         ui.separator();
 
-        if let Some(selection) = self.selected_item.clone() {
+        let selections = self.current_selection_list();
+        if selections.len() > 1 {
+            self.draw_multi_selection_inspector(ui, selections);
+        } else if let Some(selection) = selections.into_iter().next() {
             self.draw_selection_inspector(ui, selection);
         } else if let Some(asset) = self.selected_asset().cloned() {
             self.draw_asset_inspector(ui, &asset);
         } else {
             self.draw_map_inspector(ui);
+        }
+    }
+
+    fn draw_multi_selection_inspector(&mut self, ui: &mut egui::Ui, selections: Vec<SelectedItem>) {
+        ui.label(format!("多选：{} 个对象", selections.len()));
+        for layer in LayerKind::ALL {
+            let count = selections
+                .iter()
+                .filter(|selection| selection.layer == layer)
+                .count();
+            if count > 0 {
+                ui.label(format!("{}：{}", layer.zh_label(), count));
+            }
+        }
+
+        if selections
+            .iter()
+            .any(|selection| self.layer_state(selection.layer).locked)
+        {
+            ui.colored_label(Color32::YELLOW, "部分所选图层已锁定，批量编辑会跳过它们");
+        }
+
+        ui.separator();
+        ui.horizontal(|ui| {
+            if ui.button("复制").clicked() {
+                self.copy_selected_item();
+            }
+            if ui.button("复制一份").clicked() {
+                self.duplicate_selected_item();
+            }
+            if ui.button("删除").clicked() {
+                self.delete_current_selection();
+            }
+        });
+
+        let object_like_count = selections
+            .iter()
+            .filter(|selection| {
+                matches!(
+                    selection.layer,
+                    LayerKind::Decals | LayerKind::Objects | LayerKind::Entities
+                ) && !self.layer_state(selection.layer).locked
+            })
+            .count();
+        if object_like_count > 0 {
+            ui.separator();
+            ui.label(format!("批量层级：{} 个可调对象", object_like_count));
+            let mut z_index = 0;
+            if ui
+                .add(egui::DragValue::new(&mut z_index).prefix("层级 "))
+                .changed()
+            {
+                self.push_undo_snapshot();
+                for selection in &selections {
+                    self.set_z_index_for_selection(selection, z_index);
+                }
+                self.mark_dirty();
+            }
         }
     }
 
@@ -1339,6 +1640,32 @@ impl EditorApp {
                     changed |= ui.text_edit_singleline(&mut zone.zone_type).changed();
                     next_selection.id = zone.id.clone();
                     ui.label(format!("点数：{}", zone.points.len()));
+                    for (index, point) in zone.points.iter_mut().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.label(format!("#{index}"));
+                            changed |= ui
+                                .add(egui::DragValue::new(&mut point[0]).speed(0.05).prefix("x "))
+                                .changed();
+                            changed |= ui
+                                .add(egui::DragValue::new(&mut point[1]).speed(0.05).prefix("y "))
+                                .changed();
+                        });
+                    }
+                    ui.horizontal(|ui| {
+                        if ui.button("加点").clicked() {
+                            let point = zone.points.last().copied().unwrap_or([0.0, 0.0]);
+                            zone.points.push([point[0] + 1.0, point[1]]);
+                            changed = true;
+                        }
+                        if ui.button("删末点").clicked() && zone.points.len() > 3 {
+                            zone.points.pop();
+                            changed = true;
+                        }
+                        if ui.button("反向").clicked() {
+                            zone.points.reverse();
+                            changed = true;
+                        }
+                    });
                 }
             }
             LayerKind::Collision => {
@@ -1349,7 +1676,7 @@ impl EditorApp {
         if changed && !self.layer_state(selection.layer).locked {
             self.push_undo_snapshot();
             self.document = next;
-            self.selected_item = Some(next_selection);
+            self.set_single_selection(Some(next_selection));
             self.mark_dirty();
         }
     }
@@ -1493,7 +1820,7 @@ impl EditorApp {
         self.map_path = maps_dir(&self.project_root).join(format!("{id}.ron"));
         self.selected_map_path = self.map_path.clone();
         self.save_as_id = id;
-        self.selected_item = None;
+        self.clear_selection();
         self.selected_asset = None;
         self.undo_stack.clear();
         self.redo_stack.clear();
@@ -1555,6 +1882,8 @@ impl EditorApp {
 
         self.draw_ground_footprint_preview(rect, &painter);
         self.draw_rectangle_preview(rect, &painter);
+        self.draw_zone_draft(rect, &painter, response.hover_pos());
+        self.draw_selection_marquee(&painter);
         self.handle_canvas_selection(&response, rect, ctx);
         self.handle_canvas_placement(&response, rect, ctx);
     }
@@ -1570,35 +1899,44 @@ impl EditorApp {
                 .input(|input| input.pointer.interact_pos())
                 .or_else(|| response.hover_pos())
             {
-                self.selected_item = self.hit_test_placed_item(canvas_rect, pointer_pos);
-                if let Some(selection) = &self.selected_item {
-                    self.active_layer = selection.layer;
+                if let Some(selection) = self.hit_test_placed_item(canvas_rect, pointer_pos) {
+                    if !self.current_selection_list().contains(&selection) {
+                        self.set_single_selection(Some(selection));
+                    }
+                    if let Some(selection) = &self.selected_item {
+                        self.active_layer = selection.layer;
+                    }
                 }
             }
         }
 
         response.context_menu(|ui| {
+            let selections = self.current_selection_list();
             let Some(selection) = self.selected_item.clone() else {
                 ui.label("No selection");
                 return;
             };
 
-            ui.label(selection.label());
-            if ui.button("水平翻转").clicked() {
-                self.flip_selected_item();
-                ui.close();
-            }
-            if ui.button("右转 90").clicked() {
-                self.rotate_selected_item(90);
-                ui.close();
-            }
-            if ui.button("左转 90").clicked() {
-                self.rotate_selected_item(-90);
-                ui.close();
-            }
-            if ui.button("重置变换").clicked() {
-                self.reset_selected_transform();
-                ui.close();
+            if selections.len() > 1 {
+                ui.label(format!("已选 {} 个对象", selections.len()));
+            } else {
+                ui.label(selection.label());
+                if ui.button("水平翻转").clicked() {
+                    self.flip_selected_item();
+                    ui.close();
+                }
+                if ui.button("右转 90").clicked() {
+                    self.rotate_selected_item(90);
+                    ui.close();
+                }
+                if ui.button("左转 90").clicked() {
+                    self.rotate_selected_item(-90);
+                    ui.close();
+                }
+                if ui.button("重置变换").clicked() {
+                    self.reset_selected_transform();
+                    ui.close();
+                }
             }
             ui.separator();
             if ui.button("复制").clicked() {
@@ -1612,6 +1950,18 @@ impl EditorApp {
             if ui.button("删除").clicked() {
                 self.delete_current_selection();
                 ui.close();
+            }
+            if selection.layer == LayerKind::Zones {
+                ui.separator();
+                if ui.button("删除附近顶点").clicked() {
+                    if let Some(pointer_pos) = ctx
+                        .input(|input| input.pointer.interact_pos())
+                        .or_else(|| response.hover_pos())
+                    {
+                        self.delete_zone_vertex_near(canvas_rect, &selection.id, pointer_pos);
+                    }
+                    ui.close();
+                }
             }
         });
     }
@@ -1678,6 +2028,11 @@ impl EditorApp {
             .screen_to_map_position(canvas_rect, mouse)
             .unwrap_or([tile_x as f32, tile_y as f32]);
 
+        if self.tool == ToolKind::Zone {
+            self.handle_zone_tool(response, raw_map_pos, ctx.input(|input| input.modifiers));
+            return;
+        }
+
         if self.tool == ToolKind::Rectangle {
             self.handle_rectangle_tool(response, tile_x, tile_y);
             return;
@@ -1687,9 +2042,17 @@ impl EditorApp {
             if let Some(selection) = self.hit_test_placed_item(canvas_rect, mouse) {
                 if let Some(asset_id) = self.asset_for_selection(&selection) {
                     self.selected_asset = Some(asset_id.clone());
-                    self.selected_item = None;
+                    self.clear_selection();
                     self.active_layer = selection.layer;
                     self.tool = ToolKind::Brush;
+                    if selection.layer == LayerKind::Ground {
+                        if let Some([width, height]) =
+                            self.ground_size_for_selection_id(&selection.id)
+                        {
+                            self.ground_footprint_w = width;
+                            self.ground_footprint_h = height;
+                        }
+                    }
                     self.status = format!("吸取素材 {}", asset_id);
                 }
             }
@@ -1701,31 +2064,9 @@ impl EditorApp {
             return;
         }
 
-        if self.tool == ToolKind::Zone || self.active_layer == LayerKind::Zones {
-            self.push_undo_snapshot();
-            let id = next_editor_zone_id("zone", &self.document.layers.zones);
-            self.document.layers.zones.push(content::ZoneInstance {
-                id: id.clone(),
-                zone_type: "Trigger".to_owned(),
-                points: vec![
-                    [tile_x as f32, tile_y as f32],
-                    [tile_x as f32 + 1.0, tile_y as f32],
-                    [tile_x as f32 + 1.0, tile_y as f32 + 1.0],
-                    [tile_x as f32, tile_y as f32 + 1.0],
-                ],
-            });
-            self.selected_item = Some(SelectedItem {
-                layer: LayerKind::Zones,
-                id,
-            });
-            self.mark_dirty();
-            self.status = format!("Zone {}, {}", tile_x, tile_y);
-            return;
-        }
-
         if self.tool == ToolKind::Erase {
             self.push_undo_snapshot();
-            self.document.erase_at(self.active_layer, tile_x, tile_y);
+            self.erase_brush_at(tile_x, tile_y);
             self.mark_dirty();
             self.status = format!("Erased {}, {}", tile_x, tile_y);
             return;
@@ -1733,9 +2074,27 @@ impl EditorApp {
 
         if self.tool == ToolKind::Collision || self.active_layer == LayerKind::Collision {
             self.push_undo_snapshot();
-            self.document.place_collision(tile_x, tile_y);
+            self.paint_collision_brush(tile_x, tile_y);
             self.mark_dirty();
             self.status = format!("Collision {}, {}", tile_x, tile_y);
+            return;
+        }
+
+        if self.tool == ToolKind::Bucket {
+            if self.active_layer != LayerKind::Ground {
+                self.status = "油漆桶目前用于地表图层".to_owned();
+                return;
+            }
+            let Some(asset_id) = self.selected_asset().map(|asset| asset.id.clone()) else {
+                self.status = "油漆桶需要先选择地表素材".to_owned();
+                return;
+            };
+            self.push_undo_snapshot();
+            let filled = self.bucket_fill_ground(tile_x, tile_y, &asset_id);
+            if filled > 0 {
+                self.mark_dirty();
+            }
+            self.status = format!("油漆桶填充 {} 格", filled);
             return;
         }
 
@@ -1750,14 +2109,13 @@ impl EditorApp {
             self.status = "Select an asset first".to_owned();
             return;
         };
-        self.selected_item = None;
+        self.clear_selection();
         self.push_undo_snapshot();
 
         let placed_ground_size = match self.active_layer {
             LayerKind::Ground => {
                 let [width, height] = self.clamped_ground_footprint_at(tile_x, tile_y);
-                self.document
-                    .place_tile_sized(&asset_id, tile_x, tile_y, width, height);
+                self.paint_ground_brush(tile_x, tile_y, &asset_id);
                 Some([width, height])
             }
             LayerKind::Decals => {
@@ -1814,34 +2172,118 @@ impl EditorApp {
         };
 
         if response.drag_started() {
-            if let Some(selection) = self
-                .selected_item
-                .clone()
-                .filter(|selection| self.resize_handle_hit(canvas_rect, selection, pointer_pos))
-            {
-                self.resize_drag = Some(ResizeDrag {
-                    selection: selection.clone(),
-                });
-                if !self.layer_state(selection.layer).locked {
-                    self.push_undo_snapshot();
+            let modifiers = ctx.input(|input| input.modifiers);
+            let current = self.current_selection_list();
+            self.resize_drag = None;
+            self.zone_vertex_drag = None;
+            self.selection_marquee = None;
+            self.multi_move_drag = None;
+
+            if current.len() == 1 {
+                let selection = current[0].clone();
+                if selection.layer == LayerKind::Zones {
+                    if let Some(vertex_index) =
+                        self.zone_vertex_hit(canvas_rect, &selection.id, pointer_pos)
+                    {
+                        self.zone_vertex_drag = Some(ZoneVertexDrag {
+                            zone_id: selection.id.clone(),
+                            vertex_index,
+                        });
+                        if !self.layer_state(LayerKind::Zones).locked {
+                            self.push_undo_snapshot();
+                        }
+                        return;
+                    }
                 }
-                return;
+
+                if self.resize_handle_hit(canvas_rect, &selection, pointer_pos) {
+                    self.resize_drag = Some(ResizeDrag {
+                        selection: selection.clone(),
+                    });
+                    if !self.layer_state(selection.layer).locked {
+                        self.push_undo_snapshot();
+                    }
+                    return;
+                }
             }
 
-            self.resize_drag = None;
-            self.selected_item = self.hit_test_placed_item(canvas_rect, pointer_pos);
-            if let Some(selection) = &self.selected_item {
+            let hit = self.hit_test_placed_item(canvas_rect, pointer_pos);
+            let additive = modifiers.shift || modifiers.command || modifiers.ctrl;
+            if let Some(selection) = hit {
                 self.active_layer = selection.layer;
-                self.status = format!("Selected {}", selection.label());
-                if !self.layer_state(selection.layer).locked {
-                    self.push_undo_snapshot();
+                if additive {
+                    self.toggle_selection(selection);
+                    self.status = format!("已选中 {} 个对象", self.current_selection_list().len());
+                    return;
                 }
+
+                if !current.contains(&selection) {
+                    self.set_single_selection(Some(selection));
+                }
+
+                let selections = self.current_selection_list();
+                let origins = self.move_origins_for_selection(&selections);
+                if origins
+                    .iter()
+                    .any(|origin| !self.layer_state(origin.layer()).locked)
+                {
+                    if let Some(start) = self.screen_to_map_position(canvas_rect, pointer_pos) {
+                        self.push_undo_snapshot();
+                        self.multi_move_drag = Some(MultiMoveDrag { start, origins });
+                    }
+                }
+                self.status = if selections.len() > 1 {
+                    format!("已选中 {} 个对象", selections.len())
+                } else {
+                    format!("Selected {}", selections[0].label())
+                };
             } else {
-                self.status = "No object selected".to_owned();
+                if !additive {
+                    self.clear_selection();
+                }
+                self.selection_marquee = Some(SelectionMarquee {
+                    start: pointer_pos,
+                    current: pointer_pos,
+                    additive,
+                });
+                self.status = "框选中".to_owned();
             }
         }
 
         if response.dragged() && ctx.input(|input| input.pointer.primary_down()) {
+            if let Some(marquee) = &mut self.selection_marquee {
+                marquee.current = pointer_pos;
+                return;
+            }
+
+            if let Some(drag) = self.zone_vertex_drag.clone() {
+                if !self.layer_state(LayerKind::Zones).locked {
+                    if let Some(raw) = self.screen_to_map_position(canvas_rect, pointer_pos) {
+                        let point = self.snapped_map_position(
+                            raw,
+                            None,
+                            ctx.input(|input| input.modifiers),
+                        );
+                        self.move_zone_vertex(&drag.zone_id, drag.vertex_index, point);
+                        self.mark_dirty();
+                        self.status = format!("移动区域顶点 #{}", drag.vertex_index);
+                    }
+                }
+                return;
+            }
+
+            if let Some(drag) = self.multi_move_drag.clone() {
+                if let Some(raw_pos) = self.screen_to_map_position(canvas_rect, pointer_pos) {
+                    let modifiers = ctx.input(|input| input.modifiers);
+                    let raw_delta = [raw_pos[0] - drag.start[0], raw_pos[1] - drag.start[1]];
+                    let delta = snapped_delta(raw_delta, modifiers);
+                    self.apply_multi_move(&drag.origins, delta);
+                    self.mark_dirty();
+                    self.status = format!("移动 {} 个对象", drag.origins.len());
+                }
+                return;
+            }
+
             if let Some(resize) = self.resize_drag.clone() {
                 self.resize_selected_item(canvas_rect, &resize.selection, pointer_pos, ctx);
                 self.mark_dirty();
@@ -1872,10 +2314,10 @@ impl EditorApp {
             let moved_ground = self.move_selected_item(&selection, snapped_pos[0], snapped_pos[1]);
             if selection.layer == LayerKind::Ground {
                 if let Some([new_x, new_y]) = moved_ground {
-                    self.selected_item = Some(SelectedItem {
+                    self.set_single_selection(Some(SelectedItem {
                         layer: LayerKind::Ground,
                         id: ground_selection_id(new_x, new_y),
-                    });
+                    }));
                     self.mark_dirty();
                     self.status = format!("Moved {} to {}, {}", selection.label(), new_x, new_y);
                     return;
@@ -1892,15 +2334,48 @@ impl EditorApp {
         }
 
         if response.drag_stopped() {
+            if let Some(marquee) = self.selection_marquee.take() {
+                let rect = Rect::from_two_pos(marquee.start, marquee.current);
+                if rect.width().abs() > 4.0 || rect.height().abs() > 4.0 {
+                    let mut selections = if marquee.additive {
+                        self.current_selection_list()
+                    } else {
+                        Vec::new()
+                    };
+                    selections.extend(self.selections_in_screen_rect(canvas_rect, rect));
+                    self.set_selection(selections);
+                    self.status = format!("框选 {} 个对象", self.current_selection_list().len());
+                }
+            }
+            self.multi_move_drag = None;
             self.resize_drag = None;
+            self.zone_vertex_drag = None;
         }
 
         if response.clicked() {
-            self.selected_item = self.hit_test_placed_item(canvas_rect, pointer_pos);
-            if let Some(selection) = &self.selected_item {
-                self.active_layer = selection.layer;
-                self.status = format!("Selected {}", selection.label());
+            let modifiers = ctx.input(|input| input.modifiers);
+            if let Some(selection) = self.hit_test_placed_item(canvas_rect, pointer_pos) {
+                if modifiers.shift || modifiers.command || modifiers.ctrl {
+                    self.toggle_selection(selection);
+                } else {
+                    self.set_single_selection(Some(selection));
+                }
+                if let Some(selection) = self.selected_item.clone() {
+                    self.active_layer = selection.layer;
+                }
+                let count = self.current_selection_list().len();
+                self.status = if count > 1 {
+                    format!("已选中 {count} 个对象")
+                } else {
+                    self.selected_item
+                        .as_ref()
+                        .map(|selection| format!("Selected {}", selection.label()))
+                        .unwrap_or_else(|| "No object selected".to_owned())
+                };
             } else {
+                if !(modifiers.shift || modifiers.command || modifiers.ctrl) {
+                    self.clear_selection();
+                }
                 self.status = "No object selected".to_owned();
             }
         }
@@ -1930,6 +2405,61 @@ impl EditorApp {
         }
     }
 
+    fn handle_zone_tool(
+        &mut self,
+        response: &egui::Response,
+        raw_pos: [f32; 2],
+        modifiers: Modifiers,
+    ) {
+        if self.layer_state(LayerKind::Zones).locked {
+            self.status = "区域图层已锁定".to_owned();
+            return;
+        }
+        if !response.clicked() && !response.double_clicked() {
+            return;
+        }
+
+        let point = self.snapped_map_position(raw_pos, None, modifiers);
+        if response.double_clicked() {
+            if self.zone_draft_points.len() >= 3 {
+                self.finish_zone_draft();
+            }
+            return;
+        }
+
+        if self.zone_draft_points.len() >= 3
+            && distance_sq(point, self.zone_draft_points[0]) <= 0.20 * 0.20
+        {
+            self.finish_zone_draft();
+            return;
+        }
+
+        self.zone_draft_points.push(point);
+        self.active_layer = LayerKind::Zones;
+        self.status = format!("区域点 {}", self.zone_draft_points.len());
+    }
+
+    fn finish_zone_draft(&mut self) {
+        if self.zone_draft_points.len() < 3 {
+            self.status = "区域至少需要 3 个点".to_owned();
+            return;
+        }
+        self.push_undo_snapshot();
+        let id = next_editor_zone_id("zone", &self.document.layers.zones);
+        self.document.layers.zones.push(content::ZoneInstance {
+            id: id.clone(),
+            zone_type: "Trigger".to_owned(),
+            points: self.zone_draft_points.clone(),
+        });
+        self.zone_draft_points.clear();
+        self.set_single_selection(Some(SelectedItem {
+            layer: LayerKind::Zones,
+            id,
+        }));
+        self.mark_dirty();
+        self.status = "区域已创建".to_owned();
+    }
+
     fn apply_rectangle_tool(&mut self, start: [i32; 2], end: [i32; 2]) {
         let min_x = start[0]
             .min(end[0])
@@ -1947,18 +2477,27 @@ impl EditorApp {
 
         match self.active_layer {
             LayerKind::Ground => {
-                let Some(asset_id) = self.selected_asset().map(|asset| asset.id.clone()) else {
-                    self.status = "矩形填充需要先选择地表素材".to_owned();
-                    return;
-                };
+                let asset_id = self.selected_asset().map(|asset| asset.id.clone());
                 for y in min_y..=max_y {
                     for x in min_x..=max_x {
-                        self.document.place_tile(&asset_id, x, y);
+                        if self.rectangle_erase_mode {
+                            self.document.erase_at(LayerKind::Ground, x, y);
+                        } else if let Some(asset_id) = &asset_id {
+                            self.document.erase_at(LayerKind::Ground, x, y);
+                            self.document.place_tile(asset_id, x, y);
+                        } else {
+                            self.status = "矩形填充需要先选择地表素材".to_owned();
+                            return;
+                        }
                     }
                 }
                 self.status = format!(
-                    "矩形填充 {}: {}x{}",
-                    asset_id,
+                    "矩形{}: {}x{}",
+                    if self.rectangle_erase_mode {
+                        "擦除"
+                    } else {
+                        "填充"
+                    },
                     max_x - min_x + 1,
                     max_y - min_y + 1
                 );
@@ -1966,14 +2505,107 @@ impl EditorApp {
             LayerKind::Collision => {
                 for y in min_y..=max_y {
                     for x in min_x..=max_x {
-                        self.document.place_collision(x, y);
+                        if self.rectangle_erase_mode {
+                            self.document.erase_at(LayerKind::Collision, x, y);
+                        } else {
+                            self.document.place_collision(x, y);
+                        }
                     }
                 }
-                self.status = format!("矩形碰撞: {}x{}", max_x - min_x + 1, max_y - min_y + 1);
+                self.status = format!(
+                    "矩形碰撞{}: {}x{}",
+                    if self.rectangle_erase_mode {
+                        "擦除"
+                    } else {
+                        "填充"
+                    },
+                    max_x - min_x + 1,
+                    max_y - min_y + 1
+                );
             }
             _ => {}
         }
         self.mark_dirty();
+    }
+
+    fn paint_ground_brush(&mut self, x: i32, y: i32, asset_id: &str) {
+        let [width, height] = self.clamped_ground_footprint_at(x, y);
+        for yy in y..y + height {
+            for xx in x..x + width {
+                self.document.erase_at(LayerKind::Ground, xx, yy);
+                self.document.place_tile(asset_id, xx, yy);
+            }
+        }
+    }
+
+    fn paint_collision_brush(&mut self, x: i32, y: i32) {
+        let [width, height] = self.clamped_ground_footprint_at(x, y);
+        for yy in y..y + height {
+            for xx in x..x + width {
+                self.document.place_collision(xx, yy);
+            }
+        }
+    }
+
+    fn erase_brush_at(&mut self, x: i32, y: i32) {
+        let [width, height] = self.clamped_ground_footprint_at(x, y);
+        for yy in y..y + height {
+            for xx in x..x + width {
+                self.document.erase_at(self.active_layer, xx, yy);
+            }
+        }
+    }
+
+    fn bucket_fill_ground(&mut self, x: i32, y: i32, asset_id: &str) -> usize {
+        let target = self.ground_asset_at_cell(x, y);
+        if target.as_deref() == Some(asset_id) {
+            return 0;
+        }
+
+        let mut visited = vec![false; self.document.width as usize * self.document.height as usize];
+        let mut queue = VecDeque::from([[x, y]]);
+        let mut filled = 0;
+
+        while let Some([cx, cy]) = queue.pop_front() {
+            if cx < 0
+                || cy < 0
+                || cx >= self.document.width as i32
+                || cy >= self.document.height as i32
+            {
+                continue;
+            }
+            let index = cy as usize * self.document.width as usize + cx as usize;
+            if visited[index] {
+                continue;
+            }
+            visited[index] = true;
+
+            if self.ground_asset_at_cell(cx, cy) != target {
+                continue;
+            }
+
+            self.document.erase_at(LayerKind::Ground, cx, cy);
+            self.document.place_tile(asset_id, cx, cy);
+            filled += 1;
+
+            queue.extend([[cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]]);
+        }
+
+        filled
+    }
+
+    fn ground_asset_at_cell(&self, x: i32, y: i32) -> Option<String> {
+        self.document
+            .layers
+            .ground
+            .iter()
+            .rev()
+            .find(|tile| {
+                let width = tile.w.max(1);
+                let height = tile.h.max(1);
+                x >= tile.x && x < tile.x + width && y >= tile.y && y < tile.y + height
+            })
+            .map(|tile| tile.asset.clone())
     }
 
     fn resize_handle_hit(
@@ -2127,6 +2759,290 @@ impl EditorApp {
             }
             _ => {}
         }
+    }
+
+    fn zone_vertex_hit(
+        &self,
+        canvas_rect: Rect,
+        zone_id: &str,
+        pointer_pos: Pos2,
+    ) -> Option<usize> {
+        let zone = self
+            .document
+            .layers
+            .zones
+            .iter()
+            .find(|zone| zone.id == zone_id)?;
+        let tile_size = self.document.tile_size as f32;
+        zone.points.iter().position(|point| {
+            let screen = self.world_to_screen(
+                canvas_rect,
+                vec2(point[0] * tile_size, point[1] * tile_size),
+            );
+            Rect::from_center_size(screen, vec2(12.0, 12.0)).contains(pointer_pos)
+        })
+    }
+
+    fn move_zone_vertex(&mut self, zone_id: &str, vertex_index: usize, point: [f32; 2]) {
+        if let Some(zone) = self
+            .document
+            .layers
+            .zones
+            .iter_mut()
+            .find(|zone| zone.id == zone_id)
+        {
+            if let Some(vertex) = zone.points.get_mut(vertex_index) {
+                *vertex = point;
+            }
+        }
+    }
+
+    fn delete_zone_vertex_near(&mut self, canvas_rect: Rect, zone_id: &str, pointer_pos: Pos2) {
+        if self.layer_state(LayerKind::Zones).locked {
+            self.status = "区域图层已锁定".to_owned();
+            return;
+        }
+        let Some(index) = self.zone_vertex_hit(canvas_rect, zone_id, pointer_pos) else {
+            self.status = "附近没有区域顶点".to_owned();
+            return;
+        };
+        let Some(zone) = self
+            .document
+            .layers
+            .zones
+            .iter()
+            .find(|zone| zone.id == zone_id)
+        else {
+            return;
+        };
+        if zone.points.len() <= 3 {
+            self.status = "区域至少需要保留 3 个点".to_owned();
+            return;
+        }
+        self.push_undo_snapshot();
+        if let Some(zone) = self
+            .document
+            .layers
+            .zones
+            .iter_mut()
+            .find(|zone| zone.id == zone_id)
+        {
+            zone.points.remove(index);
+            self.mark_dirty();
+            self.status = format!("已删除区域顶点 #{index}");
+        }
+    }
+
+    fn move_origins_for_selection(&self, selections: &[SelectedItem]) -> Vec<MoveOrigin> {
+        selections
+            .iter()
+            .filter_map(|selection| match selection.layer {
+                LayerKind::Ground => {
+                    let [x, y] = parse_ground_selection_id(&selection.id)?;
+                    self.document
+                        .layers
+                        .ground
+                        .iter()
+                        .find(|tile| tile.x == x && tile.y == y)
+                        .map(|tile| MoveOrigin::Ground {
+                            selection: selection.clone(),
+                            x: tile.x,
+                            y: tile.y,
+                        })
+                }
+                LayerKind::Decals => self
+                    .document
+                    .layers
+                    .decals
+                    .iter()
+                    .find(|instance| instance.id == selection.id)
+                    .map(|instance| MoveOrigin::ObjectLike {
+                        selection: selection.clone(),
+                        x: instance.x,
+                        y: instance.y,
+                    }),
+                LayerKind::Objects => self
+                    .document
+                    .layers
+                    .objects
+                    .iter()
+                    .find(|instance| instance.id == selection.id)
+                    .map(|instance| MoveOrigin::ObjectLike {
+                        selection: selection.clone(),
+                        x: instance.x,
+                        y: instance.y,
+                    }),
+                LayerKind::Entities => self
+                    .document
+                    .layers
+                    .entities
+                    .iter()
+                    .find(|instance| instance.id == selection.id)
+                    .map(|instance| MoveOrigin::ObjectLike {
+                        selection: selection.clone(),
+                        x: instance.x,
+                        y: instance.y,
+                    }),
+                LayerKind::Zones => self
+                    .document
+                    .layers
+                    .zones
+                    .iter()
+                    .find(|zone| zone.id == selection.id)
+                    .map(|zone| MoveOrigin::Zone {
+                        selection: selection.clone(),
+                        points: zone.points.clone(),
+                    }),
+                LayerKind::Collision => None,
+            })
+            .collect()
+    }
+
+    fn apply_multi_move(&mut self, origins: &[MoveOrigin], delta: [f32; 2]) {
+        let max_x = self.document.width as f32;
+        let max_y = self.document.height as f32;
+        let mut next_selection = Vec::with_capacity(origins.len());
+
+        for origin in origins {
+            if self.layer_state(origin.layer()).locked {
+                continue;
+            }
+
+            match origin {
+                MoveOrigin::Ground { selection, x, y } => {
+                    let new_x = (*x as f32 + delta[0])
+                        .round()
+                        .clamp(0.0, self.document.width.saturating_sub(1) as f32)
+                        as i32;
+                    let new_y = (*y as f32 + delta[1])
+                        .round()
+                        .clamp(0.0, self.document.height.saturating_sub(1) as f32)
+                        as i32;
+                    let updated = self
+                        .move_selected_item(selection, new_x as f32, new_y as f32)
+                        .unwrap_or([new_x, new_y]);
+                    next_selection.push(SelectedItem {
+                        layer: LayerKind::Ground,
+                        id: ground_selection_id(updated[0], updated[1]),
+                    });
+                }
+                MoveOrigin::ObjectLike { selection, x, y } => {
+                    let new_x = (x + delta[0]).clamp(0.0, max_x);
+                    let new_y = (y + delta[1]).clamp(0.0, max_y);
+                    self.move_selected_item(selection, new_x, new_y);
+                    next_selection.push(selection.clone());
+                }
+                MoveOrigin::Zone { selection, points } => {
+                    if let Some(zone) = self
+                        .document
+                        .layers
+                        .zones
+                        .iter_mut()
+                        .find(|zone| zone.id == selection.id)
+                    {
+                        zone.points = points
+                            .iter()
+                            .map(|point| {
+                                [
+                                    (point[0] + delta[0]).clamp(0.0, max_x),
+                                    (point[1] + delta[1]).clamp(0.0, max_y),
+                                ]
+                            })
+                            .collect();
+                    }
+                    next_selection.push(selection.clone());
+                }
+            }
+        }
+
+        self.set_selection(next_selection);
+    }
+
+    fn selections_in_screen_rect(
+        &self,
+        canvas_rect: Rect,
+        selection_rect: Rect,
+    ) -> Vec<SelectedItem> {
+        let mut selections = Vec::new();
+        for layer in LayerKind::ALL {
+            if !self.layer_state(layer).visible {
+                continue;
+            }
+            match layer {
+                LayerKind::Ground => {
+                    for tile in &self.document.layers.ground {
+                        let selection = SelectedItem {
+                            layer,
+                            id: ground_selection_id(tile.x, tile.y),
+                        };
+                        if self
+                            .selection_screen_rect(canvas_rect, &selection)
+                            .is_some_and(|rect| rect.intersects(selection_rect))
+                        {
+                            selections.push(selection);
+                        }
+                    }
+                }
+                LayerKind::Decals => {
+                    for instance in &self.document.layers.decals {
+                        let selection = SelectedItem {
+                            layer,
+                            id: instance.id.clone(),
+                        };
+                        if self
+                            .selection_screen_rect(canvas_rect, &selection)
+                            .is_some_and(|rect| rect.intersects(selection_rect))
+                        {
+                            selections.push(selection);
+                        }
+                    }
+                }
+                LayerKind::Objects => {
+                    for instance in &self.document.layers.objects {
+                        let selection = SelectedItem {
+                            layer,
+                            id: instance.id.clone(),
+                        };
+                        if self
+                            .selection_screen_rect(canvas_rect, &selection)
+                            .is_some_and(|rect| rect.intersects(selection_rect))
+                        {
+                            selections.push(selection);
+                        }
+                    }
+                }
+                LayerKind::Entities => {
+                    for instance in &self.document.layers.entities {
+                        let selection = SelectedItem {
+                            layer,
+                            id: instance.id.clone(),
+                        };
+                        if self
+                            .selection_screen_rect(canvas_rect, &selection)
+                            .is_some_and(|rect| rect.intersects(selection_rect))
+                        {
+                            selections.push(selection);
+                        }
+                    }
+                }
+                LayerKind::Zones => {
+                    for zone in &self.document.layers.zones {
+                        let selection = SelectedItem {
+                            layer,
+                            id: zone.id.clone(),
+                        };
+                        if self
+                            .selection_screen_rect(canvas_rect, &selection)
+                            .is_some_and(|rect| rect.intersects(selection_rect))
+                        {
+                            selections.push(selection);
+                        }
+                    }
+                }
+                LayerKind::Collision => {}
+            }
+        }
+        selections
     }
 
     fn hit_test_placed_item(&self, canvas_rect: Rect, pointer_pos: Pos2) -> Option<SelectedItem> {
@@ -2462,13 +3378,62 @@ impl EditorApp {
         }
     }
 
+    fn set_z_index_for_selection(&mut self, selection: &SelectedItem, z_index: i32) {
+        if self.layer_state(selection.layer).locked {
+            return;
+        }
+        match selection.layer {
+            LayerKind::Decals => {
+                if let Some(instance) = self
+                    .document
+                    .layers
+                    .decals
+                    .iter_mut()
+                    .find(|instance| instance.id == selection.id)
+                {
+                    instance.z_index = z_index;
+                }
+            }
+            LayerKind::Objects => {
+                if let Some(instance) = self
+                    .document
+                    .layers
+                    .objects
+                    .iter_mut()
+                    .find(|instance| instance.id == selection.id)
+                {
+                    instance.z_index = z_index;
+                }
+            }
+            LayerKind::Entities => {
+                if let Some(instance) = self
+                    .document
+                    .layers
+                    .entities
+                    .iter_mut()
+                    .find(|instance| instance.id == selection.id)
+                {
+                    instance.z_index = z_index;
+                }
+            }
+            LayerKind::Ground | LayerKind::Zones | LayerKind::Collision => {}
+        }
+    }
+
     fn ground_size_for_selection(&self) -> Option<[i32; 2]> {
+        if self.current_selection_list().len() != 1 {
+            return None;
+        }
         let selection = self.selected_item.as_ref()?;
         if selection.layer != LayerKind::Ground {
             return None;
         }
 
-        let [x, y] = parse_ground_selection_id(&selection.id)?;
+        self.ground_size_for_selection_id(&selection.id)
+    }
+
+    fn ground_size_for_selection_id(&self, id: &str) -> Option<[i32; 2]> {
+        let [x, y] = parse_ground_selection_id(id)?;
         self.document
             .layers
             .ground
@@ -2601,6 +3566,7 @@ impl EditorApp {
     fn draw_zones(&self, canvas_rect: Rect, painter: &egui::Painter) {
         let tile_size = self.document.tile_size as f32;
         for zone in &self.document.layers.zones {
+            let (stroke_color, fill_color) = zone_colors(&zone.zone_type);
             let points = zone
                 .points
                 .iter()
@@ -2616,9 +3582,19 @@ impl EditorApp {
             }
             painter.add(Shape::convex_polygon(
                 points.clone(),
-                Color32::from_rgba_unmultiplied(80, 160, 255, 32),
-                Stroke::new(1.5, Color32::from_rgb(80, 180, 255)),
+                fill_color,
+                Stroke::new(1.5, stroke_color),
             ));
+            if self.show_zone_labels {
+                let center = polygon_screen_center(&points);
+                painter.text(
+                    center,
+                    egui::Align2::CENTER_CENTER,
+                    format!("{}\\n{}", zone.id, zone.zone_type),
+                    egui::TextStyle::Small.resolve(&egui::Style::default()),
+                    Color32::from_rgb(235, 245, 255),
+                );
+            }
         }
     }
 
@@ -2781,18 +3757,38 @@ impl EditorApp {
     }
 
     fn draw_selection_bounds(&self, canvas_rect: Rect, painter: &egui::Painter) {
-        let Some(selection) = &self.selected_item else {
+        let selections = self.current_selection_list();
+        if selections.is_empty() {
             return;
-        };
+        }
 
-        if let Some(rect) = self.selection_screen_rect(canvas_rect, selection) {
+        let mut group_rect: Option<Rect> = None;
+        for (index, selection) in selections.iter().enumerate() {
+            let Some(rect) = self.selection_screen_rect(canvas_rect, selection) else {
+                continue;
+            };
+            group_rect = Some(match group_rect {
+                Some(group) => group.union(rect),
+                None => rect,
+            });
+            let color = if index == 0 {
+                Color32::YELLOW
+            } else {
+                Color32::from_rgb(95, 210, 255)
+            };
             painter.rect_stroke(
                 rect.expand(3.0),
                 2.0,
-                Stroke::new(2.0, Color32::YELLOW),
+                Stroke::new(2.0, color),
                 StrokeKind::Inside,
             );
+        }
 
+        if selections.len() == 1 {
+            let selection = &selections[0];
+            let Some(rect) = self.selection_screen_rect(canvas_rect, selection) else {
+                return;
+            };
             if matches!(
                 selection.layer,
                 LayerKind::Decals | LayerKind::Objects | LayerKind::Entities
@@ -2808,6 +3804,70 @@ impl EditorApp {
                     );
                 }
             }
+
+            if selection.layer == LayerKind::Zones {
+                self.draw_zone_vertex_handles(canvas_rect, selection, painter);
+            }
+        } else if let Some(rect) = group_rect {
+            painter.rect_stroke(
+                rect.expand(8.0),
+                2.0,
+                Stroke::new(1.5, Color32::from_rgb(140, 235, 255)),
+                StrokeKind::Inside,
+            );
+        }
+    }
+
+    fn draw_selection_marquee(&self, painter: &egui::Painter) {
+        let Some(marquee) = &self.selection_marquee else {
+            return;
+        };
+        let rect = Rect::from_two_pos(marquee.start, marquee.current);
+        painter.rect_filled(rect, 0.0, Color32::from_rgba_unmultiplied(90, 180, 255, 32));
+        painter.rect_stroke(
+            rect,
+            0.0,
+            Stroke::new(1.5, Color32::from_rgb(100, 210, 255)),
+            StrokeKind::Inside,
+        );
+    }
+
+    fn draw_zone_vertex_handles(
+        &self,
+        canvas_rect: Rect,
+        selection: &SelectedItem,
+        painter: &egui::Painter,
+    ) {
+        let Some(zone) = self
+            .document
+            .layers
+            .zones
+            .iter()
+            .find(|zone| zone.id == selection.id)
+        else {
+            return;
+        };
+        let tile_size = self.document.tile_size as f32;
+        for (index, point) in zone.points.iter().enumerate() {
+            let screen = self.world_to_screen(
+                canvas_rect,
+                vec2(point[0] * tile_size, point[1] * tile_size),
+            );
+            let rect = Rect::from_center_size(screen, vec2(9.0, 9.0));
+            painter.rect_filled(rect, 2.0, Color32::from_rgb(255, 245, 120));
+            painter.rect_stroke(
+                rect,
+                2.0,
+                Stroke::new(1.0, Color32::from_rgb(70, 60, 0)),
+                StrokeKind::Inside,
+            );
+            painter.text(
+                screen + vec2(8.0, -8.0),
+                egui::Align2::LEFT_CENTER,
+                index.to_string(),
+                egui::TextStyle::Small.resolve(&egui::Style::default()),
+                Color32::WHITE,
+            );
         }
     }
 
@@ -2912,6 +3972,36 @@ impl EditorApp {
         );
     }
 
+    fn draw_zone_draft(&self, canvas_rect: Rect, painter: &egui::Painter, hover_pos: Option<Pos2>) {
+        if self.zone_draft_points.is_empty() {
+            return;
+        }
+        let tile_size = self.document.tile_size as f32;
+        let mut points = self
+            .zone_draft_points
+            .iter()
+            .map(|point| {
+                self.world_to_screen(
+                    canvas_rect,
+                    vec2(point[0] * tile_size, point[1] * tile_size),
+                )
+            })
+            .collect::<Vec<_>>();
+        if let Some(hover) = hover_pos {
+            points.push(hover);
+        }
+
+        for pair in points.windows(2) {
+            painter.line_segment(
+                [pair[0], pair[1]],
+                Stroke::new(2.0, Color32::from_rgb(110, 220, 255)),
+            );
+        }
+        for point in points {
+            painter.circle_filled(point, 4.5, Color32::from_rgb(110, 220, 255));
+        }
+    }
+
     fn draw_status_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             let mouse = self
@@ -2919,11 +4009,15 @@ impl EditorApp {
                 .map(|tile| format!("{}, {}", tile[0], tile[1]))
                 .unwrap_or_else(|| "-".to_owned());
             let asset = self.selected_asset.as_deref().unwrap_or("none");
-            let selected_item = self
-                .selected_item
-                .as_ref()
-                .map(SelectedItem::label)
-                .unwrap_or_else(|| "none".to_owned());
+            let selections = self.current_selection_list();
+            let selected_item = if selections.len() > 1 {
+                format!("{} items", selections.len())
+            } else {
+                selections
+                    .first()
+                    .map(SelectedItem::label)
+                    .unwrap_or_else(|| "none".to_owned())
+            };
             let transform = self
                 .selected_item
                 .as_ref()
@@ -3100,7 +4194,7 @@ fn load_thumbnail(ctx: &EguiContext, asset: &AssetEntry) -> Result<TextureHandle
     let color_image =
         egui::ColorImage::from_rgba_unmultiplied([width as usize, height as usize], &pixels);
 
-    Ok(ctx.load_texture(&asset.id, color_image, TextureOptions::LINEAR))
+    Ok(ctx.load_texture(&asset.id, color_image, TextureOptions::NEAREST))
 }
 
 fn project_root() -> PathBuf {
@@ -3340,6 +4434,60 @@ fn snap_label(snap: SnapMode) -> &'static str {
     }
 }
 
+fn zone_colors(zone_type: &str) -> (Color32, Color32) {
+    match zone_type {
+        "ScanArea" => (
+            Color32::from_rgb(90, 210, 150),
+            Color32::from_rgba_unmultiplied(90, 210, 150, 32),
+        ),
+        "MapTransition" => (
+            Color32::from_rgb(255, 185, 85),
+            Color32::from_rgba_unmultiplied(255, 185, 85, 32),
+        ),
+        "NoSpawn" => (
+            Color32::from_rgb(235, 95, 95),
+            Color32::from_rgba_unmultiplied(235, 95, 95, 32),
+        ),
+        "CameraBounds" => (
+            Color32::from_rgb(175, 130, 255),
+            Color32::from_rgba_unmultiplied(175, 130, 255, 32),
+        ),
+        _ => (
+            Color32::from_rgb(80, 180, 255),
+            Color32::from_rgba_unmultiplied(80, 180, 255, 32),
+        ),
+    }
+}
+
+fn polygon_screen_center(points: &[Pos2]) -> Pos2 {
+    if points.is_empty() {
+        return Pos2::ZERO;
+    }
+    let sum = points
+        .iter()
+        .fold(vec2(0.0, 0.0), |sum, point| sum + point.to_vec2());
+    Pos2::new(sum.x / points.len() as f32, sum.y / points.len() as f32)
+}
+
+fn distance_sq(a: [f32; 2], b: [f32; 2]) -> f32 {
+    let dx = a[0] - b[0];
+    let dy = a[1] - b[1];
+    dx * dx + dy * dy
+}
+
+fn snapped_delta(delta: [f32; 2], modifiers: Modifiers) -> [f32; 2] {
+    if modifiers.alt {
+        delta
+    } else if modifiers.shift {
+        [
+            (delta[0] * 2.0).round() * 0.5,
+            (delta[1] * 2.0).round() * 0.5,
+        ]
+    } else {
+        [delta[0].round(), delta[1].round()]
+    }
+}
+
 fn asset_matches_search(asset: &AssetEntry, search: &str) -> bool {
     asset.id.to_ascii_lowercase().contains(search)
         || asset.relative_path.to_ascii_lowercase().contains(search)
@@ -3347,6 +4495,20 @@ fn asset_matches_search(asset: &AssetEntry, search: &str) -> bool {
             .tags
             .iter()
             .any(|tag| tag.to_ascii_lowercase().contains(search))
+}
+
+fn compact_asset_label(id: &str) -> String {
+    let label = id
+        .trim_start_matches("ow_tile_")
+        .trim_start_matches("ow_")
+        .replace('_', " ");
+    let mut chars = label.chars();
+    let compact = chars.by_ref().take(12).collect::<String>();
+    if chars.next().is_some() {
+        format!("{compact}...")
+    } else {
+        compact
+    }
 }
 
 fn object_instance_editor(
