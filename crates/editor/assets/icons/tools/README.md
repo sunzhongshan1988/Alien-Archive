@@ -12,6 +12,7 @@ Put SVG toolbar icons in this folder. Use these exact file names:
 - `zone.svg`
 - `pan.svg`
 - `zoom.svg`
+- `fallback.svg`
 
 Guidelines:
 

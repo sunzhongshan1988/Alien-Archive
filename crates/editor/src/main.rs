@@ -43,6 +43,7 @@ const THEME_SELECTION: Color32 = Color32::from_rgb(213, 176, 92);
 const THEME_MULTI_SELECTION: Color32 = Color32::from_rgb(169, 163, 131);
 const TOOLBAR_HEIGHT: f32 = 32.0;
 const TOOL_BUTTON_SIZE: Vec2 = Vec2::new(34.0, 28.0);
+const TOOL_ICON_FALLBACK_URI: &str = "bytes://editor/tools/fallback.svg";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MenuCommand {
@@ -5079,9 +5080,24 @@ fn toolbar_command_button(ui: &mut egui::Ui, text: &str, width: f32) -> egui::Re
 }
 
 fn draw_tool_icon(ui: &egui::Ui, tool: ToolKind, rect: Rect, color: Color32) {
-    egui::Image::from_uri(tool_icon_uri(tool))
-        .tint(color)
-        .paint_at(ui, rect);
+    let uri = tool_icon_uri(tool);
+    let pixel_size = (ui.pixels_per_point() * rect.size()).round();
+    let size_hint = egui::load::SizeHint::Size {
+        width: pixel_size.x.max(1.0) as u32,
+        height: pixel_size.y.max(1.0) as u32,
+        maintain_aspect_ratio: false,
+    };
+    let uri = if ui
+        .ctx()
+        .try_load_texture(uri, TextureOptions::default(), size_hint)
+        .is_err()
+    {
+        TOOL_ICON_FALLBACK_URI
+    } else {
+        uri
+    };
+
+    egui::Image::from_uri(uri).tint(color).paint_at(ui, rect);
 }
 
 fn tool_icon_uri(tool: ToolKind) -> &'static str {
@@ -5103,6 +5119,10 @@ fn configure_tool_icons(ctx: &EguiContext) {
     egui_extras::install_image_loaders(ctx);
 
     for (uri, svg) in [
+        (
+            TOOL_ICON_FALLBACK_URI,
+            include_str!("../assets/icons/tools/fallback.svg"),
+        ),
         (
             "bytes://editor/tools/select.svg",
             include_str!("../assets/icons/tools/select.svg"),
