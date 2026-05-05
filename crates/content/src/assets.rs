@@ -63,6 +63,14 @@ pub struct AssetDatabase {
 }
 
 impl AssetDatabase {
+    pub fn new(mode: impl Into<String>) -> Self {
+        Self {
+            mode: mode.into(),
+            assets: Vec::new(),
+            by_id: HashMap::new(),
+        }
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
         let source = fs::read_to_string(path)
             .with_context(|| format!("failed to read asset database {}", path.display()))?;
@@ -133,6 +141,8 @@ pub struct AssetDefinition {
     pub kind: AssetKind,
     pub default_layer: LayerKind,
     pub default_size: [f32; 2],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub footprint: Option<[i32; 2]>,
     pub anchor: AnchorKind,
     pub snap: SnapMode,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

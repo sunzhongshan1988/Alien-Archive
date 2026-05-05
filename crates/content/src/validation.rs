@@ -57,6 +57,7 @@ pub fn validate_map(document: &MapDocument, assets: &AssetDatabase) -> Vec<MapVa
     }
 
     for tile in &document.layers.ground {
+        let asset = assets.get(&tile.asset);
         validate_asset(
             "ground",
             &tile.asset,
@@ -80,6 +81,19 @@ pub fn validate_map(document: &MapDocument, assets: &AssetDatabase) -> Vec<MapVa
                 "ground {} at {},{} is outside map bounds",
                 tile.asset, tile.x, tile.y
             )));
+        }
+        if let Some(asset) = asset {
+            if let Some([width, height]) = asset
+                .footprint
+                .or_else(|| infer_tile_footprint(asset.default_size, document.tile_size))
+            {
+                if tile.w != width || tile.h != height {
+                    issues.push(MapValidationIssue::warning(format!(
+                        "ground {} at {},{} is {}x{}, asset footprint is {}x{}",
+                        tile.asset, tile.x, tile.y, tile.w, tile.h, width, height
+                    )));
+                }
+            }
         }
     }
 
@@ -202,6 +216,16 @@ fn validate_id(
     }
 }
 
+fn infer_tile_footprint(default_size: [f32; 2], tile_size: u32) -> Option<[i32; 2]> {
+    let tile_size = tile_size.max(1) as f32;
+    let width_units = default_size[0] / tile_size;
+    let height_units = default_size[1] / tile_size;
+    let width = width_units.round();
+    let height = height_units.round();
+    ((width_units - width).abs() < 0.01 && (height_units - height).abs() < 0.01)
+        .then_some([width.max(1.0) as i32, height.max(1.0) as i32])
+}
+
 fn validate_asset(
     owner: &str,
     asset_id: &str,
@@ -297,6 +321,7 @@ mod tests {
                 kind: AssetKind::Tile,
                 default_layer: LayerKind::Ground,
                 default_size: [32.0, 32.0],
+                footprint: Some([1, 1]),
                 anchor: AnchorKind::TopLeft,
                 snap: SnapMode::Grid,
                 tags: Vec::new(),

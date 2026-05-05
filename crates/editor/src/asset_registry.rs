@@ -1,10 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
-use content::{
-    AnchorKind, AssetDatabase, AssetDefinition, AssetKind, DEFAULT_ASSET_DB_PATH, LayerKind,
-    SnapMode,
-};
+use content::{AnchorKind, AssetDatabase, AssetDefinition, AssetKind, LayerKind, SnapMode};
 
 #[derive(Clone, Debug)]
 pub struct AssetEntry {
@@ -15,6 +11,7 @@ pub struct AssetEntry {
     pub kind: AssetKind,
     pub default_layer: LayerKind,
     pub default_size: [f32; 2],
+    pub footprint: Option<[i32; 2]>,
     pub anchor: AnchorKind,
     pub snap: SnapMode,
     pub entity_type: Option<String>,
@@ -28,11 +25,6 @@ pub struct AssetRegistry {
 }
 
 impl AssetRegistry {
-    pub fn scan(project_root: &Path) -> Result<Self> {
-        let database = AssetDatabase::load(&project_root.join(DEFAULT_ASSET_DB_PATH))?;
-        Ok(Self::from_database(project_root, database))
-    }
-
     pub fn from_database(project_root: &Path, database: AssetDatabase) -> Self {
         let mut assets = database
             .assets
@@ -55,6 +47,12 @@ impl AssetRegistry {
 
     pub fn get(&self, id: &str) -> Option<&AssetEntry> {
         self.assets.iter().find(|asset| asset.id == id)
+    }
+
+    pub fn contains_path(&self, relative_path: &str) -> bool {
+        self.assets
+            .iter()
+            .any(|asset| asset.relative_path == relative_path)
     }
 
     pub fn categories(&self) -> Vec<&str> {
@@ -88,6 +86,7 @@ fn asset_entry(project_root: &Path, asset: AssetDefinition) -> AssetEntry {
         kind: asset.kind,
         default_layer: asset.default_layer,
         default_size: asset.default_size,
+        footprint: asset.footprint,
         anchor: asset.anchor,
         snap: asset.snap,
         entity_type: asset.entity_type,

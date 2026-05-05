@@ -11,8 +11,9 @@ use std::{
 use anyhow::{Context, Result};
 use asset_registry::{AssetEntry, AssetRegistry};
 use content::{
-    AnchorKind, AssetDatabase, AssetKind, DEFAULT_ASSET_DB_PATH, DEFAULT_MAP_PATH, InstanceRect,
-    LayerKind, MapDocument, MapValidationIssue, MapValidationSeverity, SnapMode, validate_map,
+    AnchorKind, AssetDatabase, AssetDefinition, AssetKind, DEFAULT_ASSET_DB_PATH, DEFAULT_MAP_PATH,
+    InstanceRect, LayerKind, MapDocument, MapValidationIssue, MapValidationSeverity, SnapMode,
+    validate_map,
 };
 use eframe::egui::{
     self, Color32, Context as EguiContext, FontData, FontDefinitions, FontFamily, Key, Modifiers,
@@ -143,6 +144,83 @@ impl Default for NewMapDraft {
 }
 
 #[derive(Clone, Debug)]
+struct AssetDraft {
+    id: String,
+    category: String,
+    path: String,
+    kind: AssetKind,
+    default_layer: LayerKind,
+    default_size: [f32; 2],
+    footprint: [i32; 2],
+    anchor: AnchorKind,
+    snap: SnapMode,
+    tags: String,
+    entity_type: String,
+    codex_id: String,
+}
+
+impl Default for AssetDraft {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            category: "props".to_owned(),
+            path: String::new(),
+            kind: AssetKind::Object,
+            default_layer: LayerKind::Objects,
+            default_size: [72.0, 72.0],
+            footprint: [1, 1],
+            anchor: AnchorKind::BottomCenter,
+            snap: SnapMode::Grid,
+            tags: "props".to_owned(),
+            entity_type: String::new(),
+            codex_id: String::new(),
+        }
+    }
+}
+
+impl AssetDraft {
+    fn from_entry(entry: &AssetEntry) -> Self {
+        Self {
+            id: entry.id.clone(),
+            category: entry.category.clone(),
+            path: entry.relative_path.clone(),
+            kind: entry.kind,
+            default_layer: entry.default_layer,
+            default_size: entry.default_size,
+            footprint: entry
+                .footprint
+                .unwrap_or_else(|| infer_tile_footprint(entry.default_size, 32).unwrap_or([1, 1])),
+            anchor: entry.anchor,
+            snap: entry.snap,
+            tags: entry.tags.join(", "),
+            entity_type: entry.entity_type.clone().unwrap_or_default(),
+            codex_id: entry.codex_id.clone().unwrap_or_default(),
+        }
+    }
+
+    fn to_definition(&self) -> Option<AssetDefinition> {
+        let id = sanitize_asset_id(&self.id)?;
+        let path = sanitize_relative_path(&self.path)?;
+        let category = sanitize_category(&self.category).unwrap_or_else(|| "props".to_owned());
+        Some(AssetDefinition {
+            id,
+            category,
+            path: PathBuf::from(path),
+            kind: self.kind,
+            default_layer: self.default_layer,
+            default_size: [self.default_size[0].max(1.0), self.default_size[1].max(1.0)],
+            footprint: (self.kind == AssetKind::Tile)
+                .then_some([self.footprint[0].max(1), self.footprint[1].max(1)]),
+            anchor: self.anchor,
+            snap: self.snap,
+            tags: parse_tags(&self.tags),
+            entity_type: non_empty_string(&self.entity_type),
+            codex_id: non_empty_string(&self.codex_id),
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
 struct ResizeDrag {
     selection: SelectedItem,
 }
@@ -229,6 +307,12 @@ struct EditorApp {
     save_as_id: String,
     dirty: bool,
     registry: AssetRegistry,
+    asset_database: AssetDatabase,
+    asset_db_dirty: bool,
+    show_asset_dialog: bool,
+    show_unregistered_assets: bool,
+    asset_editing_id: Option<String>,
+    asset_draft: AssetDraft,
     document: MapDocument,
     undo_stack: Vec<MapDocument>,
     redo_stack: Vec<MapDocument>,
@@ -276,10 +360,12 @@ impl EditorApp {
         let map_path = project_root.join(DEFAULT_MAP_PATH);
         let map_entries = scan_map_entries(&project_root);
         let config = load_editor_config(&project_root);
-        let registry = AssetRegistry::scan(&project_root).unwrap_or_else(|error| {
-            eprintln!("asset scan failed: {error:?}");
-            AssetRegistry::default()
-        });
+        let asset_database = AssetDatabase::load(&project_root.join(DEFAULT_ASSET_DB_PATH))
+            .unwrap_or_else(|error| {
+                eprintln!("asset database load failed: {error:?}");
+                AssetDatabase::new("Overworld")
+            });
+        let registry = AssetRegistry::from_database(&project_root, asset_database.clone());
         let document =
             MapDocument::load(&map_path).unwrap_or_else(|_| MapDocument::new_landing_site());
         let save_as_id = document.id.clone();
@@ -295,6 +381,12 @@ impl EditorApp {
             save_as_id,
             dirty: false,
             registry,
+            asset_database,
+            asset_db_dirty: false,
+            show_asset_dialog: false,
+            show_unregistered_assets: false,
+            asset_editing_id: None,
+            asset_draft: AssetDraft::default(),
             document,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
@@ -547,13 +639,157 @@ impl EditorApp {
     }
 
     fn validate_current_map(&self) -> Vec<MapValidationIssue> {
-        match AssetDatabase::load(&self.project_root.join(DEFAULT_ASSET_DB_PATH)) {
-            Ok(database) => validate_map(&self.document, &database),
-            Err(error) => vec![MapValidationIssue {
-                severity: MapValidationSeverity::Error,
-                message: format!("素材数据库读取失败：{error:#}"),
-            }],
+        validate_map(&self.document, &self.asset_database)
+    }
+
+    fn asset_db_path(&self) -> PathBuf {
+        self.project_root.join(DEFAULT_ASSET_DB_PATH)
+    }
+
+    fn reload_asset_database(&mut self, ctx: &EguiContext) {
+        match AssetDatabase::load(&self.asset_db_path()) {
+            Ok(database) => {
+                self.asset_database = database;
+                self.asset_db_dirty = false;
+                self.rebuild_asset_registry(ctx);
+                self.status = "素材 metadata 已重新加载".to_owned();
+            }
+            Err(error) => {
+                self.status = format!("素材 metadata 读取失败：{error:#}");
+            }
         }
+    }
+
+    fn save_asset_database(&mut self) {
+        self.asset_database.reindex();
+        match self.asset_database.save(&self.asset_db_path()) {
+            Ok(()) => {
+                self.asset_db_dirty = false;
+                self.status = "素材库已保存".to_owned();
+            }
+            Err(error) => {
+                self.status = format!("素材库保存失败：{error:#}");
+            }
+        }
+    }
+
+    fn rebuild_asset_registry(&mut self, ctx: &EguiContext) {
+        self.asset_database.reindex();
+        self.registry =
+            AssetRegistry::from_database(&self.project_root, self.asset_database.clone());
+        self.load_visible_textures(ctx);
+    }
+
+    fn open_add_asset_dialog(&mut self) {
+        self.asset_editing_id = None;
+        self.asset_draft = AssetDraft::default();
+        self.show_asset_dialog = true;
+    }
+
+    fn open_edit_asset_dialog(&mut self, asset_id: &str) {
+        let Some(asset) = self.registry.get(asset_id) else {
+            self.status = format!("找不到素材 {asset_id}");
+            return;
+        };
+        self.asset_editing_id = Some(asset.id.clone());
+        self.asset_draft = AssetDraft::from_entry(asset);
+        self.show_asset_dialog = true;
+    }
+
+    fn apply_asset_draft(&mut self, ctx: &EguiContext) {
+        let Some(asset) = self.asset_draft.to_definition() else {
+            self.status = "素材保存失败：id 或 path 为空".to_owned();
+            return;
+        };
+        if !self.project_root.join(&asset.path).exists() {
+            self.status = format!("素材保存失败：图片不存在 {}", asset.path.to_string_lossy());
+            return;
+        }
+
+        let editing_id = self.asset_editing_id.clone();
+        let duplicate = self.asset_database.assets.iter().any(|existing| {
+            existing.id == asset.id && editing_id.as_deref() != Some(existing.id.as_str())
+        });
+        if duplicate {
+            self.status = format!("素材保存失败：id {} 已存在", asset.id);
+            return;
+        }
+
+        if let Some(editing_id) = editing_id {
+            if let Some(existing) = self
+                .asset_database
+                .assets
+                .iter_mut()
+                .find(|existing| existing.id == editing_id)
+            {
+                *existing = asset.clone();
+            } else {
+                self.asset_database.assets.push(asset.clone());
+            }
+        } else {
+            self.asset_database.assets.push(asset.clone());
+        }
+
+        self.asset_database.assets.sort_by(|left, right| {
+            left.category
+                .cmp(&right.category)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        self.selected_asset = Some(asset.id.clone());
+        self.asset_db_dirty = true;
+        self.show_asset_dialog = false;
+        self.rebuild_asset_registry(ctx);
+        self.status = format!("素材已登记：{}", asset.id);
+    }
+
+    fn delete_selected_asset_definition(&mut self, ctx: &EguiContext) {
+        let Some(asset_id) = self.selected_asset.clone() else {
+            self.status = "请先选择素材".to_owned();
+            return;
+        };
+        let before = self.asset_database.assets.len();
+        self.asset_database
+            .assets
+            .retain(|asset| asset.id != asset_id);
+        if self.asset_database.assets.len() == before {
+            self.status = format!("素材不存在：{asset_id}");
+            return;
+        }
+        self.selected_asset = None;
+        self.asset_db_dirty = true;
+        self.rebuild_asset_registry(ctx);
+        self.status = format!("已从素材库移除 {asset_id}，保存地图前校验会检查引用");
+    }
+
+    fn fill_asset_draft_from_path(&mut self, relative_path: &str) {
+        self.asset_draft = infer_asset_draft_from_path(&self.project_root, relative_path);
+        self.asset_editing_id = None;
+        self.show_asset_dialog = true;
+    }
+
+    fn unregistered_sprite_paths(&self) -> Vec<String> {
+        let mut paths = Vec::new();
+        collect_png_paths(
+            &self.project_root.join("assets").join("sprites"),
+            &mut paths,
+        );
+        paths.sort();
+        paths
+            .into_iter()
+            .filter_map(|path| {
+                Some(
+                    path.strip_prefix(&self.project_root)
+                        .ok()?
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                )
+            })
+            .filter(|path| {
+                path.contains("/overworld/")
+                    && !path.contains("overworld_originals")
+                    && !self.registry.contains_path(path)
+            })
+            .collect()
     }
 
     fn push_recent_map(&mut self, path: PathBuf) {
@@ -1042,19 +1278,54 @@ impl EditorApp {
             });
 
             ui.menu_button("素材", |ui| {
-                if ui.button("重新扫描 Metadata").clicked() {
-                    match AssetRegistry::scan(&self.project_root) {
-                        Ok(registry) => {
-                            self.registry = registry;
-                            self.status = "素材 metadata 已重新加载".to_owned();
-                        }
-                        Err(error) => {
-                            self.status = format!("素材 metadata 读取失败：{error:#}");
-                        }
+                let ctx = ui.ctx().clone();
+                if ui.button("添加素材").clicked() {
+                    self.open_add_asset_dialog();
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(
+                        self.selected_asset.is_some(),
+                        egui::Button::new("编辑当前素材"),
+                    )
+                    .clicked()
+                {
+                    if let Some(asset_id) = self.selected_asset.clone() {
+                        self.open_edit_asset_dialog(&asset_id);
                     }
                     ui.close();
                 }
-                ui.label(format!("{} 个素材", self.registry.assets().len()));
+                if ui
+                    .add_enabled(
+                        self.selected_asset.is_some(),
+                        egui::Button::new("移除当前素材"),
+                    )
+                    .clicked()
+                {
+                    self.delete_selected_asset_definition(&ctx);
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(self.asset_db_dirty, egui::Button::new("保存素材库"))
+                    .clicked()
+                {
+                    self.save_asset_database();
+                    ui.close();
+                }
+                if ui.button("未登记图片").clicked() {
+                    self.show_unregistered_assets = true;
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("重新扫描 Metadata").clicked() {
+                    self.reload_asset_database(&ctx);
+                    ui.close();
+                }
+                ui.label(format!(
+                    "{} 个素材{}",
+                    self.registry.assets().len(),
+                    if self.asset_db_dirty { " *" } else { "" }
+                ));
             });
 
             ui.menu_button("帮助", |ui| {
@@ -1309,6 +1580,11 @@ impl EditorApp {
         self.clear_selection();
         self.active_layer = asset.default_layer;
         self.tool = ToolKind::Brush;
+        if asset.kind == AssetKind::Tile {
+            let footprint = self.asset_tile_footprint(asset);
+            self.ground_footprint_w = footprint[0];
+            self.ground_footprint_h = footprint[1];
+        }
         self.status = format!("Selected {}", asset.id);
     }
 
@@ -1465,7 +1741,7 @@ impl EditorApp {
         }
     }
 
-    fn draw_asset_inspector(&self, ui: &mut egui::Ui, asset: &AssetEntry) {
+    fn draw_asset_inspector(&mut self, ui: &mut egui::Ui, asset: &AssetEntry) {
         ui.label("素材默认属性");
         ui.monospace(&asset.id);
         ui.label(format!("类型：{}", asset.kind.zh_label()));
@@ -1477,6 +1753,10 @@ impl EditorApp {
             "默认尺寸：{:.1} x {:.1}",
             asset.default_size[0], asset.default_size[1]
         ));
+        if asset.kind == AssetKind::Tile {
+            let footprint = self.asset_tile_footprint(asset);
+            ui.label(format!("占格：{} x {}", footprint[0], footprint[1]));
+        }
         if let Some(entity_type) = &asset.entity_type {
             ui.label(format!("实体类型：{entity_type}"));
         }
@@ -1487,6 +1767,22 @@ impl EditorApp {
             ui.label(format!("Tags：{}", asset.tags.join(", ")));
         }
         ui.small(&asset.relative_path);
+        ui.separator();
+        ui.horizontal(|ui| {
+            if ui.button("编辑素材").clicked() {
+                self.open_edit_asset_dialog(&asset.id);
+            }
+            if ui.button("从素材库移除").clicked() {
+                let ctx = ui.ctx().clone();
+                self.delete_selected_asset_definition(&ctx);
+            }
+        });
+        if self.asset_db_dirty {
+            ui.colored_label(Color32::YELLOW, "素材库有未保存修改");
+            if ui.button("保存素材库").clicked() {
+                self.save_asset_database();
+            }
+        }
     }
 
     fn draw_selection_inspector(&mut self, ui: &mut egui::Ui, selection: SelectedItem) {
@@ -1796,6 +2092,194 @@ impl EditorApp {
                     }
                 });
         }
+
+        if self.show_asset_dialog {
+            egui::Window::new(if self.asset_editing_id.is_some() {
+                "编辑素材"
+            } else {
+                "添加素材"
+            })
+            .default_width(460.0)
+            .show(ctx, |ui| {
+                self.draw_asset_draft_editor(ui, ctx);
+            });
+        }
+
+        if self.show_unregistered_assets {
+            egui::Window::new("未登记图片")
+                .default_width(620.0)
+                .default_height(520.0)
+                .show(ctx, |ui| {
+                    ui.label(
+                        "这里扫描 PNG 只是为了辅助登记，未登记图片不会自动进入游戏或地图编辑。",
+                    );
+                    ui.separator();
+                    let unregistered = self.unregistered_sprite_paths();
+                    if unregistered.is_empty() {
+                        ui.label("没有发现未登记 PNG。");
+                    } else {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            for path in unregistered {
+                                ui.horizontal(|ui| {
+                                    ui.monospace(&path);
+                                    if ui.button("登记").clicked() {
+                                        self.fill_asset_draft_from_path(&path);
+                                    }
+                                });
+                            }
+                        });
+                    }
+                    ui.separator();
+                    if ui.button("关闭").clicked() {
+                        self.show_unregistered_assets = false;
+                    }
+                });
+        }
+    }
+
+    fn draw_asset_draft_editor(&mut self, ui: &mut egui::Ui, ctx: &EguiContext) {
+        ui.label("素材 id / 路径");
+        ui.text_edit_singleline(&mut self.asset_draft.id);
+        ui.text_edit_singleline(&mut self.asset_draft.path);
+        ui.horizontal(|ui| {
+            if ui.button("从图片尺寸读取").clicked() {
+                match image_dimensions(&self.project_root.join(&self.asset_draft.path)) {
+                    Some([width, height]) => {
+                        self.asset_draft.default_size = [width, height];
+                        if self.asset_draft.kind == AssetKind::Tile {
+                            self.asset_draft.footprint =
+                                infer_tile_footprint([width, height], self.document.tile_size)
+                                    .unwrap_or(self.asset_draft.footprint);
+                        }
+                        self.status = "已读取图片尺寸".to_owned();
+                    }
+                    None => {
+                        self.status = "图片尺寸读取失败".to_owned();
+                    }
+                }
+            }
+            if ui.button("按路径推断").clicked() {
+                let path = self.asset_draft.path.clone();
+                if path.trim().is_empty() {
+                    self.status = "请先填写图片路径".to_owned();
+                } else {
+                    self.asset_draft = infer_asset_draft_from_path(&self.project_root, &path);
+                }
+            }
+        });
+
+        ui.separator();
+        ui.label("分类 / 类型");
+        ui.text_edit_singleline(&mut self.asset_draft.category);
+        egui::ComboBox::from_id_salt("asset_draft_kind")
+            .selected_text(self.asset_draft.kind.zh_label())
+            .show_ui(ui, |ui| {
+                for kind in AssetKind::ALL {
+                    if ui
+                        .selectable_value(&mut self.asset_draft.kind, kind, kind.zh_label())
+                        .clicked()
+                    {
+                        apply_kind_defaults(&mut self.asset_draft);
+                    }
+                }
+            });
+        egui::ComboBox::from_id_salt("asset_draft_layer")
+            .selected_text(self.asset_draft.default_layer.zh_label())
+            .show_ui(ui, |ui| {
+                for layer in LayerKind::ALL {
+                    ui.selectable_value(
+                        &mut self.asset_draft.default_layer,
+                        layer,
+                        layer.zh_label(),
+                    );
+                }
+            });
+
+        ui.separator();
+        ui.label("默认尺寸 / 放置规则");
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::DragValue::new(&mut self.asset_draft.default_size[0])
+                    .range(1.0..=4096.0)
+                    .speed(1.0)
+                    .prefix("宽 "),
+            );
+            ui.add(
+                egui::DragValue::new(&mut self.asset_draft.default_size[1])
+                    .range(1.0..=4096.0)
+                    .speed(1.0)
+                    .prefix("高 "),
+            );
+        });
+        if self.asset_draft.kind == AssetKind::Tile {
+            if let Some(footprint) =
+                infer_tile_footprint(self.asset_draft.default_size, self.document.tile_size)
+            {
+                self.asset_draft.footprint = footprint;
+            }
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::DragValue::new(&mut self.asset_draft.footprint[0])
+                        .range(1..=64)
+                        .speed(0.1)
+                        .prefix("占格 W "),
+                );
+                ui.add(
+                    egui::DragValue::new(&mut self.asset_draft.footprint[1])
+                        .range(1..=64)
+                        .speed(0.1)
+                        .prefix("占格 H "),
+                );
+            });
+            if infer_tile_footprint(self.asset_draft.default_size, self.document.tile_size)
+                .is_none()
+            {
+                ui.colored_label(
+                    Color32::YELLOW,
+                    "尺寸不是当前地图格子的整数倍，请手动确认占格",
+                );
+            }
+        }
+        egui::ComboBox::from_id_salt("asset_draft_anchor")
+            .selected_text(anchor_label(self.asset_draft.anchor))
+            .show_ui(ui, |ui| {
+                for anchor in [
+                    AnchorKind::TopLeft,
+                    AnchorKind::Center,
+                    AnchorKind::BottomCenter,
+                ] {
+                    ui.selectable_value(&mut self.asset_draft.anchor, anchor, anchor_label(anchor));
+                }
+            });
+        egui::ComboBox::from_id_salt("asset_draft_snap")
+            .selected_text(snap_label(self.asset_draft.snap))
+            .show_ui(ui, |ui| {
+                for snap in [SnapMode::Grid, SnapMode::HalfGrid, SnapMode::Free] {
+                    ui.selectable_value(&mut self.asset_draft.snap, snap, snap_label(snap));
+                }
+            });
+
+        ui.separator();
+        ui.label("Tags / 额外属性");
+        ui.text_edit_singleline(&mut self.asset_draft.tags);
+        ui.text_edit_singleline(&mut self.asset_draft.entity_type);
+        ui.text_edit_singleline(&mut self.asset_draft.codex_id);
+
+        ui.separator();
+        ui.horizontal(|ui| {
+            if ui.button("应用").clicked() {
+                self.apply_asset_draft(ctx);
+            }
+            if ui.button("应用并保存").clicked() {
+                self.apply_asset_draft(ctx);
+                if self.asset_db_dirty {
+                    self.save_asset_database();
+                }
+            }
+            if ui.button("取消").clicked() {
+                self.show_asset_dialog = false;
+            }
+        });
     }
 
     fn create_new_map_from_draft(&mut self) {
@@ -2114,7 +2598,7 @@ impl EditorApp {
 
         let placed_ground_size = match self.active_layer {
             LayerKind::Ground => {
-                let [width, height] = self.clamped_ground_footprint_at(tile_x, tile_y);
+                let [width, height] = self.selected_ground_footprint_at(tile_x, tile_y);
                 self.paint_ground_brush(tile_x, tile_y, &asset_id);
                 Some([width, height])
             }
@@ -2478,13 +2962,17 @@ impl EditorApp {
         match self.active_layer {
             LayerKind::Ground => {
                 let asset_id = self.selected_asset().map(|asset| asset.id.clone());
-                for y in min_y..=max_y {
-                    for x in min_x..=max_x {
+                let [step_w, step_h] = asset_id
+                    .as_deref()
+                    .and_then(|asset_id| self.registry.get(asset_id))
+                    .map(|asset| self.asset_tile_footprint(asset))
+                    .unwrap_or([1, 1]);
+                for y in (min_y..=max_y).step_by(step_h.max(1) as usize) {
+                    for x in (min_x..=max_x).step_by(step_w.max(1) as usize) {
                         if self.rectangle_erase_mode {
                             self.document.erase_at(LayerKind::Ground, x, y);
                         } else if let Some(asset_id) = &asset_id {
-                            self.document.erase_at(LayerKind::Ground, x, y);
-                            self.document.place_tile(asset_id, x, y);
+                            self.paint_ground_brush(x, y, asset_id);
                         } else {
                             self.status = "矩形填充需要先选择地表素材".to_owned();
                             return;
@@ -2529,17 +3017,22 @@ impl EditorApp {
     }
 
     fn paint_ground_brush(&mut self, x: i32, y: i32, asset_id: &str) {
-        let [width, height] = self.clamped_ground_footprint_at(x, y);
+        let [width, height] = self
+            .registry
+            .get(asset_id)
+            .map(|asset| self.clamped_tile_footprint_at(asset, x, y))
+            .unwrap_or_else(|| self.clamped_ground_footprint_at(x, y));
         for yy in y..y + height {
             for xx in x..x + width {
                 self.document.erase_at(LayerKind::Ground, xx, yy);
-                self.document.place_tile(asset_id, xx, yy);
             }
         }
+        self.document
+            .place_tile_sized(asset_id, x, y, width, height);
     }
 
     fn paint_collision_brush(&mut self, x: i32, y: i32) {
-        let [width, height] = self.clamped_ground_footprint_at(x, y);
+        let [width, height] = self.selected_ground_footprint_at(x, y);
         for yy in y..y + height {
             for xx in x..x + width {
                 self.document.place_collision(xx, yy);
@@ -2585,7 +3078,7 @@ impl EditorApp {
             }
 
             self.document.erase_at(LayerKind::Ground, cx, cy);
-            self.document.place_tile(asset_id, cx, cy);
+            self.paint_ground_brush(cx, cy, asset_id);
             filled += 1;
 
             queue.extend([[cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]]);
@@ -3490,6 +3983,26 @@ impl EditorApp {
         ]
     }
 
+    fn selected_ground_footprint_at(&self, x: i32, y: i32) -> [i32; 2] {
+        self.selected_asset()
+            .map(|asset| self.clamped_tile_footprint_at(asset, x, y))
+            .unwrap_or_else(|| self.clamped_ground_footprint_at(x, y))
+    }
+
+    fn clamped_tile_footprint_at(&self, asset: &AssetEntry, x: i32, y: i32) -> [i32; 2] {
+        let [width, height] = self.asset_tile_footprint(asset);
+        let max_width = (self.document.width as i32 - x).max(1);
+        let max_height = (self.document.height as i32 - y).max(1);
+        [width.clamp(1, max_width), height.clamp(1, max_height)]
+    }
+
+    fn asset_tile_footprint(&self, asset: &AssetEntry) -> [i32; 2] {
+        asset
+            .footprint
+            .or_else(|| infer_tile_footprint(asset.default_size, self.document.tile_size))
+            .unwrap_or([1, 1])
+    }
+
     fn draw_layers(&self, canvas_rect: Rect, painter: &egui::Painter) {
         if self.layer_state(LayerKind::Ground).visible {
             for tile in &self.document.layers.ground {
@@ -4303,6 +4816,54 @@ fn sanitize_map_id(id: &str) -> Option<String> {
     (!sanitized.is_empty()).then_some(sanitized)
 }
 
+fn sanitize_asset_id(id: &str) -> Option<String> {
+    let mut output = String::new();
+    let mut previous_was_separator = false;
+
+    for character in id.trim().chars() {
+        if character.is_ascii_alphanumeric() {
+            output.push(character.to_ascii_lowercase());
+            previous_was_separator = false;
+        } else if matches!(character, '_' | '-' | ' ' | '.') && !previous_was_separator {
+            output.push('_');
+            previous_was_separator = true;
+        }
+    }
+
+    let sanitized = output.trim_matches('_').to_owned();
+    (!sanitized.is_empty()).then_some(sanitized)
+}
+
+fn sanitize_category(category: &str) -> Option<String> {
+    sanitize_asset_id(category)
+}
+
+fn sanitize_relative_path(path: &str) -> Option<String> {
+    let normalized = path.trim().replace('\\', "/");
+    if normalized.is_empty()
+        || normalized.starts_with('/')
+        || normalized.contains("../")
+        || normalized.contains("/..")
+    {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+fn parse_tags(tags: &str) -> Vec<String> {
+    tags.split(',')
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn non_empty_string(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_owned())
+}
+
 fn unique_map_id(project_root: &Path, base_id: &str) -> String {
     let base = sanitize_map_id(base_id).unwrap_or_else(|| "untitled_overworld".to_owned());
     let map_dir = maps_dir(project_root);
@@ -4431,6 +4992,121 @@ fn snap_label(snap: SnapMode) -> &'static str {
         SnapMode::Grid => "网格",
         SnapMode::HalfGrid => "半格",
         SnapMode::Free => "自由",
+    }
+}
+
+fn infer_asset_draft_from_path(project_root: &Path, relative_path: &str) -> AssetDraft {
+    let normalized = relative_path.trim().replace('\\', "/");
+    let file_stem = Path::new(&normalized)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("asset");
+    let id = sanitize_asset_id(file_stem).unwrap_or_else(|| "asset".to_owned());
+    let category = normalized
+        .split('/')
+        .collect::<Vec<_>>()
+        .windows(2)
+        .find_map(|pair| (pair[1] == "overworld").then(|| pair[0].to_owned()))
+        .unwrap_or_else(|| "props".to_owned());
+    let kind = infer_asset_kind(&category, &id);
+    let mut draft = AssetDraft {
+        id,
+        category: sanitize_category(&category).unwrap_or_else(|| "props".to_owned()),
+        path: normalized.clone(),
+        kind,
+        default_layer: LayerKind::Objects,
+        default_size: image_dimensions(&project_root.join(&normalized)).unwrap_or([72.0, 72.0]),
+        footprint: [1, 1],
+        anchor: AnchorKind::BottomCenter,
+        snap: SnapMode::Grid,
+        tags: category.replace('_', ", "),
+        entity_type: String::new(),
+        codex_id: String::new(),
+    };
+    apply_kind_defaults(&mut draft);
+    draft
+}
+
+fn infer_asset_kind(category: &str, id: &str) -> AssetKind {
+    if category == "tiles" || id.contains("_tile_") {
+        AssetKind::Tile
+    } else if category == "decals" || id.contains("_decal_") {
+        AssetKind::Decal
+    } else if category == "fauna" || category == "pickups" || id.contains("_fauna_") {
+        AssetKind::Entity
+    } else {
+        AssetKind::Object
+    }
+}
+
+fn apply_kind_defaults(draft: &mut AssetDraft) {
+    match draft.kind {
+        AssetKind::Tile => {
+            draft.default_layer = LayerKind::Ground;
+            if draft.default_size[0] <= 1.0 || draft.default_size[1] <= 1.0 {
+                draft.default_size = [32.0, 32.0];
+            }
+            draft.footprint = infer_tile_footprint(draft.default_size, 32).unwrap_or([1, 1]);
+            draft.anchor = AnchorKind::TopLeft;
+            draft.snap = SnapMode::Grid;
+        }
+        AssetKind::Decal => {
+            draft.default_layer = LayerKind::Decals;
+            draft.anchor = AnchorKind::Center;
+            draft.snap = SnapMode::HalfGrid;
+        }
+        AssetKind::Object => {
+            draft.default_layer = LayerKind::Objects;
+            draft.anchor = AnchorKind::BottomCenter;
+            draft.snap = SnapMode::Grid;
+        }
+        AssetKind::Entity => {
+            draft.default_layer = LayerKind::Entities;
+            draft.anchor = AnchorKind::BottomCenter;
+            draft.snap = SnapMode::Grid;
+            if draft.entity_type.trim().is_empty() {
+                draft.entity_type = "Decoration".to_owned();
+            }
+        }
+        AssetKind::Zone => {
+            draft.default_layer = LayerKind::Zones;
+            draft.anchor = AnchorKind::TopLeft;
+            draft.snap = SnapMode::Grid;
+        }
+    }
+}
+
+fn image_dimensions(path: &Path) -> Option<[f32; 2]> {
+    image::image_dimensions(path)
+        .ok()
+        .map(|(width, height)| [width as f32, height as f32])
+}
+
+fn infer_tile_footprint(default_size: [f32; 2], tile_size: u32) -> Option<[i32; 2]> {
+    let tile_size = tile_size.max(1) as f32;
+    let width_units = default_size[0] / tile_size;
+    let height_units = default_size[1] / tile_size;
+    let width = width_units.round();
+    let height = height_units.round();
+    ((width_units - width).abs() < 0.01 && (height_units - height).abs() < 0.01)
+        .then_some([width.max(1.0) as i32, height.max(1.0) as i32])
+}
+
+fn collect_png_paths(dir: &Path, output: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+
+    for entry in entries.filter_map(|entry| entry.ok()) {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_png_paths(&path, output);
+        } else if path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("png"))
+        {
+            output.push(path);
+        }
     }
 }
 
