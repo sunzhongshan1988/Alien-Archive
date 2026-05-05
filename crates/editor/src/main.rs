@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use asset_registry::{AssetEntry, AssetKind, AssetRegistry};
 use eframe::egui::{
     self, Color32, Context as EguiContext, Key, Modifiers, Pos2, Rect, Sense, Shape, Stroke,
-    TextureHandle, TextureOptions, Vec2,
+    StrokeKind, TextureHandle, TextureOptions, Vec2,
     epaint::{Mesh, Vertex},
     vec2,
 };
@@ -277,7 +277,7 @@ impl EditorApp {
     fn draw_top_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label("Map");
-            egui::ComboBox::from_id_source("map_file")
+            egui::ComboBox::from_id_salt("map_file")
                 .width(210.0)
                 .selected_text(map_label_for_path(
                     &self.project_root,
@@ -335,7 +335,7 @@ impl EditorApp {
 
             ui.separator();
             ui.label("Layer");
-            egui::ComboBox::from_id_source("active_layer")
+            egui::ComboBox::from_id_salt("active_layer")
                 .selected_text(self.active_layer.label())
                 .show_ui(ui, |ui| {
                     for layer in LayerKind::ALL {
@@ -541,19 +541,19 @@ impl EditorApp {
             ui.label(selection.label());
             if ui.button("Flip X").clicked() {
                 self.flip_selected_item();
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("Rotate +90").clicked() {
                 self.rotate_selected_item(90);
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("Rotate -90").clicked() {
                 self.rotate_selected_item(-90);
-                ui.close_menu();
+                ui.close();
             }
             if ui.button("Reset Transform").clicked() {
                 self.reset_selected_transform();
-                ui.close_menu();
+                ui.close();
             }
             ui.separator();
             if ui.button("Delete").clicked() {
@@ -561,7 +561,7 @@ impl EditorApp {
                 self.selected_item = None;
                 self.mark_dirty();
                 self.status = format!("Deleted {}", selection.label());
-                ui.close_menu();
+                ui.close();
             }
         });
     }
@@ -1240,6 +1240,7 @@ impl EditorApp {
                 rect,
                 0.0,
                 Stroke::new(1.5, Color32::from_rgb(120, 210, 255)),
+                StrokeKind::Inside,
             );
         }
     }
@@ -1289,7 +1290,12 @@ impl EditorApp {
         };
 
         if let Some(rect) = rect {
-            painter.rect_stroke(rect.expand(3.0), 2.0, Stroke::new(2.0, Color32::YELLOW));
+            painter.rect_stroke(
+                rect.expand(3.0),
+                2.0,
+                Stroke::new(2.0, Color32::YELLOW),
+                StrokeKind::Inside,
+            );
         }
     }
 
@@ -1315,6 +1321,7 @@ impl EditorApp {
             rect,
             0.0,
             Stroke::new(2.0, Color32::from_rgb(130, 235, 165)),
+            StrokeKind::Inside,
         );
     }
 
@@ -1386,18 +1393,19 @@ impl EditorApp {
 }
 
 impl eframe::App for EditorApp {
-    fn update(&mut self, ctx: &EguiContext, _frame: &mut eframe::Frame) {
-        self.handle_shortcuts(ctx);
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        self.handle_shortcuts(&ctx);
 
-        egui::TopBottomPanel::top("top_bar").show(ctx, |ui| self.draw_top_bar(ui));
-        egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| self.draw_status_bar(ui));
-        egui::SidePanel::left("asset_panel")
+        egui::Panel::top("top_bar").show_inside(ui, |ui| self.draw_top_bar(ui));
+        egui::Panel::bottom("status_bar").show_inside(ui, |ui| self.draw_status_bar(ui));
+        egui::Panel::left("asset_panel")
             .resizable(true)
-            .default_width(280.0)
-            .show(ctx, |ui| {
+            .default_size(280.0)
+            .show_inside(ui, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| self.draw_asset_panel(ui));
             });
-        egui::CentralPanel::default().show(ctx, |ui| self.draw_canvas(ui, ctx));
+        egui::CentralPanel::default().show_inside(ui, |ui| self.draw_canvas(ui, &ctx));
     }
 }
 

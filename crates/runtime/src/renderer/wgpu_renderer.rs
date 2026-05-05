@@ -187,7 +187,7 @@ impl WgpuRenderer {
 
         // The window outlives the renderer inside the app event loop.
         let surface = unsafe {
-            let target = wgpu::SurfaceTargetUnsafe::from_window(window)
+            let target = wgpu::SurfaceTargetUnsafe::from_display_and_window(window, window)
                 .context("failed to read native window handles")?;
             instance
                 .create_surface_unsafe(target)
@@ -204,15 +204,13 @@ impl WgpuRenderer {
             .context("no compatible GPU adapter found")?;
 
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("Alien Archive Device"),
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::downlevel_webgl2_defaults()
-                        .using_resolution(adapter.limits()),
-                },
-                None,
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("Alien Archive Device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::downlevel_webgl2_defaults()
+                    .using_resolution(adapter.limits()),
+                ..Default::default()
+            })
             .await
             .context("failed to create GPU device")?;
 
@@ -249,20 +247,20 @@ impl WgpuRenderer {
         let rect_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Rectangle Pipeline Layout"),
             bind_group_layouts: &[],
-            push_constant_ranges: &[],
+            immediate_size: 0,
         });
         let rect_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Rectangle Pipeline"),
             layout: Some(&rect_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &rect_shader,
-                entry_point: "vs_main",
+                entry_point: Some("vs_main"),
                 buffers: &[RectVertex::layout()],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &rect_shader,
-                entry_point: "fs_main",
+                entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -273,7 +271,8 @@ impl WgpuRenderer {
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
+            cache: None,
         });
 
         let image_bind_group_layout =
@@ -305,21 +304,21 @@ impl WgpuRenderer {
         let image_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Image Pipeline Layout"),
-                bind_group_layouts: &[&image_bind_group_layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&image_bind_group_layout)],
+                immediate_size: 0,
             });
         let image_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Image Pipeline"),
             layout: Some(&image_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &image_shader,
-                entry_point: "vs_main",
+                entry_point: Some("vs_main"),
                 buffers: &[ImageVertex::layout()],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &image_shader,
-                entry_point: "fs_main",
+                entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -330,7 +329,8 @@ impl WgpuRenderer {
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
+            cache: None,
         });
 
         Ok(Self {
@@ -367,13 +367,16 @@ impl WgpuRenderer {
 
     pub fn finish_frame(&mut self) -> Result<()> {
         let frame = match self.surface.get_current_texture() {
-            Ok(frame) => frame,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+            wgpu::CurrentSurfaceTexture::Success(frame)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
                 self.surface.configure(&self.device, &self.config);
                 return Ok(());
             }
-            Err(wgpu::SurfaceError::Timeout) => return Ok(()),
-            Err(wgpu::SurfaceError::OutOfMemory) => bail!("GPU surface is out of memory"),
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                return Ok(());
+            }
+            wgpu::CurrentSurfaceTexture::Validation => bail!("GPU surface validation failed"),
         };
 
         let view = frame
@@ -392,6 +395,7 @@ impl WgpuRenderer {
                 label: Some("Main Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(to_wgpu_color(self.clear_color)),
@@ -401,6 +405,7 @@ impl WgpuRenderer {
                 depth_stencil_attachment: None,
                 occlusion_query_set: None,
                 timestamp_writes: None,
+                multiview_mask: None,
             });
 
             for command in &prepared_commands {
@@ -640,14 +645,14 @@ impl Renderer for WgpuRenderer {
         });
 
         self.queue.write_texture(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
             rgba,
-            wgpu::ImageDataLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(4 * width),
                 rows_per_image: Some(height),
@@ -663,7 +668,7 @@ impl Renderer for WgpuRenderer {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
