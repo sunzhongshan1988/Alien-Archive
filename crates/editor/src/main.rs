@@ -1,4 +1,5 @@
 mod asset_registry;
+mod native_menu;
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -22,6 +23,58 @@ use eframe::egui::{
     vec2,
 };
 use serde::{Deserialize, Serialize};
+
+const THEME_APP_BG: Color32 = Color32::from_rgb(17, 17, 16);
+const THEME_PANEL_BG: Color32 = Color32::from_rgb(25, 25, 23);
+const THEME_PANEL_BG_SOFT: Color32 = Color32::from_rgb(34, 34, 31);
+const THEME_CANVAS_BG: Color32 = Color32::from_rgb(13, 13, 12);
+const THEME_MAP_BG: Color32 = Color32::from_rgb(24, 24, 22);
+const THEME_BORDER: Color32 = Color32::from_rgb(75, 73, 67);
+const THEME_TEXT: Color32 = Color32::from_rgb(228, 225, 215);
+const THEME_MUTED_TEXT: Color32 = Color32::from_rgb(165, 160, 148);
+const THEME_ACCENT: Color32 = Color32::from_rgb(176, 153, 112);
+const THEME_ACCENT_STRONG: Color32 = Color32::from_rgb(214, 181, 118);
+const THEME_ACCENT_DIM: Color32 = Color32::from_rgb(62, 53, 38);
+const THEME_WARNING: Color32 = Color32::from_rgb(226, 166, 78);
+const THEME_WARNING_BG: Color32 = Color32::from_rgb(82, 58, 28);
+const THEME_ERROR: Color32 = Color32::from_rgb(222, 100, 82);
+const THEME_COLLISION: Color32 = Color32::from_rgb(205, 92, 66);
+const THEME_SELECTION: Color32 = Color32::from_rgb(213, 176, 92);
+const THEME_MULTI_SELECTION: Color32 = Color32::from_rgb(169, 163, 131);
+const TOOLBAR_HEIGHT: f32 = 32.0;
+const TOOL_BUTTON_SIZE: Vec2 = Vec2::new(64.0, 26.0);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MenuCommand {
+    NewMap,
+    OpenSelectedMap,
+    RefreshMaps,
+    Save,
+    SaveAs,
+    DeleteMap,
+    RevertMap,
+    Undo,
+    Redo,
+    Copy,
+    Paste,
+    Duplicate,
+    DeleteSelection,
+    ToggleGrid,
+    ToggleCollision,
+    ToggleEntityBounds,
+    ToggleZones,
+    ToggleZoneLabels,
+    ResetView,
+    ValidateMap,
+    SetLayer(LayerKind),
+    SetTool(ToolKind),
+    AddAsset,
+    EditSelectedAsset,
+    RemoveSelectedAsset,
+    SaveAssetDatabase,
+    ShowUnregisteredAssets,
+    ReloadAssetDatabase,
+}
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
@@ -296,6 +349,7 @@ struct MapListEntry {
 }
 
 struct EditorApp {
+    native_menu: native_menu::NativeMenu,
     project_root: PathBuf,
     map_path: PathBuf,
     map_entries: Vec<MapListEntry>,
@@ -358,6 +412,7 @@ impl EditorApp {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let project_root = project_root();
         configure_editor_fonts(&cc.egui_ctx);
+        configure_editor_theme(&cc.egui_ctx);
         let map_path = project_root.join(DEFAULT_MAP_PATH);
         let map_entries = scan_map_entries(&project_root);
         let config = load_editor_config(&project_root);
@@ -371,6 +426,7 @@ impl EditorApp {
             MapDocument::load(&map_path).unwrap_or_else(|_| MapDocument::new_landing_site());
         let save_as_id = document.id.clone();
         let mut app = Self {
+            native_menu: native_menu::NativeMenu::install(),
             project_root: project_root.clone(),
             selected_map_path: map_path.clone(),
             map_path,
@@ -503,6 +559,76 @@ impl EditorApp {
                 self.status = "已取消区域绘制".to_owned();
             }
         });
+    }
+
+    fn handle_native_menu_commands(&mut self, ctx: &EguiContext) {
+        while let Some(command) = self.native_menu.poll_command() {
+            self.execute_menu_command(command, ctx);
+        }
+    }
+
+    fn execute_menu_command(&mut self, command: MenuCommand, ctx: &EguiContext) {
+        match command {
+            MenuCommand::NewMap => {
+                self.new_map_draft = NewMapDraft::default();
+                self.show_new_map_dialog = true;
+            }
+            MenuCommand::OpenSelectedMap => self.open_selected_map(),
+            MenuCommand::RefreshMaps => self.refresh_map_entries(),
+            MenuCommand::Save => self.save_map(),
+            MenuCommand::SaveAs => self.save_map_as(),
+            MenuCommand::DeleteMap => {
+                self.delete_confirm_path = Some(self.selected_map_path.clone());
+            }
+            MenuCommand::RevertMap => {
+                if self.dirty {
+                    self.open_confirm_path = Some(self.map_path.clone());
+                } else {
+                    self.open_map(self.map_path.clone());
+                }
+            }
+            MenuCommand::Undo => self.undo(),
+            MenuCommand::Redo => self.redo(),
+            MenuCommand::Copy => self.copy_selected_item(),
+            MenuCommand::Paste => self.paste_clipboard(),
+            MenuCommand::Duplicate => self.duplicate_selected_item(),
+            MenuCommand::DeleteSelection => self.delete_current_selection(),
+            MenuCommand::ToggleGrid => self.show_grid = !self.show_grid,
+            MenuCommand::ToggleCollision => self.show_collision = !self.show_collision,
+            MenuCommand::ToggleEntityBounds => self.show_entity_bounds = !self.show_entity_bounds,
+            MenuCommand::ToggleZones => self.show_zones = !self.show_zones,
+            MenuCommand::ToggleZoneLabels => self.show_zone_labels = !self.show_zone_labels,
+            MenuCommand::ResetView => {
+                self.pan = vec2(48.0, 48.0);
+                self.zoom = 1.0;
+            }
+            MenuCommand::ValidateMap => {
+                self.validation_issues = self.validate_current_map();
+                self.show_validation_panel = true;
+                self.status = validation_summary(&self.validation_issues);
+            }
+            MenuCommand::SetLayer(layer) => self.active_layer = layer,
+            MenuCommand::SetTool(tool) => {
+                self.tool = tool;
+                if tool == ToolKind::Collision {
+                    self.active_layer = LayerKind::Collision;
+                } else if tool == ToolKind::Zone {
+                    self.active_layer = LayerKind::Zones;
+                }
+            }
+            MenuCommand::AddAsset => self.open_add_asset_dialog(),
+            MenuCommand::EditSelectedAsset => {
+                if let Some(asset_id) = self.selected_asset.clone() {
+                    self.open_edit_asset_dialog(&asset_id);
+                } else {
+                    self.status = "请先选择素材".to_owned();
+                }
+            }
+            MenuCommand::RemoveSelectedAsset => self.delete_selected_asset_definition(ctx),
+            MenuCommand::SaveAssetDatabase => self.save_asset_database(),
+            MenuCommand::ShowUnregisteredAssets => self.show_unregistered_assets = true,
+            MenuCommand::ReloadAssetDatabase => self.reload_asset_database(ctx),
+        }
     }
 
     fn save_map(&mut self) {
@@ -1243,8 +1369,10 @@ impl EditorApp {
     }
 
     fn draw_top_bar(&mut self, ui: &mut egui::Ui) {
-        self.draw_menu_bar(ui);
-        ui.separator();
+        if !native_menu::NATIVE_MENU_ENABLED {
+            self.draw_menu_bar(ui);
+            ui.separator();
+        }
         self.draw_tool_bar(ui);
     }
 
@@ -1461,13 +1589,13 @@ impl EditorApp {
     }
 
     fn draw_tool_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
-            ui.label("工具");
+        ui.spacing_mut().item_spacing = vec2(6.0, 0.0);
+        ui.horizontal_centered(|ui| {
+            ui.set_height(TOOLBAR_HEIGHT);
+            toolbar_label(ui, "工具");
             for tool in ToolKind::ALL {
-                if ui
-                    .selectable_value(&mut self.tool, tool, tool.label())
-                    .clicked()
-                {
+                if toolbar_tool_button(ui, self.tool == tool, tool.label()).clicked() {
+                    self.tool = tool;
                     if tool == ToolKind::Collision {
                         self.active_layer = LayerKind::Collision;
                     } else if tool == ToolKind::Zone {
@@ -1477,9 +1605,10 @@ impl EditorApp {
             }
 
             ui.separator();
-            ui.label("图层");
+            toolbar_label(ui, "图层");
             egui::ComboBox::from_id_salt("active_layer")
                 .selected_text(self.active_layer.zh_label())
+                .width(92.0)
                 .show_ui(ui, |ui| {
                     for layer in LayerKind::ALL {
                         ui.selectable_value(&mut self.active_layer, layer, layer.zh_label());
@@ -1488,7 +1617,7 @@ impl EditorApp {
 
             if self.active_layer == LayerKind::Ground {
                 ui.separator();
-                ui.label("画笔尺寸");
+                toolbar_label(ui, "画笔尺寸");
                 ui.add(
                     egui::DragValue::new(&mut self.ground_footprint_w)
                         .range(1..=self.document.width as i32)
@@ -1508,22 +1637,22 @@ impl EditorApp {
             }
 
             ui.separator();
-            if ui.button("水平翻转").clicked() {
+            if toolbar_command_button(ui, "水平翻转", 72.0).clicked() {
                 self.flip_selected_item();
             }
-            if ui.button("左转").clicked() {
+            if toolbar_command_button(ui, "左转", 48.0).clicked() {
                 self.rotate_selected_item(-90);
             }
-            if ui.button("右转").clicked() {
+            if toolbar_command_button(ui, "右转", 48.0).clicked() {
                 self.rotate_selected_item(90);
             }
-            if ui.button("重置变换").clicked() {
+            if toolbar_command_button(ui, "重置变换", 78.0).clicked() {
                 self.reset_selected_transform();
             }
 
             if let Some([mut width, mut height]) = self.ground_size_for_selection() {
                 ui.separator();
-                ui.label("选中地块");
+                toolbar_label(ui, "选中地块");
                 let width_changed = ui
                     .add(
                         egui::DragValue::new(&mut width)
@@ -1614,9 +1743,9 @@ impl EditorApp {
                     let selected = self.selected_asset.as_deref() == Some(asset.id.as_str());
                     let (rect, response) = ui.allocate_exact_size(slot, Sense::click());
                     let fill = if selected {
-                        Color32::from_rgb(62, 88, 82)
+                        THEME_ACCENT_DIM
                     } else {
-                        Color32::from_rgb(31, 35, 37)
+                        THEME_PANEL_BG_SOFT
                     };
                     ui.painter().rect_filled(rect, 3.0, fill);
                     ui.painter().rect_stroke(
@@ -1625,9 +1754,9 @@ impl EditorApp {
                         Stroke::new(
                             if selected { 2.0 } else { 1.0 },
                             if selected {
-                                Color32::from_rgb(120, 235, 170)
+                                THEME_ACCENT_STRONG
                             } else {
-                                Color32::from_rgb(65, 72, 75)
+                                THEME_BORDER
                             },
                         ),
                         StrokeKind::Inside,
@@ -1650,7 +1779,7 @@ impl EditorApp {
                         egui::Align2::CENTER_CENTER,
                         compact_asset_label(&asset.id),
                         egui::TextStyle::Small.resolve(ui.style()),
-                        Color32::from_rgb(220, 228, 224),
+                        THEME_TEXT,
                     );
 
                     if response.clicked() {
@@ -1686,7 +1815,7 @@ impl EditorApp {
                     );
                 } else {
                     let (rect, _) = ui.allocate_exact_size(vec2(40.0, 40.0), Sense::hover());
-                    ui.painter().rect_filled(rect, 2.0, Color32::DARK_GRAY);
+                    ui.painter().rect_filled(rect, 2.0, THEME_PANEL_BG_SOFT);
                 }
 
                 ui.selectable_label(selected, &asset.id)
@@ -1772,7 +1901,7 @@ impl EditorApp {
             .iter()
             .any(|selection| self.layer_state(selection.layer).locked)
         {
-            ui.colored_label(Color32::YELLOW, "部分所选图层已锁定，批量编辑会跳过它们");
+            ui.colored_label(THEME_WARNING, "部分所选图层已锁定，批量编辑会跳过它们");
         }
 
         ui.separator();
@@ -1901,7 +2030,7 @@ impl EditorApp {
             }
         });
         if self.asset_db_dirty {
-            ui.colored_label(Color32::YELLOW, "素材库有未保存修改");
+            ui.colored_label(THEME_WARNING, "素材库有未保存修改");
             if ui.button("保存素材库").clicked() {
                 self.save_asset_database();
             }
@@ -1911,7 +2040,7 @@ impl EditorApp {
     fn draw_selection_inspector(&mut self, ui: &mut egui::Ui, selection: SelectedItem) {
         ui.label(format!("选中：{}", selection.label()));
         if self.layer_state(selection.layer).locked {
-            ui.colored_label(Color32::YELLOW, "当前图层已锁定");
+            ui.colored_label(THEME_WARNING, "当前图层已锁定");
         }
 
         let mut next = self.document.clone();
@@ -2205,8 +2334,8 @@ impl EditorApp {
                     }
                     for issue in &self.validation_issues {
                         let color = match issue.severity {
-                            MapValidationSeverity::Error => Color32::RED,
-                            MapValidationSeverity::Warning => Color32::YELLOW,
+                            MapValidationSeverity::Error => THEME_ERROR,
+                            MapValidationSeverity::Warning => THEME_WARNING,
                         };
                         ui.colored_label(color, &issue.message);
                     }
@@ -2385,7 +2514,7 @@ impl EditorApp {
                 .is_none()
             {
                 ui.colored_label(
-                    Color32::YELLOW,
+                    THEME_WARNING,
                     "尺寸不是当前地图格子的整数倍，请手动确认占格",
                 );
             }
@@ -2468,7 +2597,7 @@ impl EditorApp {
         let (response, painter) = ui.allocate_painter(desired_size, Sense::click_and_drag());
         let rect = response.rect;
 
-        painter.rect_filled(rect, 0.0, Color32::from_rgb(18, 22, 25));
+        painter.rect_filled(rect, 0.0, THEME_CANVAS_BG);
         self.apply_canvas_input(&response, ctx);
 
         let tile_size = self.document.tile_size as f32;
@@ -2480,7 +2609,7 @@ impl EditorApp {
             self.world_to_screen(rect, vec2(0.0, 0.0)),
             map_size * self.zoom,
         );
-        painter.rect_filled(map_rect, 0.0, Color32::from_rgb(24, 28, 29));
+        painter.rect_filled(map_rect, 0.0, THEME_MAP_BG);
 
         self.draw_layers(rect, &painter);
 
@@ -4255,7 +4384,7 @@ impl EditorApp {
                     egui::Align2::CENTER_CENTER,
                     format!("{}\\n{}", zone.id, zone.zone_type),
                     egui::TextStyle::Small.resolve(&egui::Style::default()),
-                    Color32::from_rgb(235, 245, 255),
+                    THEME_TEXT,
                 );
             }
         }
@@ -4372,7 +4501,7 @@ impl EditorApp {
                 Color32::WHITE,
             );
         } else {
-            painter.rect_filled(rect, 1.0, Color32::from_rgb(80, 80, 90));
+            painter.rect_filled(rect, 1.0, Color32::from_rgb(68, 72, 64));
         }
     }
 
@@ -4398,7 +4527,16 @@ impl EditorApp {
                 self.world_to_screen(canvas_rect, world),
                 vec2(tile_size, tile_size) * self.zoom,
             );
-            painter.rect_filled(rect, 0.0, Color32::from_rgba_unmultiplied(255, 48, 48, 80));
+            painter.rect_filled(
+                rect,
+                0.0,
+                Color32::from_rgba_unmultiplied(
+                    THEME_COLLISION.r(),
+                    THEME_COLLISION.g(),
+                    THEME_COLLISION.b(),
+                    86,
+                ),
+            );
         }
     }
 
@@ -4413,7 +4551,7 @@ impl EditorApp {
             painter.rect_stroke(
                 rect,
                 0.0,
-                Stroke::new(1.5, Color32::from_rgb(120, 210, 255)),
+                Stroke::new(1.5, THEME_ACCENT),
                 StrokeKind::Inside,
             );
         }
@@ -4435,9 +4573,9 @@ impl EditorApp {
                 None => rect,
             });
             let color = if index == 0 {
-                Color32::YELLOW
+                THEME_SELECTION
             } else {
-                Color32::from_rgb(95, 210, 255)
+                THEME_MULTI_SELECTION
             };
             painter.rect_stroke(
                 rect.expand(3.0),
@@ -4458,11 +4596,11 @@ impl EditorApp {
             ) && !self.layer_state(selection.layer).locked
             {
                 for handle in resize_handle_rects(rect) {
-                    painter.rect_filled(handle, 1.5, Color32::from_rgb(255, 230, 90));
+                    painter.rect_filled(handle, 1.5, THEME_SELECTION);
                     painter.rect_stroke(
                         handle,
                         1.5,
-                        Stroke::new(1.0, Color32::from_rgb(70, 55, 0)),
+                        Stroke::new(1.0, THEME_WARNING_BG),
                         StrokeKind::Inside,
                     );
                 }
@@ -4475,7 +4613,7 @@ impl EditorApp {
             painter.rect_stroke(
                 rect.expand(8.0),
                 2.0,
-                Stroke::new(1.5, Color32::from_rgb(140, 235, 255)),
+                Stroke::new(1.5, THEME_MULTI_SELECTION),
                 StrokeKind::Inside,
             );
         }
@@ -4486,11 +4624,20 @@ impl EditorApp {
             return;
         };
         let rect = Rect::from_two_pos(marquee.start, marquee.current);
-        painter.rect_filled(rect, 0.0, Color32::from_rgba_unmultiplied(90, 180, 255, 32));
+        painter.rect_filled(
+            rect,
+            0.0,
+            Color32::from_rgba_unmultiplied(
+                THEME_MULTI_SELECTION.r(),
+                THEME_MULTI_SELECTION.g(),
+                THEME_MULTI_SELECTION.b(),
+                34,
+            ),
+        );
         painter.rect_stroke(
             rect,
             0.0,
-            Stroke::new(1.5, Color32::from_rgb(100, 210, 255)),
+            Stroke::new(1.5, THEME_MULTI_SELECTION),
             StrokeKind::Inside,
         );
     }
@@ -4517,11 +4664,11 @@ impl EditorApp {
                 vec2(point[0] * tile_size, point[1] * tile_size),
             );
             let rect = Rect::from_center_size(screen, vec2(9.0, 9.0));
-            painter.rect_filled(rect, 2.0, Color32::from_rgb(255, 245, 120));
+            painter.rect_filled(rect, 2.0, THEME_SELECTION);
             painter.rect_stroke(
                 rect,
                 2.0,
-                Stroke::new(1.0, Color32::from_rgb(70, 60, 0)),
+                Stroke::new(1.0, THEME_WARNING_BG),
                 StrokeKind::Inside,
             );
             painter.text(
@@ -4529,7 +4676,7 @@ impl EditorApp {
                 egui::Align2::LEFT_CENTER,
                 index.to_string(),
                 egui::TextStyle::Small.resolve(&egui::Style::default()),
-                Color32::WHITE,
+                THEME_TEXT,
             );
         }
     }
@@ -4594,12 +4741,17 @@ impl EditorApp {
         painter.rect_filled(
             rect,
             0.0,
-            Color32::from_rgba_unmultiplied(120, 220, 150, 26),
+            Color32::from_rgba_unmultiplied(
+                THEME_ACCENT.r(),
+                THEME_ACCENT.g(),
+                THEME_ACCENT.b(),
+                32,
+            ),
         );
         painter.rect_stroke(
             rect,
             0.0,
-            Stroke::new(2.0, Color32::from_rgb(130, 235, 165)),
+            Stroke::new(2.0, THEME_ACCENT_STRONG),
             StrokeKind::Inside,
         );
     }
@@ -4626,11 +4778,20 @@ impl EditorApp {
             max_x - min_x + 1,
             max_y - min_y + 1,
         );
-        painter.rect_filled(rect, 0.0, Color32::from_rgba_unmultiplied(80, 160, 255, 30));
+        painter.rect_filled(
+            rect,
+            0.0,
+            Color32::from_rgba_unmultiplied(
+                THEME_WARNING.r(),
+                THEME_WARNING.g(),
+                THEME_WARNING.b(),
+                30,
+            ),
+        );
         painter.rect_stroke(
             rect,
             0.0,
-            Stroke::new(2.0, Color32::from_rgb(80, 180, 255)),
+            Stroke::new(2.0, THEME_WARNING),
             StrokeKind::Inside,
         );
     }
@@ -4655,13 +4816,10 @@ impl EditorApp {
         }
 
         for pair in points.windows(2) {
-            painter.line_segment(
-                [pair[0], pair[1]],
-                Stroke::new(2.0, Color32::from_rgb(110, 220, 255)),
-            );
+            painter.line_segment([pair[0], pair[1]], Stroke::new(2.0, THEME_ACCENT_STRONG));
         }
         for point in points {
-            painter.circle_filled(point, 4.5, Color32::from_rgb(110, 220, 255));
+            painter.circle_filled(point, 4.5, THEME_ACCENT_STRONG);
         }
     }
 
@@ -4773,6 +4931,8 @@ impl EditorApp {
 impl eframe::App for EditorApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        configure_editor_theme(&ctx);
+        self.handle_native_menu_commands(&ctx);
         self.handle_shortcuts(&ctx);
         self.autosave_if_needed();
 
@@ -4811,7 +4971,15 @@ fn draw_grid(
         return;
     }
 
-    let stroke = Stroke::new(1.0, Color32::from_rgba_unmultiplied(210, 220, 220, 34));
+    let stroke = Stroke::new(
+        1.0,
+        Color32::from_rgba_unmultiplied(
+            THEME_MUTED_TEXT.r(),
+            THEME_MUTED_TEXT.g(),
+            THEME_MUTED_TEXT.b(),
+            34,
+        ),
+    );
     let clipped = map_rect.intersect(clip_rect);
     if clipped.is_negative() {
         return;
@@ -4844,6 +5012,24 @@ fn draw_grid(
             stroke,
         );
     }
+}
+
+fn toolbar_label(ui: &mut egui::Ui, text: &str) {
+    ui.add_sized(
+        [ui.spacing().interact_size.y.max(34.0), 26.0],
+        egui::Label::new(egui::RichText::new(text).color(THEME_MUTED_TEXT)),
+    );
+}
+
+fn toolbar_tool_button(ui: &mut egui::Ui, selected: bool, text: &str) -> egui::Response {
+    ui.add_sized(
+        TOOL_BUTTON_SIZE,
+        egui::Button::selectable(selected, text).corner_radius(3.0),
+    )
+}
+
+fn toolbar_command_button(ui: &mut egui::Ui, text: &str, width: f32) -> egui::Response {
+    ui.add_sized([width, 26.0], egui::Button::new(text).corner_radius(3.0))
 }
 
 fn load_thumbnail(ctx: &EguiContext, asset: &AssetEntry) -> Result<TextureHandle> {
@@ -4907,6 +5093,40 @@ fn configure_editor_fonts(ctx: &EguiContext) {
     }
 
     ctx.set_fonts(fonts);
+}
+
+fn configure_editor_theme(ctx: &EguiContext) {
+    let mut visuals = egui::Visuals::dark();
+    visuals.override_text_color = Some(THEME_TEXT);
+    visuals.panel_fill = THEME_PANEL_BG;
+    visuals.window_fill = THEME_PANEL_BG;
+    visuals.extreme_bg_color = THEME_APP_BG;
+    visuals.faint_bg_color = THEME_PANEL_BG_SOFT;
+    visuals.code_bg_color = Color32::from_rgb(20, 22, 20);
+    visuals.warn_fg_color = THEME_WARNING;
+    visuals.error_fg_color = THEME_ERROR;
+    visuals.hyperlink_color = THEME_ACCENT_STRONG;
+    visuals.selection.bg_fill = THEME_ACCENT_DIM;
+    visuals.selection.stroke = Stroke::new(1.0, THEME_ACCENT_STRONG);
+    visuals.window_stroke = Stroke::new(1.0, THEME_BORDER);
+    visuals.widgets.noninteractive.bg_fill = THEME_PANEL_BG;
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, THEME_BORDER);
+    visuals.widgets.inactive.bg_fill = Color32::from_rgb(34, 37, 34);
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_rgb(72, 79, 69));
+    visuals.widgets.hovered.bg_fill = Color32::from_rgb(50, 48, 42);
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, THEME_ACCENT);
+    visuals.widgets.active.bg_fill = THEME_ACCENT_DIM;
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0, THEME_ACCENT_STRONG);
+    visuals.widgets.open.bg_fill = Color32::from_rgb(42, 40, 35);
+    visuals.widgets.open.bg_stroke = Stroke::new(1.0, THEME_BORDER);
+
+    ctx.set_visuals(visuals.clone());
+    let mut style = (*ctx.global_style()).clone();
+    style.visuals = visuals;
+    style.spacing.item_spacing = vec2(8.0, 6.0);
+    style.spacing.button_padding = vec2(8.0, 4.0);
+    style.spacing.menu_margin = egui::Margin::same(8);
+    ctx.set_global_style(style);
 }
 
 fn editor_config_path(project_root: &Path) -> PathBuf {
@@ -5292,24 +5512,34 @@ fn collect_png_paths(dir: &Path, output: &mut Vec<PathBuf>) {
 fn zone_colors(zone_type: &str) -> (Color32, Color32) {
     match zone_type {
         "ScanArea" => (
-            Color32::from_rgb(90, 210, 150),
-            Color32::from_rgba_unmultiplied(90, 210, 150, 32),
+            Color32::from_rgb(156, 166, 126),
+            Color32::from_rgba_unmultiplied(156, 166, 126, 34),
         ),
         "MapTransition" => (
-            Color32::from_rgb(255, 185, 85),
-            Color32::from_rgba_unmultiplied(255, 185, 85, 32),
+            THEME_WARNING,
+            Color32::from_rgba_unmultiplied(
+                THEME_WARNING.r(),
+                THEME_WARNING.g(),
+                THEME_WARNING.b(),
+                34,
+            ),
         ),
         "NoSpawn" => (
-            Color32::from_rgb(235, 95, 95),
-            Color32::from_rgba_unmultiplied(235, 95, 95, 32),
+            THEME_ERROR,
+            Color32::from_rgba_unmultiplied(THEME_ERROR.r(), THEME_ERROR.g(), THEME_ERROR.b(), 34),
         ),
         "CameraBounds" => (
-            Color32::from_rgb(175, 130, 255),
-            Color32::from_rgba_unmultiplied(175, 130, 255, 32),
+            Color32::from_rgb(152, 156, 126),
+            Color32::from_rgba_unmultiplied(152, 156, 126, 34),
         ),
         _ => (
-            Color32::from_rgb(80, 180, 255),
-            Color32::from_rgba_unmultiplied(80, 180, 255, 32),
+            THEME_ACCENT,
+            Color32::from_rgba_unmultiplied(
+                THEME_ACCENT.r(),
+                THEME_ACCENT.g(),
+                THEME_ACCENT.b(),
+                34,
+            ),
         ),
     }
 }
