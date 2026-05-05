@@ -1,49 +1,48 @@
+mod app;
 mod asset_registry;
+mod assets;
 mod native_menu;
+mod tools;
+mod ui;
+mod util;
 
 use std::{
     collections::{HashMap, VecDeque},
     fs,
-    path::{Path, PathBuf},
-    sync::Arc,
+    path::PathBuf,
     time::{Duration, Instant},
 };
 
-use anyhow::{Context, Result};
+use app::{
+    config::{EditorConfig, load_editor_config, save_editor_config},
+    maps::{
+        MapListEntry, display_project_path, maps_dir, project_relative_path, project_root,
+        scan_map_entries,
+    },
+};
 use asset_registry::{AssetEntry, AssetRegistry};
+use assets::{
+    AssetDraft, apply_kind_defaults, asset_matches_search, category_label, collect_png_paths,
+    compact_asset_label, image_dimensions, infer_asset_draft_from_path, infer_tile_footprint,
+    load_thumbnail,
+};
 use content::{
-    AnchorKind, AssetDatabase, AssetDefinition, AssetKind, DEFAULT_ASSET_DB_PATH, DEFAULT_MAP_PATH,
-    InstanceRect, LayerKind, MapDocument, MapValidationIssue, MapValidationSeverity, SnapMode,
-    validate_map,
+    AnchorKind, AssetDatabase, AssetKind, DEFAULT_ASSET_DB_PATH, DEFAULT_MAP_PATH, InstanceRect,
+    LayerKind, MapDocument, MapValidationIssue, MapValidationSeverity, SnapMode, validate_map,
 };
 use eframe::egui::{
-    self, Color32, Context as EguiContext, FontData, FontDefinitions, FontFamily, Key, Modifiers,
-    Pos2, Rect, Sense, Shape, Stroke, StrokeKind, TextureHandle, TextureOptions, Vec2,
+    self, Color32, Context as EguiContext, Key, Modifiers, Pos2, Rect, Sense, Shape, Stroke,
+    StrokeKind, TextureHandle, Vec2,
     epaint::{Mesh, Vertex},
     vec2,
 };
-use serde::{Deserialize, Serialize};
-
-const THEME_APP_BG: Color32 = Color32::from_rgb(17, 17, 16);
-const THEME_PANEL_BG: Color32 = Color32::from_rgb(25, 25, 23);
-const THEME_PANEL_BG_SOFT: Color32 = Color32::from_rgb(34, 34, 31);
-const THEME_CANVAS_BG: Color32 = Color32::from_rgb(13, 13, 12);
-const THEME_MAP_BG: Color32 = Color32::from_rgb(24, 24, 22);
-const THEME_BORDER: Color32 = Color32::from_rgb(75, 73, 67);
-const THEME_TEXT: Color32 = Color32::from_rgb(228, 225, 215);
-const THEME_MUTED_TEXT: Color32 = Color32::from_rgb(165, 160, 148);
-const THEME_ACCENT: Color32 = Color32::from_rgb(176, 153, 112);
-const THEME_ACCENT_STRONG: Color32 = Color32::from_rgb(214, 181, 118);
-const THEME_ACCENT_DIM: Color32 = Color32::from_rgb(62, 53, 38);
-const THEME_WARNING: Color32 = Color32::from_rgb(226, 166, 78);
-const THEME_WARNING_BG: Color32 = Color32::from_rgb(82, 58, 28);
-const THEME_ERROR: Color32 = Color32::from_rgb(222, 100, 82);
-const THEME_COLLISION: Color32 = Color32::from_rgb(205, 92, 66);
-const THEME_SELECTION: Color32 = Color32::from_rgb(213, 176, 92);
-const THEME_MULTI_SELECTION: Color32 = Color32::from_rgb(169, 163, 131);
-const TOOLBAR_HEIGHT: f32 = 32.0;
-const TOOL_BUTTON_SIZE: Vec2 = Vec2::new(34.0, 28.0);
-const TOOL_ICON_FALLBACK_URI: &str = "bytes://editor/tools/fallback.svg";
+use tools::ToolKind;
+use ui::theme::*;
+use ui::toolbar::{
+    TOOLBAR_HEIGHT, configure_tool_icons, toolbar_centered, toolbar_command_button, toolbar_label,
+    toolbar_tool_button,
+};
+use util::{geometry::*, ids::*, sanitize::*};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MenuCommand {
@@ -90,50 +89,6 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(|cc| Ok(Box::new(EditorApp::new(cc)))),
     )
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ToolKind {
-    Select,
-    Brush,
-    Bucket,
-    Rectangle,
-    Erase,
-    Eyedropper,
-    Collision,
-    Zone,
-    Pan,
-    Zoom,
-}
-
-impl ToolKind {
-    const ALL: [Self; 10] = [
-        Self::Select,
-        Self::Brush,
-        Self::Bucket,
-        Self::Rectangle,
-        Self::Erase,
-        Self::Eyedropper,
-        Self::Collision,
-        Self::Zone,
-        Self::Pan,
-        Self::Zoom,
-    ];
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::Select => "选择",
-            Self::Brush => "画笔",
-            Self::Bucket => "油漆桶",
-            Self::Rectangle => "矩形",
-            Self::Erase => "橡皮",
-            Self::Eyedropper => "吸管",
-            Self::Collision => "碰撞",
-            Self::Zone => "区域",
-            Self::Pan => "平移",
-            Self::Zoom => "缩放",
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -198,83 +153,6 @@ impl Default for NewMapDraft {
 }
 
 #[derive(Clone, Debug)]
-struct AssetDraft {
-    id: String,
-    category: String,
-    path: String,
-    kind: AssetKind,
-    default_layer: LayerKind,
-    default_size: [f32; 2],
-    footprint: [i32; 2],
-    anchor: AnchorKind,
-    snap: SnapMode,
-    tags: String,
-    entity_type: String,
-    codex_id: String,
-}
-
-impl Default for AssetDraft {
-    fn default() -> Self {
-        Self {
-            id: String::new(),
-            category: "props".to_owned(),
-            path: String::new(),
-            kind: AssetKind::Object,
-            default_layer: LayerKind::Objects,
-            default_size: [72.0, 72.0],
-            footprint: [1, 1],
-            anchor: AnchorKind::BottomCenter,
-            snap: SnapMode::Grid,
-            tags: "props".to_owned(),
-            entity_type: String::new(),
-            codex_id: String::new(),
-        }
-    }
-}
-
-impl AssetDraft {
-    fn from_entry(entry: &AssetEntry) -> Self {
-        Self {
-            id: entry.id.clone(),
-            category: entry.category.clone(),
-            path: entry.relative_path.clone(),
-            kind: entry.kind,
-            default_layer: entry.default_layer,
-            default_size: entry.default_size,
-            footprint: entry
-                .footprint
-                .unwrap_or_else(|| infer_tile_footprint(entry.default_size, 32).unwrap_or([1, 1])),
-            anchor: entry.anchor,
-            snap: entry.snap,
-            tags: entry.tags.join(", "),
-            entity_type: entry.entity_type.clone().unwrap_or_default(),
-            codex_id: entry.codex_id.clone().unwrap_or_default(),
-        }
-    }
-
-    fn to_definition(&self) -> Option<AssetDefinition> {
-        let id = sanitize_asset_id(&self.id)?;
-        let path = sanitize_relative_path(&self.path)?;
-        let category = sanitize_category(&self.category).unwrap_or_else(|| "props".to_owned());
-        Some(AssetDefinition {
-            id,
-            category,
-            path: PathBuf::from(path),
-            kind: self.kind,
-            default_layer: self.default_layer,
-            default_size: [self.default_size[0].max(1.0), self.default_size[1].max(1.0)],
-            footprint: (self.kind == AssetKind::Tile)
-                .then_some([self.footprint[0].max(1), self.footprint[1].max(1)]),
-            anchor: self.anchor,
-            snap: self.snap,
-            tags: parse_tags(&self.tags),
-            entity_type: non_empty_string(&self.entity_type),
-            codex_id: non_empty_string(&self.codex_id),
-        })
-    }
-}
-
-#[derive(Clone, Debug)]
 struct ResizeDrag {
     selection: SelectedItem,
 }
@@ -326,11 +204,6 @@ impl MoveOrigin {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-struct EditorConfig {
-    recent_maps: Vec<String>,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SelectedItem {
     layer: LayerKind,
@@ -341,12 +214,6 @@ impl SelectedItem {
     fn label(&self) -> String {
         format!("{}:{}", self.layer.zh_label(), self.id)
     }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct MapListEntry {
-    label: String,
-    path: PathBuf,
 }
 
 struct EditorApp {
@@ -5034,429 +4901,11 @@ fn draw_grid(
     }
 }
 
-fn toolbar_label(ui: &mut egui::Ui, text: &str) {
-    ui.add_sized(
-        [ui.spacing().interact_size.y.max(34.0), 26.0],
-        egui::Label::new(egui::RichText::new(text).color(THEME_MUTED_TEXT)),
-    );
-}
-
-fn toolbar_centered<R>(
-    ui: &mut egui::Ui,
-    size: Vec2,
-    add_contents: impl FnOnce(&mut egui::Ui) -> R,
-) -> egui::InnerResponse<R> {
-    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-        ui.with_layout(
-            egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-            add_contents,
-        )
-        .inner
-    })
-}
-
-fn toolbar_tool_button(ui: &mut egui::Ui, selected: bool, tool: ToolKind) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(TOOL_BUTTON_SIZE, Sense::click());
-    let visuals = ui.style().interact_selectable(&response, selected);
-    ui.painter().rect_filled(rect, 3.0, visuals.weak_bg_fill);
-    ui.painter()
-        .rect_stroke(rect, 3.0, visuals.bg_stroke, StrokeKind::Inside);
-    draw_tool_icon(
-        ui,
-        tool,
-        rect.shrink2(vec2(5.0, 3.0)),
-        if selected {
-            THEME_ACCENT_STRONG
-        } else {
-            visuals.fg_stroke.color
-        },
-    );
-    response.on_hover_text(tool.label())
-}
-
-fn toolbar_command_button(ui: &mut egui::Ui, text: &str, width: f32) -> egui::Response {
-    ui.add_sized([width, 26.0], egui::Button::new(text).corner_radius(3.0))
-}
-
-fn draw_tool_icon(ui: &egui::Ui, tool: ToolKind, rect: Rect, color: Color32) {
-    let uri = tool_icon_uri(tool);
-    let pixel_size = (ui.pixels_per_point() * rect.size()).round();
-    let size_hint = egui::load::SizeHint::Size {
-        width: pixel_size.x.max(1.0) as u32,
-        height: pixel_size.y.max(1.0) as u32,
-        maintain_aspect_ratio: false,
-    };
-    let uri = if ui
-        .ctx()
-        .try_load_texture(uri, TextureOptions::default(), size_hint)
-        .is_err()
-    {
-        TOOL_ICON_FALLBACK_URI
-    } else {
-        uri
-    };
-
-    egui::Image::from_uri(uri).tint(color).paint_at(ui, rect);
-}
-
-fn tool_icon_uri(tool: ToolKind) -> &'static str {
-    match tool {
-        ToolKind::Select => "bytes://editor/tools/select.svg",
-        ToolKind::Brush => "bytes://editor/tools/brush.svg",
-        ToolKind::Bucket => "bytes://editor/tools/bucket.svg",
-        ToolKind::Rectangle => "bytes://editor/tools/rectangle.svg",
-        ToolKind::Erase => "bytes://editor/tools/erase.svg",
-        ToolKind::Eyedropper => "bytes://editor/tools/eyedropper.svg",
-        ToolKind::Collision => "bytes://editor/tools/collision.svg",
-        ToolKind::Zone => "bytes://editor/tools/zone.svg",
-        ToolKind::Pan => "bytes://editor/tools/pan.svg",
-        ToolKind::Zoom => "bytes://editor/tools/zoom.svg",
-    }
-}
-
-fn configure_tool_icons(ctx: &EguiContext) {
-    egui_extras::install_image_loaders(ctx);
-
-    for (uri, svg) in [
-        (
-            TOOL_ICON_FALLBACK_URI,
-            include_str!("../assets/icons/tools/fallback.svg"),
-        ),
-        (
-            "bytes://editor/tools/select.svg",
-            include_str!("../assets/icons/tools/select.svg"),
-        ),
-        (
-            "bytes://editor/tools/brush.svg",
-            include_str!("../assets/icons/tools/brush.svg"),
-        ),
-        (
-            "bytes://editor/tools/bucket.svg",
-            include_str!("../assets/icons/tools/bucket.svg"),
-        ),
-        (
-            "bytes://editor/tools/rectangle.svg",
-            include_str!("../assets/icons/tools/rectangle.svg"),
-        ),
-        (
-            "bytes://editor/tools/erase.svg",
-            include_str!("../assets/icons/tools/erase.svg"),
-        ),
-        (
-            "bytes://editor/tools/eyedropper.svg",
-            include_str!("../assets/icons/tools/eyedropper.svg"),
-        ),
-        (
-            "bytes://editor/tools/collision.svg",
-            include_str!("../assets/icons/tools/collision.svg"),
-        ),
-        (
-            "bytes://editor/tools/zone.svg",
-            include_str!("../assets/icons/tools/zone.svg"),
-        ),
-        (
-            "bytes://editor/tools/pan.svg",
-            include_str!("../assets/icons/tools/pan.svg"),
-        ),
-        (
-            "bytes://editor/tools/zoom.svg",
-            include_str!("../assets/icons/tools/zoom.svg"),
-        ),
-    ] {
-        let bytes = normalize_svg_icon(svg).into_bytes().into_boxed_slice();
-        ctx.include_bytes(uri, egui::load::Bytes::Shared(Arc::from(bytes)));
-    }
-}
-
-fn normalize_svg_icon(svg: &str) -> String {
-    svg.replace("currentColor", "#ffffff")
-        .replace("black", "#ffffff")
-        .replace("#000000", "#ffffff")
-        .replace("#000", "#ffffff")
-}
-
-fn load_thumbnail(ctx: &EguiContext, asset: &AssetEntry) -> Result<TextureHandle> {
-    let image = image::ImageReader::open(&asset.path)
-        .with_context(|| format!("failed to open {}", asset.path.display()))?
-        .decode()
-        .with_context(|| format!("failed to decode {}", asset.path.display()))?;
-    let thumbnail = image.thumbnail(128, 128).to_rgba8();
-    let (width, height) = thumbnail.dimensions();
-    let pixels = thumbnail.into_raw();
-    let color_image =
-        egui::ColorImage::from_rgba_unmultiplied([width as usize, height as usize], &pixels);
-
-    Ok(ctx.load_texture(&asset.id, color_image, TextureOptions::NEAREST))
-}
-
-fn project_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
-
-fn display_project_path(project_root: &Path, path: &Path) -> String {
-    path.strip_prefix(project_root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
-}
-
-fn project_relative_path(project_root: &Path, path: &Path) -> Option<String> {
-    if let Ok(relative) = path.strip_prefix(project_root) {
-        return Some(relative.to_string_lossy().replace('\\', "/"));
-    }
-
-    let canonical_root = project_root.canonicalize().ok()?;
-    let canonical_path = path.canonicalize().ok()?;
-    canonical_path
-        .strip_prefix(canonical_root)
-        .ok()
-        .map(|path| path.to_string_lossy().replace('\\', "/"))
-}
-
-fn maps_dir(project_root: &Path) -> PathBuf {
-    project_root.join("assets").join("data").join("maps")
-}
-
-fn configure_editor_fonts(ctx: &EguiContext) {
-    let mut fonts = FontDefinitions::default();
-    let font_name = "alien_archive_ui".to_owned();
-    fonts.font_data.insert(
-        font_name.clone(),
-        Arc::new(FontData::from_static(include_bytes!(
-            "../assets/fonts/ui.ttf"
-        ))),
-    );
-
-    for family in [FontFamily::Proportional, FontFamily::Monospace] {
-        fonts
-            .families
-            .entry(family)
-            .or_default()
-            .insert(0, font_name.clone());
-    }
-
-    ctx.set_fonts(fonts);
-}
-
-fn configure_editor_theme(ctx: &EguiContext) {
-    let mut visuals = egui::Visuals::dark();
-    visuals.override_text_color = Some(THEME_TEXT);
-    visuals.panel_fill = THEME_PANEL_BG;
-    visuals.window_fill = THEME_PANEL_BG;
-    visuals.extreme_bg_color = THEME_APP_BG;
-    visuals.faint_bg_color = THEME_PANEL_BG_SOFT;
-    visuals.code_bg_color = Color32::from_rgb(20, 22, 20);
-    visuals.warn_fg_color = THEME_WARNING;
-    visuals.error_fg_color = THEME_ERROR;
-    visuals.hyperlink_color = THEME_ACCENT_STRONG;
-    visuals.selection.bg_fill = THEME_ACCENT_DIM;
-    visuals.selection.stroke = Stroke::new(1.0, THEME_ACCENT_STRONG);
-    visuals.window_stroke = Stroke::new(1.0, THEME_BORDER);
-    visuals.widgets.noninteractive.bg_fill = THEME_PANEL_BG;
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, THEME_BORDER);
-    visuals.widgets.inactive.bg_fill = Color32::from_rgb(34, 37, 34);
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_rgb(72, 79, 69));
-    visuals.widgets.hovered.bg_fill = Color32::from_rgb(50, 48, 42);
-    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, THEME_ACCENT);
-    visuals.widgets.active.bg_fill = THEME_ACCENT_DIM;
-    visuals.widgets.active.bg_stroke = Stroke::new(1.0, THEME_ACCENT_STRONG);
-    visuals.widgets.open.bg_fill = Color32::from_rgb(42, 40, 35);
-    visuals.widgets.open.bg_stroke = Stroke::new(1.0, THEME_BORDER);
-
-    ctx.set_visuals(visuals.clone());
-    let mut style = (*ctx.global_style()).clone();
-    style.visuals = visuals;
-    style.spacing.item_spacing = vec2(8.0, 6.0);
-    style.spacing.button_padding = vec2(8.0, 4.0);
-    style.spacing.menu_margin = egui::Margin::same(8);
-    ctx.set_global_style(style);
-}
-
-fn editor_config_path(project_root: &Path) -> PathBuf {
-    project_root.join(".editor").join("editor_config.ron")
-}
-
-fn load_editor_config(project_root: &Path) -> EditorConfig {
-    let path = editor_config_path(project_root);
-    let Ok(source) = fs::read_to_string(&path) else {
-        return EditorConfig::default();
-    };
-    ron::from_str(&source).unwrap_or_default()
-}
-
-fn save_editor_config(project_root: &Path, config: &EditorConfig) -> Result<()> {
-    let path = editor_config_path(project_root);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create {}", parent.display()))?;
-    }
-    let source = ron::ser::to_string_pretty(config, ron::ser::PrettyConfig::new())
-        .context("failed to serialize editor config")?;
-    fs::write(&path, source).with_context(|| format!("failed to write {}", path.display()))
-}
-
 fn default_layer_states() -> HashMap<LayerKind, LayerUiState> {
     LayerKind::ALL
         .into_iter()
         .map(|layer| (layer, LayerUiState::default()))
         .collect()
-}
-
-fn scan_map_entries(project_root: &Path) -> Vec<MapListEntry> {
-    let Ok(entries) = fs::read_dir(maps_dir(project_root)) else {
-        return Vec::new();
-    };
-    let mut maps = entries
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("ron"))
-        })
-        .filter_map(|path| {
-            let label = path.file_name()?.to_str()?.to_owned();
-            Some(MapListEntry { label, path })
-        })
-        .collect::<Vec<_>>();
-
-    maps.sort_by(|left, right| left.label.cmp(&right.label));
-    maps
-}
-
-fn sanitize_map_id(id: &str) -> Option<String> {
-    let without_extension = id.strip_suffix(".ron").unwrap_or(id);
-    let mut output = String::new();
-    let mut previous_was_separator = false;
-
-    for character in without_extension.trim().chars() {
-        if character.is_ascii_alphanumeric() {
-            output.push(character.to_ascii_lowercase());
-            previous_was_separator = false;
-        } else if matches!(character, '_' | '-' | ' ') && !previous_was_separator {
-            output.push('_');
-            previous_was_separator = true;
-        }
-    }
-
-    let sanitized = output.trim_matches('_').to_owned();
-    (!sanitized.is_empty()).then_some(sanitized)
-}
-
-fn sanitize_asset_id(id: &str) -> Option<String> {
-    let mut output = String::new();
-    let mut previous_was_separator = false;
-
-    for character in id.trim().chars() {
-        if character.is_ascii_alphanumeric() {
-            output.push(character.to_ascii_lowercase());
-            previous_was_separator = false;
-        } else if matches!(character, '_' | '-' | ' ' | '.') && !previous_was_separator {
-            output.push('_');
-            previous_was_separator = true;
-        }
-    }
-
-    let sanitized = output.trim_matches('_').to_owned();
-    (!sanitized.is_empty()).then_some(sanitized)
-}
-
-fn sanitize_category(category: &str) -> Option<String> {
-    sanitize_asset_id(category)
-}
-
-fn sanitize_relative_path(path: &str) -> Option<String> {
-    let normalized = path.trim().replace('\\', "/");
-    if normalized.is_empty()
-        || normalized.starts_with('/')
-        || normalized.contains("../")
-        || normalized.contains("/..")
-    {
-        None
-    } else {
-        Some(normalized)
-    }
-}
-
-fn parse_tags(tags: &str) -> Vec<String> {
-    tags.split(',')
-        .map(str::trim)
-        .filter(|tag| !tag.is_empty())
-        .map(str::to_owned)
-        .collect()
-}
-
-fn non_empty_string(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_owned())
-}
-
-fn unique_map_id(project_root: &Path, base_id: &str) -> String {
-    let base = sanitize_map_id(base_id).unwrap_or_else(|| "untitled_overworld".to_owned());
-    let map_dir = maps_dir(project_root);
-    if !map_dir.join(format!("{base}.ron")).exists() {
-        return base;
-    }
-
-    for index in 2.. {
-        let candidate = format!("{base}_{index}");
-        if !map_dir.join(format!("{candidate}.ron")).exists() {
-            return candidate;
-        }
-    }
-
-    unreachable!("unbounded id scan should always find a candidate")
-}
-
-fn unique_asset_id(database: &AssetDatabase, base_id: &str) -> String {
-    let base = sanitize_asset_id(base_id).unwrap_or_else(|| "asset".to_owned());
-    if database.assets.iter().all(|asset| asset.id != base) {
-        return base;
-    }
-
-    for index in 2.. {
-        let candidate = format!("{base}_{index}");
-        if database.assets.iter().all(|asset| asset.id != candidate) {
-            return candidate;
-        }
-    }
-
-    unreachable!("unbounded id scan should always find a candidate")
-}
-
-fn fit_centered_rect(bounds: Rect, source_size: Vec2) -> Rect {
-    let width = source_size.x.max(1.0);
-    let height = source_size.y.max(1.0);
-    let scale = (bounds.width() / width).min(bounds.height() / height);
-
-    Rect::from_center_size(bounds.center(), vec2(width * scale, height * scale))
-}
-
-fn anchor_grid_to_world(tile_size: f32, x: f32, y: f32, anchor: AnchorKind) -> Vec2 {
-    match anchor {
-        AnchorKind::TopLeft => vec2(x * tile_size, y * tile_size),
-        AnchorKind::Center => vec2((x + 0.5) * tile_size, (y + 0.5) * tile_size),
-        AnchorKind::BottomCenter => vec2((x + 0.5) * tile_size, (y + 1.0) * tile_size),
-    }
-}
-
-fn screen_rect_from_anchor(anchor: Pos2, size: Vec2, anchor_kind: AnchorKind) -> Rect {
-    let min = match anchor_kind {
-        AnchorKind::TopLeft => anchor,
-        AnchorKind::Center => Pos2::new(anchor.x - size.x * 0.5, anchor.y - size.y * 0.5),
-        AnchorKind::BottomCenter => Pos2::new(anchor.x - size.x * 0.5, anchor.y - size.y),
-    };
-    Rect::from_min_size(min, size)
-}
-
-fn resize_handle_rects(rect: Rect) -> [Rect; 4] {
-    const SIZE: f32 = 9.0;
-    [
-        Rect::from_center_size(rect.left_top(), vec2(SIZE, SIZE)),
-        Rect::from_center_size(rect.right_top(), vec2(SIZE, SIZE)),
-        Rect::from_center_size(rect.left_bottom(), vec2(SIZE, SIZE)),
-        Rect::from_center_size(rect.right_bottom(), vec2(SIZE, SIZE)),
-    ]
 }
 
 fn paint_transformed_image(
@@ -5502,26 +4951,6 @@ fn paint_transformed_image(
     painter.add(Shape::mesh(mesh));
 }
 
-fn normalize_rotation(rotation: i32) -> i32 {
-    rotation.rem_euclid(360)
-}
-
-fn category_label(category: &str) -> &str {
-    match category {
-        "tiles" => "地块",
-        "decals" => "贴花",
-        "props" => "道具",
-        "flora" => "植物",
-        "fauna" => "生物",
-        "structures" => "结构",
-        "ruins" => "遗迹",
-        "interactables" => "交互物",
-        "pickups" => "拾取物",
-        "zones" => "区域",
-        _ => category,
-    }
-}
-
 fn anchor_label(anchor: AnchorKind) -> &'static str {
     match anchor {
         AnchorKind::TopLeft => "左上",
@@ -5535,121 +4964,6 @@ fn snap_label(snap: SnapMode) -> &'static str {
         SnapMode::Grid => "网格",
         SnapMode::HalfGrid => "半格",
         SnapMode::Free => "自由",
-    }
-}
-
-fn infer_asset_draft_from_path(project_root: &Path, relative_path: &str) -> AssetDraft {
-    let normalized = relative_path.trim().replace('\\', "/");
-    let file_stem = Path::new(&normalized)
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or("asset");
-    let id = sanitize_asset_id(file_stem).unwrap_or_else(|| "asset".to_owned());
-    let category = normalized
-        .split('/')
-        .collect::<Vec<_>>()
-        .windows(2)
-        .find_map(|pair| (pair[1] == "overworld").then(|| pair[0].to_owned()))
-        .unwrap_or_else(|| "props".to_owned());
-    let kind = infer_asset_kind(&category, &id);
-    let mut draft = AssetDraft {
-        id,
-        category: sanitize_category(&category).unwrap_or_else(|| "props".to_owned()),
-        path: normalized.clone(),
-        kind,
-        default_layer: LayerKind::Objects,
-        default_size: image_dimensions(&project_root.join(&normalized)).unwrap_or([72.0, 72.0]),
-        footprint: [1, 1],
-        anchor: AnchorKind::BottomCenter,
-        snap: SnapMode::Grid,
-        tags: category.replace('_', ", "),
-        entity_type: String::new(),
-        codex_id: String::new(),
-    };
-    apply_kind_defaults(&mut draft);
-    draft
-}
-
-fn infer_asset_kind(category: &str, id: &str) -> AssetKind {
-    if category == "tiles" || id.contains("_tile_") {
-        AssetKind::Tile
-    } else if category == "decals" || id.contains("_decal_") {
-        AssetKind::Decal
-    } else if category == "fauna" || category == "pickups" || id.contains("_fauna_") {
-        AssetKind::Entity
-    } else {
-        AssetKind::Object
-    }
-}
-
-fn apply_kind_defaults(draft: &mut AssetDraft) {
-    match draft.kind {
-        AssetKind::Tile => {
-            draft.default_layer = LayerKind::Ground;
-            if draft.default_size[0] <= 1.0 || draft.default_size[1] <= 1.0 {
-                draft.default_size = [32.0, 32.0];
-            }
-            draft.footprint = infer_tile_footprint(draft.default_size, 32).unwrap_or([1, 1]);
-            draft.anchor = AnchorKind::TopLeft;
-            draft.snap = SnapMode::Grid;
-        }
-        AssetKind::Decal => {
-            draft.default_layer = LayerKind::Decals;
-            draft.anchor = AnchorKind::Center;
-            draft.snap = SnapMode::HalfGrid;
-        }
-        AssetKind::Object => {
-            draft.default_layer = LayerKind::Objects;
-            draft.anchor = AnchorKind::BottomCenter;
-            draft.snap = SnapMode::Grid;
-        }
-        AssetKind::Entity => {
-            draft.default_layer = LayerKind::Entities;
-            draft.anchor = AnchorKind::BottomCenter;
-            draft.snap = SnapMode::Grid;
-            if draft.entity_type.trim().is_empty() {
-                draft.entity_type = "Decoration".to_owned();
-            }
-        }
-        AssetKind::Zone => {
-            draft.default_layer = LayerKind::Zones;
-            draft.anchor = AnchorKind::TopLeft;
-            draft.snap = SnapMode::Grid;
-        }
-    }
-}
-
-fn image_dimensions(path: &Path) -> Option<[f32; 2]> {
-    image::image_dimensions(path)
-        .ok()
-        .map(|(width, height)| [width as f32, height as f32])
-}
-
-fn infer_tile_footprint(default_size: [f32; 2], tile_size: u32) -> Option<[i32; 2]> {
-    let tile_size = tile_size.max(1) as f32;
-    let width_units = default_size[0] / tile_size;
-    let height_units = default_size[1] / tile_size;
-    let width = width_units.round();
-    let height = height_units.round();
-    ((width_units - width).abs() < 0.01 && (height_units - height).abs() < 0.01)
-        .then_some([width.max(1.0) as i32, height.max(1.0) as i32])
-}
-
-fn collect_png_paths(dir: &Path, output: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-
-    for entry in entries.filter_map(|entry| entry.ok()) {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_png_paths(&path, output);
-        } else if path
-            .extension()
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("png"))
-        {
-            output.push(path);
-        }
     }
 }
 
@@ -5685,58 +4999,6 @@ fn zone_colors(zone_type: &str) -> (Color32, Color32) {
                 34,
             ),
         ),
-    }
-}
-
-fn polygon_screen_center(points: &[Pos2]) -> Pos2 {
-    if points.is_empty() {
-        return Pos2::ZERO;
-    }
-    let sum = points
-        .iter()
-        .fold(vec2(0.0, 0.0), |sum, point| sum + point.to_vec2());
-    Pos2::new(sum.x / points.len() as f32, sum.y / points.len() as f32)
-}
-
-fn distance_sq(a: [f32; 2], b: [f32; 2]) -> f32 {
-    let dx = a[0] - b[0];
-    let dy = a[1] - b[1];
-    dx * dx + dy * dy
-}
-
-fn snapped_delta(delta: [f32; 2], modifiers: Modifiers) -> [f32; 2] {
-    if modifiers.alt {
-        delta
-    } else if modifiers.shift {
-        [
-            (delta[0] * 2.0).round() * 0.5,
-            (delta[1] * 2.0).round() * 0.5,
-        ]
-    } else {
-        [delta[0].round(), delta[1].round()]
-    }
-}
-
-fn asset_matches_search(asset: &AssetEntry, search: &str) -> bool {
-    asset.id.to_ascii_lowercase().contains(search)
-        || asset.relative_path.to_ascii_lowercase().contains(search)
-        || asset
-            .tags
-            .iter()
-            .any(|tag| tag.to_ascii_lowercase().contains(search))
-}
-
-fn compact_asset_label(id: &str) -> String {
-    let label = id
-        .trim_start_matches("ow_tile_")
-        .trim_start_matches("ow_")
-        .replace('_', " ");
-    let mut chars = label.chars();
-    let compact = chars.by_ref().take(12).collect::<String>();
-    if chars.next().is_some() {
-        format!("{compact}...")
-    } else {
-        compact
     }
 }
 
@@ -5916,43 +5178,4 @@ fn validation_summary(issues: &[MapValidationIssue]) -> String {
         .filter(|issue| issue.severity == MapValidationSeverity::Warning)
         .count();
     format!("校验结果：{errors} 个错误，{warnings} 个警告")
-}
-
-fn next_editor_object_id(prefix: &str, instances: &[content::ObjectInstance]) -> String {
-    for index in 1.. {
-        let candidate = format!("{prefix}_{index:03}");
-        if instances.iter().all(|instance| instance.id != candidate) {
-            return candidate;
-        }
-    }
-    unreachable!("unbounded id scan should always find a candidate")
-}
-
-fn next_editor_entity_id(prefix: &str, instances: &[content::EntityInstance]) -> String {
-    for index in 1.. {
-        let candidate = format!("{prefix}_{index:03}");
-        if instances.iter().all(|instance| instance.id != candidate) {
-            return candidate;
-        }
-    }
-    unreachable!("unbounded id scan should always find a candidate")
-}
-
-fn next_editor_zone_id(prefix: &str, instances: &[content::ZoneInstance]) -> String {
-    for index in 1.. {
-        let candidate = format!("{prefix}_{index:03}");
-        if instances.iter().all(|instance| instance.id != candidate) {
-            return candidate;
-        }
-    }
-    unreachable!("unbounded id scan should always find a candidate")
-}
-
-fn ground_selection_id(x: i32, y: i32) -> String {
-    format!("{x},{y}")
-}
-
-fn parse_ground_selection_id(id: &str) -> Option<[i32; 2]> {
-    let (x, y) = id.split_once(',')?;
-    Some([x.parse().ok()?, y.parse().ok()?])
 }
