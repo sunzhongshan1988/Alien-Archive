@@ -138,6 +138,11 @@ impl Default for NewMapDraft {
     }
 }
 
+#[derive(Clone, Debug)]
+struct ResizeDrag {
+    selection: SelectedItem,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct EditorConfig {
     recent_maps: Vec<String>,
@@ -197,6 +202,8 @@ struct EditorApp {
     last_autosave: Instant,
     rectangle_drag_start: Option<[i32; 2]>,
     rectangle_drag_current: Option<[i32; 2]>,
+    lock_aspect_ratio: bool,
+    resize_drag: Option<ResizeDrag>,
     pan: Vec2,
     zoom: f32,
     mouse_tile: Option<[i32; 2]>,
@@ -254,6 +261,8 @@ impl EditorApp {
             last_autosave: Instant::now(),
             rectangle_drag_start: None,
             rectangle_drag_current: None,
+            lock_aspect_ratio: true,
+            resize_drag: None,
             pan: vec2(48.0, 48.0),
             zoom: 1.0,
             mouse_tile: None,
@@ -1234,7 +1243,16 @@ impl EditorApp {
                     .iter_mut()
                     .find(|instance| instance.id == selection.id)
                 {
-                    changed |= object_instance_editor(ui, instance);
+                    let default_size = self
+                        .registry
+                        .get(&instance.asset)
+                        .map(|asset| asset.default_size);
+                    changed |= object_instance_editor(
+                        ui,
+                        instance,
+                        default_size,
+                        &mut self.lock_aspect_ratio,
+                    );
                     next_selection.id = instance.id.clone();
                 }
             }
@@ -1245,7 +1263,16 @@ impl EditorApp {
                     .iter_mut()
                     .find(|instance| instance.id == selection.id)
                 {
-                    changed |= object_instance_editor(ui, instance);
+                    let default_size = self
+                        .registry
+                        .get(&instance.asset)
+                        .map(|asset| asset.default_size);
+                    changed |= object_instance_editor(
+                        ui,
+                        instance,
+                        default_size,
+                        &mut self.lock_aspect_ratio,
+                    );
                     next_selection.id = instance.id.clone();
                 }
             }
@@ -1273,22 +1300,17 @@ impl EditorApp {
                                 .prefix("y "),
                         )
                         .changed();
-                    changed |= ui
-                        .add(
-                            egui::DragValue::new(&mut instance.scale_x)
-                                .range(0.05..=8.0)
-                                .speed(0.01)
-                                .prefix("宽缩放 "),
-                        )
-                        .changed();
-                    changed |= ui
-                        .add(
-                            egui::DragValue::new(&mut instance.scale_y)
-                                .range(0.05..=8.0)
-                                .speed(0.01)
-                                .prefix("高缩放 "),
-                        )
-                        .changed();
+                    let default_size = self
+                        .registry
+                        .get(&instance.asset)
+                        .map(|asset| asset.default_size);
+                    changed |= instance_size_editor(
+                        ui,
+                        &mut instance.scale_x,
+                        &mut instance.scale_y,
+                        default_size,
+                        &mut self.lock_aspect_ratio,
+                    );
                     changed |= ui
                         .add(egui::DragValue::new(&mut instance.z_index).prefix("层级 "))
                         .changed();
@@ -1717,11 +1739,12 @@ impl EditorApp {
             return;
         }
 
+        let modifiers = ctx.input(|input| input.modifiers);
         let Some((asset_id, entity_type, place_pos)) = self.selected_asset().map(|asset| {
             (
                 asset.id.clone(),
                 asset.entity_type.clone(),
-                self.snapped_map_position(raw_map_pos, Some(asset)),
+                self.snapped_map_position(raw_map_pos, Some(asset), modifiers),
             )
         }) else {
             self.status = "Select an asset first".to_owned();
@@ -1791,6 +1814,21 @@ impl EditorApp {
         };
 
         if response.drag_started() {
+            if let Some(selection) = self
+                .selected_item
+                .clone()
+                .filter(|selection| self.resize_handle_hit(canvas_rect, selection, pointer_pos))
+            {
+                self.resize_drag = Some(ResizeDrag {
+                    selection: selection.clone(),
+                });
+                if !self.layer_state(selection.layer).locked {
+                    self.push_undo_snapshot();
+                }
+                return;
+            }
+
+            self.resize_drag = None;
             self.selected_item = self.hit_test_placed_item(canvas_rect, pointer_pos);
             if let Some(selection) = &self.selected_item {
                 self.active_layer = selection.layer;
@@ -1804,6 +1842,12 @@ impl EditorApp {
         }
 
         if response.dragged() && ctx.input(|input| input.pointer.primary_down()) {
+            if let Some(resize) = self.resize_drag.clone() {
+                self.resize_selected_item(canvas_rect, &resize.selection, pointer_pos, ctx);
+                self.mark_dirty();
+                self.status = format!("Resized {}", resize.selection.label());
+                return;
+            }
             let Some(selection) = self.selected_item.clone() else {
                 return;
             };
@@ -1811,11 +1855,21 @@ impl EditorApp {
                 self.status = format!("{} 已锁定", selection.layer.zh_label());
                 return;
             }
-            let Some([tile_x, tile_y]) = self.screen_to_tile(canvas_rect, pointer_pos) else {
-                return;
+            let raw_pos = self
+                .screen_to_map_position(canvas_rect, pointer_pos)
+                .unwrap_or([0.0, 0.0]);
+            let modifiers = ctx.input(|input| input.modifiers);
+            let snapped_pos = if selection.layer == LayerKind::Ground {
+                self.screen_to_tile(canvas_rect, pointer_pos)
+                    .map(|[x, y]| [x as f32, y as f32])
+                    .unwrap_or(raw_pos)
+            } else {
+                let asset_id = self.asset_for_selection(&selection);
+                let asset = asset_id.as_deref().and_then(|id| self.registry.get(id));
+                self.snapped_map_position(raw_pos, asset, modifiers)
             };
 
-            let moved_ground = self.move_selected_item(&selection, tile_x as f32, tile_y as f32);
+            let moved_ground = self.move_selected_item(&selection, snapped_pos[0], snapped_pos[1]);
             if selection.layer == LayerKind::Ground {
                 if let Some([new_x, new_y]) = moved_ground {
                     self.selected_item = Some(SelectedItem {
@@ -1828,8 +1882,17 @@ impl EditorApp {
                 }
             }
             self.mark_dirty();
-            self.status = format!("Moved {} to {}, {}", selection.label(), tile_x, tile_y);
+            self.status = format!(
+                "Moved {} to {:.2}, {:.2}",
+                selection.label(),
+                snapped_pos[0],
+                snapped_pos[1]
+            );
             return;
+        }
+
+        if response.drag_stopped() {
+            self.resize_drag = None;
         }
 
         if response.clicked() {
@@ -1911,6 +1974,159 @@ impl EditorApp {
             _ => {}
         }
         self.mark_dirty();
+    }
+
+    fn resize_handle_hit(
+        &self,
+        canvas_rect: Rect,
+        selection: &SelectedItem,
+        pointer_pos: Pos2,
+    ) -> bool {
+        self.selection_screen_rect(canvas_rect, selection)
+            .is_some_and(|rect| {
+                resize_handle_rects(rect)
+                    .iter()
+                    .any(|handle| handle.contains(pointer_pos))
+            })
+    }
+
+    fn resize_selected_item(
+        &mut self,
+        canvas_rect: Rect,
+        selection: &SelectedItem,
+        pointer_pos: Pos2,
+        ctx: &EguiContext,
+    ) {
+        if self.layer_state(selection.layer).locked {
+            return;
+        }
+        let Some((anchor, asset_id)) = self.selection_anchor_and_asset(canvas_rect, selection)
+        else {
+            return;
+        };
+        let Some(asset) = self.registry.get(&asset_id) else {
+            return;
+        };
+
+        let delta_x = (pointer_pos.x - anchor.x).abs();
+        let delta_y = (pointer_pos.y - anchor.y).abs();
+        let screen_size = match asset.anchor {
+            AnchorKind::TopLeft => vec2(delta_x.max(1.0), delta_y.max(1.0)),
+            AnchorKind::Center => vec2((delta_x * 2.0).max(1.0), (delta_y * 2.0).max(1.0)),
+            AnchorKind::BottomCenter => vec2((delta_x * 2.0).max(1.0), delta_y.max(1.0)),
+        };
+        let world_size = screen_size / self.zoom.max(0.01);
+        let mut scale_x = (world_size.x / asset.default_size[0].max(1.0)).max(0.05);
+        let mut scale_y = (world_size.y / asset.default_size[1].max(1.0)).max(0.05);
+        let keep_aspect = self.lock_aspect_ratio || ctx.input(|input| input.modifiers.shift);
+        if keep_aspect {
+            let uniform = scale_x.max(scale_y);
+            scale_x = uniform;
+            scale_y = uniform;
+        }
+
+        self.set_scale_for_selection(selection, scale_x, scale_y);
+    }
+
+    fn selection_anchor_and_asset(
+        &self,
+        canvas_rect: Rect,
+        selection: &SelectedItem,
+    ) -> Option<(Pos2, String)> {
+        let tile_size = self.document.tile_size as f32;
+        match selection.layer {
+            LayerKind::Decals => self
+                .document
+                .layers
+                .decals
+                .iter()
+                .find(|instance| instance.id == selection.id)
+                .and_then(|instance| {
+                    let asset = self.registry.get(&instance.asset)?;
+                    Some((
+                        self.world_to_screen(
+                            canvas_rect,
+                            anchor_grid_to_world(tile_size, instance.x, instance.y, asset.anchor),
+                        ),
+                        instance.asset.clone(),
+                    ))
+                }),
+            LayerKind::Objects => self
+                .document
+                .layers
+                .objects
+                .iter()
+                .find(|instance| instance.id == selection.id)
+                .and_then(|instance| {
+                    let asset = self.registry.get(&instance.asset)?;
+                    Some((
+                        self.world_to_screen(
+                            canvas_rect,
+                            anchor_grid_to_world(tile_size, instance.x, instance.y, asset.anchor),
+                        ),
+                        instance.asset.clone(),
+                    ))
+                }),
+            LayerKind::Entities => self
+                .document
+                .layers
+                .entities
+                .iter()
+                .find(|instance| instance.id == selection.id)
+                .and_then(|instance| {
+                    let asset = self.registry.get(&instance.asset)?;
+                    Some((
+                        self.world_to_screen(
+                            canvas_rect,
+                            anchor_grid_to_world(tile_size, instance.x, instance.y, asset.anchor),
+                        ),
+                        instance.asset.clone(),
+                    ))
+                }),
+            _ => None,
+        }
+    }
+
+    fn set_scale_for_selection(&mut self, selection: &SelectedItem, scale_x: f32, scale_y: f32) {
+        match selection.layer {
+            LayerKind::Decals => {
+                if let Some(instance) = self
+                    .document
+                    .layers
+                    .decals
+                    .iter_mut()
+                    .find(|instance| instance.id == selection.id)
+                {
+                    instance.scale_x = scale_x;
+                    instance.scale_y = scale_y;
+                }
+            }
+            LayerKind::Objects => {
+                if let Some(instance) = self
+                    .document
+                    .layers
+                    .objects
+                    .iter_mut()
+                    .find(|instance| instance.id == selection.id)
+                {
+                    instance.scale_x = scale_x;
+                    instance.scale_y = scale_y;
+                }
+            }
+            LayerKind::Entities => {
+                if let Some(instance) = self
+                    .document
+                    .layers
+                    .entities
+                    .iter_mut()
+                    .find(|instance| instance.id == selection.id)
+                {
+                    instance.scale_x = scale_x;
+                    instance.scale_y = scale_y;
+                }
+            }
+            _ => {}
+        }
     }
 
     fn hit_test_placed_item(&self, canvas_rect: Rect, pointer_pos: Pos2) -> Option<SelectedItem> {
@@ -2569,7 +2785,34 @@ impl EditorApp {
             return;
         };
 
-        let rect = match selection.layer {
+        if let Some(rect) = self.selection_screen_rect(canvas_rect, selection) {
+            painter.rect_stroke(
+                rect.expand(3.0),
+                2.0,
+                Stroke::new(2.0, Color32::YELLOW),
+                StrokeKind::Inside,
+            );
+
+            if matches!(
+                selection.layer,
+                LayerKind::Decals | LayerKind::Objects | LayerKind::Entities
+            ) && !self.layer_state(selection.layer).locked
+            {
+                for handle in resize_handle_rects(rect) {
+                    painter.rect_filled(handle, 1.5, Color32::from_rgb(255, 230, 90));
+                    painter.rect_stroke(
+                        handle,
+                        1.5,
+                        Stroke::new(1.0, Color32::from_rgb(70, 55, 0)),
+                        StrokeKind::Inside,
+                    );
+                }
+            }
+        }
+    }
+
+    fn selection_screen_rect(&self, canvas_rect: Rect, selection: &SelectedItem) -> Option<Rect> {
+        match selection.layer {
             LayerKind::Ground => parse_ground_selection_id(&selection.id).and_then(|[x, y]| {
                 self.document
                     .layers
@@ -2607,15 +2850,6 @@ impl EditorApp {
                 .find(|zone| zone.id == selection.id)
                 .and_then(|zone| self.zone_screen_rect(canvas_rect, zone)),
             LayerKind::Collision => None,
-        };
-
-        if let Some(rect) = rect {
-            painter.rect_stroke(
-                rect.expand(3.0),
-                2.0,
-                Stroke::new(2.0, Color32::YELLOW),
-                StrokeKind::Inside,
-            );
         }
     }
 
@@ -2758,8 +2992,19 @@ impl EditorApp {
         }
     }
 
-    fn snapped_map_position(&self, raw: [f32; 2], asset: Option<&AssetEntry>) -> [f32; 2] {
-        let snap = asset.map(|asset| asset.snap).unwrap_or(SnapMode::Grid);
+    fn snapped_map_position(
+        &self,
+        raw: [f32; 2],
+        asset: Option<&AssetEntry>,
+        modifiers: Modifiers,
+    ) -> [f32; 2] {
+        let snap = if modifiers.alt {
+            SnapMode::Free
+        } else if modifiers.shift {
+            SnapMode::HalfGrid
+        } else {
+            asset.map(|asset| asset.snap).unwrap_or(SnapMode::Grid)
+        };
         match snap {
             SnapMode::Grid => [raw[0].floor(), raw[1].floor()],
             SnapMode::HalfGrid => [(raw[0] * 2.0).round() * 0.5, (raw[1] * 2.0).round() * 0.5],
@@ -3006,6 +3251,16 @@ fn screen_rect_from_anchor(anchor: Pos2, size: Vec2, anchor_kind: AnchorKind) ->
     Rect::from_min_size(min, size)
 }
 
+fn resize_handle_rects(rect: Rect) -> [Rect; 4] {
+    const SIZE: f32 = 9.0;
+    [
+        Rect::from_center_size(rect.left_top(), vec2(SIZE, SIZE)),
+        Rect::from_center_size(rect.right_top(), vec2(SIZE, SIZE)),
+        Rect::from_center_size(rect.left_bottom(), vec2(SIZE, SIZE)),
+        Rect::from_center_size(rect.right_bottom(), vec2(SIZE, SIZE)),
+    ]
+}
+
 fn paint_transformed_image(
     painter: &egui::Painter,
     texture_id: egui::TextureId,
@@ -3094,7 +3349,12 @@ fn asset_matches_search(asset: &AssetEntry, search: &str) -> bool {
             .any(|tag| tag.to_ascii_lowercase().contains(search))
 }
 
-fn object_instance_editor(ui: &mut egui::Ui, instance: &mut content::ObjectInstance) -> bool {
+fn object_instance_editor(
+    ui: &mut egui::Ui,
+    instance: &mut content::ObjectInstance,
+    default_size: Option<[f32; 2]>,
+    lock_aspect_ratio: &mut bool,
+) -> bool {
     let mut changed = false;
     changed |= ui.text_edit_singleline(&mut instance.id).changed();
     changed |= ui.text_edit_singleline(&mut instance.asset).changed();
@@ -3112,22 +3372,13 @@ fn object_instance_editor(ui: &mut egui::Ui, instance: &mut content::ObjectInsta
                 .prefix("y "),
         )
         .changed();
-    changed |= ui
-        .add(
-            egui::DragValue::new(&mut instance.scale_x)
-                .range(0.05..=8.0)
-                .speed(0.01)
-                .prefix("宽缩放 "),
-        )
-        .changed();
-    changed |= ui
-        .add(
-            egui::DragValue::new(&mut instance.scale_y)
-                .range(0.05..=8.0)
-                .speed(0.01)
-                .prefix("高缩放 "),
-        )
-        .changed();
+    changed |= instance_size_editor(
+        ui,
+        &mut instance.scale_x,
+        &mut instance.scale_y,
+        default_size,
+        lock_aspect_ratio,
+    );
     changed |= ui
         .add(egui::DragValue::new(&mut instance.z_index).prefix("层级 "))
         .changed();
@@ -3136,6 +3387,70 @@ fn object_instance_editor(ui: &mut egui::Ui, instance: &mut content::ObjectInsta
         .add(egui::DragValue::new(&mut instance.rotation).prefix("旋转 "))
         .changed();
     changed
+}
+
+fn instance_size_editor(
+    ui: &mut egui::Ui,
+    scale_x: &mut f32,
+    scale_y: &mut f32,
+    default_size: Option<[f32; 2]>,
+    lock_aspect_ratio: &mut bool,
+) -> bool {
+    let Some([base_width, base_height]) = default_size else {
+        let mut changed = false;
+        changed |= ui
+            .add(
+                egui::DragValue::new(scale_x)
+                    .range(0.05..=8.0)
+                    .speed(0.01)
+                    .prefix("宽缩放 "),
+            )
+            .changed();
+        changed |= ui
+            .add(
+                egui::DragValue::new(scale_y)
+                    .range(0.05..=8.0)
+                    .speed(0.01)
+                    .prefix("高缩放 "),
+            )
+            .changed();
+        return changed;
+    };
+
+    let mut width = base_width * scale_x.max(0.05);
+    let mut height = base_height * scale_y.max(0.05);
+    ui.checkbox(lock_aspect_ratio, "锁定比例");
+    let width_changed = ui
+        .add(
+            egui::DragValue::new(&mut width)
+                .range(1.0..=4096.0)
+                .speed(1.0)
+                .prefix("宽 "),
+        )
+        .changed();
+    let height_changed = ui
+        .add(
+            egui::DragValue::new(&mut height)
+                .range(1.0..=4096.0)
+                .speed(1.0)
+                .prefix("高 "),
+        )
+        .changed();
+
+    if width_changed {
+        *scale_x = (width / base_width.max(1.0)).max(0.05);
+        if *lock_aspect_ratio {
+            *scale_y = *scale_x;
+        }
+    }
+    if height_changed {
+        *scale_y = (height / base_height.max(1.0)).max(0.05);
+        if *lock_aspect_ratio {
+            *scale_x = *scale_y;
+        }
+    }
+
+    width_changed || height_changed
 }
 
 fn entity_rect_editor(
