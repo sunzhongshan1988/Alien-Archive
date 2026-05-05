@@ -311,6 +311,7 @@ struct EditorApp {
     asset_db_dirty: bool,
     show_asset_dialog: bool,
     show_unregistered_assets: bool,
+    asset_scan_root: PathBuf,
     asset_editing_id: Option<String>,
     asset_draft: AssetDraft,
     document: MapDocument,
@@ -370,7 +371,7 @@ impl EditorApp {
             MapDocument::load(&map_path).unwrap_or_else(|_| MapDocument::new_landing_site());
         let save_as_id = document.id.clone();
         let mut app = Self {
-            project_root,
+            project_root: project_root.clone(),
             selected_map_path: map_path.clone(),
             map_path,
             map_entries,
@@ -385,6 +386,7 @@ impl EditorApp {
             asset_db_dirty: false,
             show_asset_dialog: false,
             show_unregistered_assets: false,
+            asset_scan_root: project_root.join("assets").join("sprites"),
             asset_editing_id: None,
             asset_draft: AssetDraft::default(),
             document,
@@ -767,23 +769,144 @@ impl EditorApp {
         self.show_asset_dialog = true;
     }
 
+    fn add_asset_definitions_from_paths(&mut self, paths: Vec<PathBuf>, ctx: &EguiContext) {
+        let mut added = 0usize;
+        let mut skipped = 0usize;
+        let mut last_added_id = None;
+
+        for path in paths {
+            let Some(relative_path) = project_relative_path(&self.project_root, &path) else {
+                skipped += 1;
+                continue;
+            };
+            if !relative_path.to_ascii_lowercase().ends_with(".png") {
+                skipped += 1;
+                continue;
+            }
+            if self.registry.contains_path(&relative_path)
+                || self
+                    .asset_database
+                    .assets
+                    .iter()
+                    .any(|asset| asset.path.to_string_lossy().replace('\\', "/") == relative_path)
+            {
+                skipped += 1;
+                continue;
+            }
+
+            let mut draft = infer_asset_draft_from_path(&self.project_root, &relative_path);
+            draft.id = unique_asset_id(&self.asset_database, &draft.id);
+            let Some(asset) = draft.to_definition() else {
+                skipped += 1;
+                continue;
+            };
+            last_added_id = Some(asset.id.clone());
+            self.asset_database.assets.push(asset);
+            added += 1;
+        }
+
+        if added > 0 {
+            self.asset_database.assets.sort_by(|left, right| {
+                left.category
+                    .cmp(&right.category)
+                    .then_with(|| left.id.cmp(&right.id))
+            });
+            self.selected_asset = last_added_id;
+            self.asset_db_dirty = true;
+            self.rebuild_asset_registry(ctx);
+        }
+
+        self.status = format!("批量登记素材：新增 {added}，跳过 {skipped}");
+    }
+
+    fn pick_asset_file_into_draft(&mut self, ctx: &EguiContext) {
+        let Some(paths) = rfd::FileDialog::new()
+            .set_title("选择 PNG 素材")
+            .set_directory(self.project_root.join("assets").join("sprites"))
+            .add_filter("PNG 图片", &["png"])
+            .pick_files()
+        else {
+            return;
+        };
+
+        if paths.len() > 1 {
+            self.add_asset_definitions_from_paths(paths, ctx);
+            return;
+        }
+
+        let Some(path) = paths.into_iter().next() else {
+            return;
+        };
+        let Some(relative_path) = project_relative_path(&self.project_root, &path) else {
+            self.status = "请选择项目目录内的 PNG，或先把图片放进 assets/sprites".to_owned();
+            return;
+        };
+        if !relative_path.to_ascii_lowercase().ends_with(".png") {
+            self.status = "请选择 PNG 图片".to_owned();
+            return;
+        }
+
+        self.asset_draft = infer_asset_draft_from_path(&self.project_root, &relative_path);
+        self.asset_editing_id = None;
+        self.status = format!("已选择素材文件 {relative_path}");
+    }
+
+    fn pick_and_add_asset_files(&mut self, ctx: &EguiContext) {
+        let Some(paths) = rfd::FileDialog::new()
+            .set_title("批量选择 PNG 素材")
+            .set_directory(self.project_root.join("assets").join("sprites"))
+            .add_filter("PNG 图片", &["png"])
+            .pick_files()
+        else {
+            return;
+        };
+        self.add_asset_definitions_from_paths(paths, ctx);
+    }
+
+    fn pick_and_add_asset_folder(&mut self, ctx: &EguiContext) {
+        let Some(path) = rfd::FileDialog::new()
+            .set_title("选择要批量登记的素材文件夹")
+            .set_directory(self.project_root.join("assets").join("sprites"))
+            .pick_folder()
+        else {
+            return;
+        };
+        if project_relative_path(&self.project_root, &path).is_none() {
+            self.status = "请选择项目目录内的素材文件夹".to_owned();
+            return;
+        }
+        let mut paths = Vec::new();
+        collect_png_paths(&path, &mut paths);
+        self.add_asset_definitions_from_paths(paths, ctx);
+    }
+
+    fn pick_asset_scan_folder(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .set_title("选择素材扫描文件夹")
+            .set_directory(self.project_root.join("assets").join("sprites"))
+            .pick_folder()
+        else {
+            return;
+        };
+
+        if project_relative_path(&self.project_root, &path).is_none() {
+            self.status = "请选择项目目录内的素材文件夹".to_owned();
+            return;
+        }
+        self.asset_scan_root = path;
+        self.status = format!(
+            "扫描文件夹：{}",
+            display_project_path(&self.project_root, &self.asset_scan_root)
+        );
+    }
+
     fn unregistered_sprite_paths(&self) -> Vec<String> {
         let mut paths = Vec::new();
-        collect_png_paths(
-            &self.project_root.join("assets").join("sprites"),
-            &mut paths,
-        );
+        collect_png_paths(&self.asset_scan_root, &mut paths);
         paths.sort();
         paths
             .into_iter()
-            .filter_map(|path| {
-                Some(
-                    path.strip_prefix(&self.project_root)
-                        .ok()?
-                        .to_string_lossy()
-                        .replace('\\', "/"),
-                )
-            })
+            .filter_map(|path| Some(project_relative_path(&self.project_root, &path)?))
             .filter(|path| {
                 path.contains("/overworld/")
                     && !path.contains("overworld_originals")
@@ -2113,6 +2236,24 @@ impl EditorApp {
                     ui.label(
                         "这里扫描 PNG 只是为了辅助登记，未登记图片不会自动进入游戏或地图编辑。",
                     );
+                    ui.horizontal(|ui| {
+                        ui.label("扫描文件夹");
+                        ui.monospace(display_project_path(
+                            &self.project_root,
+                            &self.asset_scan_root,
+                        ));
+                        if ui.button("选择文件夹").clicked() {
+                            self.pick_asset_scan_folder();
+                        }
+                        if ui.button("默认").clicked() {
+                            self.asset_scan_root = self.project_root.join("assets").join("sprites");
+                        }
+                        if ui.button("登记全部").clicked() {
+                            let mut paths = Vec::new();
+                            collect_png_paths(&self.asset_scan_root, &mut paths);
+                            self.add_asset_definitions_from_paths(paths, ctx);
+                        }
+                    });
                     ui.separator();
                     let unregistered = self.unregistered_sprite_paths();
                     if unregistered.is_empty() {
@@ -2142,6 +2283,15 @@ impl EditorApp {
         ui.text_edit_singleline(&mut self.asset_draft.id);
         ui.text_edit_singleline(&mut self.asset_draft.path);
         ui.horizontal(|ui| {
+            if ui.button("选择 PNG 文件").clicked() {
+                self.pick_asset_file_into_draft(ctx);
+            }
+            if ui.button("批量选择文件").clicked() {
+                self.pick_and_add_asset_files(ctx);
+            }
+            if ui.button("批量选择文件夹").clicked() {
+                self.pick_and_add_asset_folder(ctx);
+            }
             if ui.button("从图片尺寸读取").clicked() {
                 match image_dimensions(&self.project_root.join(&self.asset_draft.path)) {
                     Some([width, height]) => {
@@ -4721,6 +4871,19 @@ fn display_project_path(project_root: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
+fn project_relative_path(project_root: &Path, path: &Path) -> Option<String> {
+    if let Ok(relative) = path.strip_prefix(project_root) {
+        return Some(relative.to_string_lossy().replace('\\', "/"));
+    }
+
+    let canonical_root = project_root.canonicalize().ok()?;
+    let canonical_path = path.canonicalize().ok()?;
+    canonical_path
+        .strip_prefix(canonical_root)
+        .ok()
+        .map(|path| path.to_string_lossy().replace('\\', "/"))
+}
+
 fn maps_dir(project_root: &Path) -> PathBuf {
     project_root.join("assets").join("data").join("maps")
 }
@@ -4874,6 +5037,22 @@ fn unique_map_id(project_root: &Path, base_id: &str) -> String {
     for index in 2.. {
         let candidate = format!("{base}_{index}");
         if !map_dir.join(format!("{candidate}.ron")).exists() {
+            return candidate;
+        }
+    }
+
+    unreachable!("unbounded id scan should always find a candidate")
+}
+
+fn unique_asset_id(database: &AssetDatabase, base_id: &str) -> String {
+    let base = sanitize_asset_id(base_id).unwrap_or_else(|| "asset".to_owned());
+    if database.assets.iter().all(|asset| asset.id != base) {
+        return base;
+    }
+
+    for index in 2.. {
+        let candidate = format!("{base}_{index}");
+        if database.assets.iter().all(|asset| asset.id != candidate) {
             return candidate;
         }
     }

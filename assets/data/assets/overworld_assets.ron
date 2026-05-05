@@ -10,7 +10,10 @@
             default_size: (50.61, 48.0),
             anchor: Center,
             snap: HalfGrid,
-            tags: ["decal", "decals"],
+            tags: [
+                "decal",
+                "decals",
+            ],
         ),
         (
             id: "ow_decal_dust_patch",
@@ -21,7 +24,10 @@
             default_size: (50.65, 48.0),
             anchor: Center,
             snap: HalfGrid,
-            tags: ["decal", "decals"],
+            tags: [
+                "decal",
+                "decals",
+            ],
         ),
         (
             id: "ow_decal_footprint",
@@ -32,7 +38,10 @@
             default_size: (28.33, 48.0),
             anchor: Center,
             snap: HalfGrid,
-            tags: ["decal", "decals"],
+            tags: [
+                "decal",
+                "decals",
+            ],
         ),
         (
             id: "ow_decal_glow_moss",
@@ -43,7 +52,10 @@
             default_size: (88.84, 48.0),
             anchor: Center,
             snap: HalfGrid,
-            tags: ["decal", "decals"],
+            tags: [
+                "decal",
+                "decals",
+            ],
         ),
         (
             id: "ow_decal_large_crack",
@@ -54,7 +66,10 @@
             default_size: (39.02, 48.0),
             anchor: Center,
             snap: HalfGrid,
-            tags: ["decal", "decals"],
+            tags: [
+                "decal",
+                "decals",
+            ],
         ),
         (
             id: "ow_decal_old_symbol",
@@ -65,7 +80,10 @@
             default_size: (45.87, 48.0),
             anchor: Center,
             snap: HalfGrid,
-            tags: ["decal", "decals"],
+            tags: [
+                "decal",
+                "decals",
+            ],
         ),
         (
             id: "ow_decal_small_crack",
@@ -76,7 +94,10 @@
             default_size: (37.75, 48.0),
             anchor: Center,
             snap: HalfGrid,
-            tags: ["decal", "decals"],
+            tags: [
+                "decal",
+                "decals",
+            ],
         ),
         (
             id: "ow_fauna_burrower",
@@ -87,7 +108,9 @@
             default_size: (77.7, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["fauna"],
+            tags: [
+                "fauna",
+            ],
             entity_type: Some("Decoration"),
         ),
         (
@@ -99,7 +122,9 @@
             default_size: (45.61, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["fauna"],
+            tags: [
+                "fauna",
+            ],
             entity_type: Some("Decoration"),
         ),
         (
@@ -111,7 +136,9 @@
             default_size: (93.23, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["fauna"],
+            tags: [
+                "fauna",
+            ],
             entity_type: Some("Decoration"),
         ),
         (
@@ -123,7 +150,9 @@
             default_size: (72.3, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["fauna"],
+            tags: [
+                "fauna",
+            ],
             entity_type: Some("Decoration"),
         ),
         (
@@ -135,7 +164,9 @@
             default_size: (200.65, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["fauna"],
+            tags: [
+                "fauna",
+            ],
             entity_type: Some("Decoration"),
         ),
         (
@@ -147,7 +178,9 @@
             default_size: (82.91, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["fauna"],
+            tags: [
+                "fauna",
+            ],
             entity_type: Some("Decoration"),
         ),
         (
@@ -159,7 +192,9 @@
             default_size: (113.06, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["fauna"],
+            tags: [
+                "fauna",
+            ],
             entity_type: Some("Decoration"),
         ),
         (
@@ -171,7 +206,9 @@
             default_size: (95.88, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["fauna"],
+            tags: [
+                "fauna",
+            ],
             entity_type: Some("Decoration"),
         ),
         (
@@ -183,7 +220,9 @@
             default_size: (93.96, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["flora"],
+            tags: [
+                "flora",
+            ],
             codex_id: Some("codex.flora.dead_roots"),
         ),
         (
@@ -195,7 +234,9 @@
             default_size: (56.4, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["flora"],
+            tags: [
+                "flora",
+            ],
             codex_id: Some("codex.flora.glowfungus"),
         ),
         (
@@ -207,7 +248,9 @@
             default_size: (63.12, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["flora"],
+            tags: [
+                "flora",
+            ],
             codex_id: Some("codex.flora.large_variant"),
         ),
         (
@@ -219,7 +262,9 @@
             default_size: (72.57, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["flora"],
+            tags: [
+                "flora",
+            ],
             codex_id: Some("codex.flora.pulsebush"),
         ),
         (
@@ -231,7 +276,9 @@
             default_size: (91.53, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["flora"],
+            tags: [
+                "flora",
+            ],
             codex_id: Some("codex.flora.ringgrass"),
         ),
         (
@@ -243,7 +290,9 @@
             default_size: (57.19, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["flora"],
+            tags: [
+                "flora",
+            ],
             codex_id: Some("codex.flora.signal_bulb"),
         ),
         (
@@ -255,7 +304,9 @@
             default_size: (54.43, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["flora"],
+            tags: [
+                "flora",
+            ],
             codex_id: Some("codex.flora.small_variant"),
         ),
         (
@@ -267,7 +318,9 @@
             default_size: (67.0, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["flora"],
+            tags: [
+                "flora",
+            ],
             codex_id: Some("codex.flora.spinegrass"),
         ),
         (
@@ -279,7 +332,9 @@
             default_size: (64.15, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["flora"],
+            tags: [
+                "flora",
+            ],
             codex_id: Some("codex.flora.threadgrass"),
         ),
         (
@@ -291,7 +346,9 @@
             default_size: (42.31, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["flora"],
+            tags: [
+                "flora",
+            ],
             codex_id: Some("codex.flora.umbrella_plant"),
         ),
         (
@@ -303,7 +360,10 @@
             default_size: (73.69, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["interact", "interactables"],
+            tags: [
+                "interact",
+                "interactables",
+            ],
             entity_type: Some("Decoration"),
             codex_id: Some("codex.interact.generator"),
         ),
@@ -316,7 +376,10 @@
             default_size: (79.34, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["interact", "interactables"],
+            tags: [
+                "interact",
+                "interactables",
+            ],
             entity_type: Some("Decoration"),
             codex_id: Some("codex.interact.lock_device"),
         ),
@@ -329,7 +392,10 @@
             default_size: (55.73, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["interact", "interactables"],
+            tags: [
+                "interact",
+                "interactables",
+            ],
             entity_type: Some("Decoration"),
             codex_id: Some("codex.interact.map_marker"),
         ),
@@ -342,7 +408,10 @@
             default_size: (50.33, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["interact", "interactables"],
+            tags: [
+                "interact",
+                "interactables",
+            ],
             entity_type: Some("Decoration"),
             codex_id: Some("codex.interact.power_node"),
         ),
@@ -355,7 +424,10 @@
             default_size: (49.91, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["interact", "interactables"],
+            tags: [
+                "interact",
+                "interactables",
+            ],
             entity_type: Some("Decoration"),
             codex_id: Some("codex.interact.save_beacon"),
         ),
@@ -368,7 +440,10 @@
             default_size: (67.58, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["interact", "interactables"],
+            tags: [
+                "interact",
+                "interactables",
+            ],
             entity_type: Some("ScanTarget"),
             codex_id: Some("codex.interact.scan_object"),
         ),
@@ -381,7 +456,10 @@
             default_size: (48.25, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["interact", "interactables"],
+            tags: [
+                "interact",
+                "interactables",
+            ],
             entity_type: Some("ScanTarget"),
             codex_id: Some("codex.interact.signal_source"),
         ),
@@ -394,7 +472,10 @@
             default_size: (59.83, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["interact", "interactables"],
+            tags: [
+                "interact",
+                "interactables",
+            ],
             entity_type: Some("ScanTarget"),
             codex_id: Some("codex.interact.terminal"),
         ),
@@ -407,7 +488,10 @@
             default_size: (44.21, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["pickup", "pickups"],
+            tags: [
+                "pickup",
+                "pickups",
+            ],
             entity_type: Some("Decoration"),
         ),
         (
@@ -419,7 +503,10 @@
             default_size: (61.16, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["pickup", "pickups"],
+            tags: [
+                "pickup",
+                "pickups",
+            ],
             entity_type: Some("Decoration"),
         ),
         (
@@ -431,7 +518,10 @@
             default_size: (41.34, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["pickup", "pickups"],
+            tags: [
+                "pickup",
+                "pickups",
+            ],
             entity_type: Some("Decoration"),
         ),
         (
@@ -443,7 +533,10 @@
             default_size: (87.78, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["pickup", "pickups"],
+            tags: [
+                "pickup",
+                "pickups",
+            ],
             entity_type: Some("Decoration"),
         ),
         (
@@ -455,7 +548,10 @@
             default_size: (63.47, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["pickup", "pickups"],
+            tags: [
+                "pickup",
+                "pickups",
+            ],
             entity_type: Some("Decoration"),
         ),
         (
@@ -467,7 +563,10 @@
             default_size: (82.52, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["pickup", "pickups"],
+            tags: [
+                "pickup",
+                "pickups",
+            ],
             entity_type: Some("Decoration"),
         ),
         (
@@ -479,7 +578,10 @@
             default_size: (84.07, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["pickup", "pickups"],
+            tags: [
+                "pickup",
+                "pickups",
+            ],
             entity_type: Some("ScanTarget"),
         ),
         (
@@ -491,7 +593,10 @@
             default_size: (97.97, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["prop", "props"],
+            tags: [
+                "prop",
+                "props",
+            ],
         ),
         (
             id: "ow_prop_crash_debris",
@@ -502,7 +607,10 @@
             default_size: (82.25, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["prop", "props"],
+            tags: [
+                "prop",
+                "props",
+            ],
         ),
         (
             id: "ow_prop_crystal_cluster",
@@ -513,7 +621,10 @@
             default_size: (59.26, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["prop", "props"],
+            tags: [
+                "prop",
+                "props",
+            ],
         ),
         (
             id: "ow_prop_glow_ore",
@@ -524,7 +635,10 @@
             default_size: (75.49, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["prop", "props"],
+            tags: [
+                "prop",
+                "props",
+            ],
         ),
         (
             id: "ow_prop_metal_scrap",
@@ -535,7 +649,10 @@
             default_size: (75.66, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["prop", "props"],
+            tags: [
+                "prop",
+                "props",
+            ],
         ),
         (
             id: "ow_prop_rock_large",
@@ -546,7 +663,10 @@
             default_size: (72.21, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["prop", "props"],
+            tags: [
+                "prop",
+                "props",
+            ],
         ),
         (
             id: "ow_prop_rock_medium",
@@ -557,7 +677,10 @@
             default_size: (78.16, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["prop", "props"],
+            tags: [
+                "prop",
+                "props",
+            ],
         ),
         (
             id: "ow_prop_rock_small",
@@ -568,7 +691,10 @@
             default_size: (80.33, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["prop", "props"],
+            tags: [
+                "prop",
+                "props",
+            ],
         ),
         (
             id: "ow_prop_ruin_debris",
@@ -579,7 +705,10 @@
             default_size: (73.28, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["prop", "props"],
+            tags: [
+                "prop",
+                "props",
+            ],
         ),
         (
             id: "ow_prop_stone_pillar",
@@ -590,7 +719,10 @@
             default_size: (45.66, 72.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["prop", "props"],
+            tags: [
+                "prop",
+                "props",
+            ],
         ),
         (
             id: "ow_ruin_arch",
@@ -601,7 +733,10 @@
             default_size: (121.86, 128.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["ruin", "ruins"],
+            tags: [
+                "ruin",
+                "ruins",
+            ],
             entity_type: Some("Decoration"),
             codex_id: Some("codex.ruin.arch"),
         ),
@@ -614,7 +749,10 @@
             default_size: (139.78, 128.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["ruin", "ruins"],
+            tags: [
+                "ruin",
+                "ruins",
+            ],
             entity_type: Some("FacilityEntrance"),
             codex_id: Some("codex.ruin.gate"),
         ),
@@ -627,7 +765,10 @@
             default_size: (131.6, 128.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["ruin", "ruins"],
+            tags: [
+                "ruin",
+                "ruins",
+            ],
             entity_type: Some("FacilityEntrance"),
             codex_id: Some("codex.ruin.locked_door"),
         ),
@@ -640,7 +781,10 @@
             default_size: (70.0, 128.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["ruin", "ruins"],
+            tags: [
+                "ruin",
+                "ruins",
+            ],
             entity_type: Some("Decoration"),
             codex_id: Some("codex.ruin.monolith"),
         ),
@@ -653,7 +797,10 @@
             default_size: (142.04, 128.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["ruin", "ruins"],
+            tags: [
+                "ruin",
+                "ruins",
+            ],
             entity_type: Some("Decoration"),
             codex_id: Some("codex.ruin.observatory"),
         ),
@@ -666,7 +813,10 @@
             default_size: (77.58, 128.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["ruin", "ruins"],
+            tags: [
+                "ruin",
+                "ruins",
+            ],
             entity_type: Some("Decoration"),
             codex_id: Some("codex.ruin.pillar"),
         ),
@@ -679,7 +829,10 @@
             default_size: (192.0, 128.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["ruin", "ruins"],
+            tags: [
+                "ruin",
+                "ruins",
+            ],
             entity_type: Some("Decoration"),
             codex_id: Some("codex.ruin.platform"),
         ),
@@ -692,7 +845,10 @@
             default_size: (137.33, 128.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["ruin", "ruins"],
+            tags: [
+                "ruin",
+                "ruins",
+            ],
             entity_type: Some("Decoration"),
             codex_id: Some("codex.ruin.round_hatch"),
         ),
@@ -705,7 +861,10 @@
             default_size: (139.31, 128.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["ruin", "ruins"],
+            tags: [
+                "ruin",
+                "ruins",
+            ],
             entity_type: Some("Decoration"),
             codex_id: Some("codex.ruin.sinkhole"),
         ),
@@ -718,7 +877,10 @@
             default_size: (104.26, 128.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["ruin", "ruins"],
+            tags: [
+                "ruin",
+                "ruins",
+            ],
             entity_type: Some("ScanTarget"),
             codex_id: Some("codex.ruin.terminal"),
         ),
@@ -731,7 +893,10 @@
             default_size: (75.21, 128.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["struct", "structures"],
+            tags: [
+                "struct",
+                "structures",
+            ],
             entity_type: Some("ScanTarget"),
         ),
         (
@@ -743,7 +908,10 @@
             default_size: (156.08, 128.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["struct", "structures"],
+            tags: [
+                "struct",
+                "structures",
+            ],
             entity_type: Some("Decoration"),
         ),
         (
@@ -755,7 +923,10 @@
             default_size: (64.4, 128.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["struct", "structures"],
+            tags: [
+                "struct",
+                "structures",
+            ],
             entity_type: Some("Decoration"),
         ),
         (
@@ -767,7 +938,10 @@
             default_size: (122.2, 128.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["struct", "structures"],
+            tags: [
+                "struct",
+                "structures",
+            ],
             entity_type: Some("Decoration"),
         ),
         (
@@ -779,7 +953,10 @@
             default_size: (95.61, 128.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["struct", "structures"],
+            tags: [
+                "struct",
+                "structures",
+            ],
             entity_type: Some("FacilityEntrance"),
         ),
         (
@@ -791,7 +968,10 @@
             default_size: (213.33, 128.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["struct", "structures"],
+            tags: [
+                "struct",
+                "structures",
+            ],
             entity_type: Some("Decoration"),
         ),
         (
@@ -803,7 +983,10 @@
             default_size: (129.39, 128.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["struct", "structures"],
+            tags: [
+                "struct",
+                "structures",
+            ],
             entity_type: Some("Decoration"),
         ),
         (
@@ -815,7 +998,10 @@
             default_size: (173.61, 128.0),
             anchor: BottomCenter,
             snap: Grid,
-            tags: ["struct", "structures"],
+            tags: [
+                "struct",
+                "structures",
+            ],
             entity_type: Some("ScanTarget"),
         ),
         (
@@ -824,10 +1010,13 @@
             path: "assets/sprites/tiles/overworld/ow_tile_cliff_edge.png",
             kind: Tile,
             default_layer: Ground,
-            default_size: (32.0, 32.0),
+            default_size: (128.0, 128.0),
+            footprint: Some((4, 4)),
             anchor: TopLeft,
             snap: Grid,
-            tags: ["tile", "tiles"],
+            tags: [
+                "tiles",
+            ],
         ),
         (
             id: "ow_tile_cracked_ground",
@@ -835,10 +1024,13 @@
             path: "assets/sprites/tiles/overworld/ow_tile_cracked_ground.png",
             kind: Tile,
             default_layer: Ground,
-            default_size: (32.0, 32.0),
+            default_size: (128.0, 128.0),
+            footprint: Some((4, 4)),
             anchor: TopLeft,
             snap: Grid,
-            tags: ["tile", "tiles"],
+            tags: [
+                "tiles",
+            ],
         ),
         (
             id: "ow_tile_dust_path",
@@ -846,10 +1038,13 @@
             path: "assets/sprites/tiles/overworld/ow_tile_dust_path.png",
             kind: Tile,
             default_layer: Ground,
-            default_size: (32.0, 32.0),
+            default_size: (128.0, 128.0),
+            footprint: Some((4, 4)),
             anchor: TopLeft,
             snap: Grid,
-            tags: ["tile", "tiles"],
+            tags: [
+                "tiles",
+            ],
         ),
         (
             id: "ow_tile_energy_ground",
@@ -857,10 +1052,13 @@
             path: "assets/sprites/tiles/overworld/ow_tile_energy_ground.png",
             kind: Tile,
             default_layer: Ground,
-            default_size: (32.0, 32.0),
+            default_size: (128.0, 128.0),
+            footprint: Some((4, 4)),
             anchor: TopLeft,
             snap: Grid,
-            tags: ["tile", "tiles"],
+            tags: [
+                "tiles",
+            ],
         ),
         (
             id: "ow_tile_pit_edge",
@@ -868,10 +1066,13 @@
             path: "assets/sprites/tiles/overworld/ow_tile_pit_edge.png",
             kind: Tile,
             default_layer: Ground,
-            default_size: (32.0, 32.0),
+            default_size: (128.0, 128.0),
+            footprint: Some((4, 4)),
             anchor: TopLeft,
             snap: Grid,
-            tags: ["tile", "tiles"],
+            tags: [
+                "tiles",
+            ],
         ),
         (
             id: "ow_tile_rock_ground",
@@ -879,10 +1080,13 @@
             path: "assets/sprites/tiles/overworld/ow_tile_rock_ground.png",
             kind: Tile,
             default_layer: Ground,
-            default_size: (32.0, 32.0),
+            default_size: (128.0, 128.0),
+            footprint: Some((4, 4)),
             anchor: TopLeft,
             snap: Grid,
-            tags: ["tile", "tiles"],
+            tags: [
+                "tiles",
+            ],
         ),
         (
             id: "ow_tile_rock_sand_transition",
@@ -890,10 +1094,13 @@
             path: "assets/sprites/tiles/overworld/ow_tile_rock_sand_transition.png",
             kind: Tile,
             default_layer: Ground,
-            default_size: (32.0, 32.0),
+            default_size: (128.0, 128.0),
+            footprint: Some((4, 4)),
             anchor: TopLeft,
             snap: Grid,
-            tags: ["tile", "tiles"],
+            tags: [
+                "tiles",
+            ],
         ),
         (
             id: "ow_tile_rock_wall",
@@ -901,10 +1108,13 @@
             path: "assets/sprites/tiles/overworld/ow_tile_rock_wall.png",
             kind: Tile,
             default_layer: Ground,
-            default_size: (32.0, 32.0),
+            default_size: (128.0, 128.0),
+            footprint: Some((4, 4)),
             anchor: TopLeft,
             snap: Grid,
-            tags: ["tile", "tiles"],
+            tags: [
+                "tiles",
+            ],
         ),
         (
             id: "ow_tile_ruin_floor",
@@ -912,10 +1122,13 @@
             path: "assets/sprites/tiles/overworld/ow_tile_ruin_floor.png",
             kind: Tile,
             default_layer: Ground,
-            default_size: (32.0, 32.0),
+            default_size: (128.0, 128.0),
+            footprint: Some((4, 4)),
             anchor: TopLeft,
             snap: Grid,
-            tags: ["tile", "tiles"],
+            tags: [
+                "tiles",
+            ],
         ),
         (
             id: "ow_tile_sand_ground",
@@ -923,10 +1136,13 @@
             path: "assets/sprites/tiles/overworld/ow_tile_sand_ground.png",
             kind: Tile,
             default_layer: Ground,
-            default_size: (32.0, 32.0),
+            default_size: (128.0, 128.0),
+            footprint: Some((4, 4)),
             anchor: TopLeft,
             snap: Grid,
-            tags: ["tile", "tiles"],
+            tags: [
+                "tiles",
+            ],
         ),
     ],
 )
