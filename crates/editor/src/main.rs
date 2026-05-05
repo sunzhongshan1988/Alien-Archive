@@ -1,21 +1,26 @@
 mod asset_registry;
-mod map_document;
 
 use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
+    sync::Arc,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result};
-use asset_registry::{AssetEntry, AssetKind, AssetRegistry};
+use asset_registry::{AssetEntry, AssetRegistry};
+use content::{
+    AnchorKind, AssetDatabase, AssetKind, DEFAULT_ASSET_DB_PATH, DEFAULT_MAP_PATH, InstanceRect,
+    LayerKind, MapDocument, MapValidationIssue, MapValidationSeverity, SnapMode, validate_map,
+};
 use eframe::egui::{
-    self, Color32, Context as EguiContext, Key, Modifiers, Pos2, Rect, Sense, Shape, Stroke,
-    StrokeKind, TextureHandle, TextureOptions, Vec2,
+    self, Color32, Context as EguiContext, FontData, FontDefinitions, FontFamily, Key, Modifiers,
+    Pos2, Rect, Sense, Shape, Stroke, StrokeKind, TextureHandle, TextureOptions, Vec2,
     epaint::{Mesh, Vertex},
     vec2,
 };
-use map_document::{DEFAULT_MAP_PATH, LayerKind, MapDocument};
+use serde::{Deserialize, Serialize};
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
@@ -35,30 +40,107 @@ fn main() -> eframe::Result<()> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ToolKind {
     Select,
-    PaintTile,
-    PlaceObject,
+    Brush,
+    Rectangle,
     Erase,
+    Eyedropper,
+    Collision,
+    Zone,
     Pan,
+    Zoom,
 }
 
 impl ToolKind {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 9] = [
         Self::Select,
-        Self::PaintTile,
-        Self::PlaceObject,
+        Self::Brush,
+        Self::Rectangle,
         Self::Erase,
+        Self::Eyedropper,
+        Self::Collision,
+        Self::Zone,
         Self::Pan,
+        Self::Zoom,
     ];
 
     fn label(self) -> &'static str {
         match self {
-            Self::Select => "Select",
-            Self::PaintTile => "Paint Tile",
-            Self::PlaceObject => "Place Object",
-            Self::Erase => "Erase",
-            Self::Pan => "Pan",
+            Self::Select => "选择",
+            Self::Brush => "画笔",
+            Self::Rectangle => "矩形",
+            Self::Erase => "橡皮",
+            Self::Eyedropper => "吸管",
+            Self::Collision => "碰撞",
+            Self::Zone => "区域",
+            Self::Pan => "平移",
+            Self::Zoom => "缩放",
         }
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct LayerUiState {
+    visible: bool,
+    locked: bool,
+}
+
+impl Default for LayerUiState {
+    fn default() -> Self {
+        Self {
+            visible: true,
+            locked: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+enum ClipboardItem {
+    Ground(content::TileInstance),
+    Decal(content::ObjectInstance),
+    Object(content::ObjectInstance),
+    Entity(content::EntityInstance),
+}
+
+#[derive(Clone, Debug)]
+struct NewMapDraft {
+    id: String,
+    mode: String,
+    width: u32,
+    height: u32,
+    tile_size: u32,
+    spawn_id: String,
+    spawn_x: f32,
+    spawn_y: f32,
+}
+
+impl Default for NewMapDraft {
+    fn default() -> Self {
+        let document = MapDocument::new_landing_site();
+        let spawn = document
+            .spawns
+            .first()
+            .cloned()
+            .unwrap_or(content::SpawnPoint {
+                id: "player_start".to_owned(),
+                x: 4.0,
+                y: 4.0,
+            });
+        Self {
+            id: document.id,
+            mode: document.mode,
+            width: document.width,
+            height: document.height,
+            tile_size: document.tile_size,
+            spawn_id: spawn.id,
+            spawn_x: spawn.x,
+            spawn_y: spawn.y,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+struct EditorConfig {
+    recent_maps: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -69,7 +151,7 @@ struct SelectedItem {
 
 impl SelectedItem {
     fn label(&self) -> String {
-        format!("{}:{}", self.layer.label(), self.id)
+        format!("{}:{}", self.layer.zh_label(), self.id)
     }
 }
 
@@ -85,19 +167,36 @@ struct EditorApp {
     map_entries: Vec<MapListEntry>,
     selected_map_path: PathBuf,
     pending_open_path: Option<PathBuf>,
+    open_confirm_path: Option<PathBuf>,
+    delete_confirm_path: Option<PathBuf>,
+    config: EditorConfig,
     save_as_id: String,
     dirty: bool,
     registry: AssetRegistry,
     document: MapDocument,
+    undo_stack: Vec<MapDocument>,
+    redo_stack: Vec<MapDocument>,
+    clipboard: Option<ClipboardItem>,
     selected_asset: Option<String>,
     selected_item: Option<SelectedItem>,
     active_layer: LayerKind,
+    layer_states: HashMap<LayerKind, LayerUiState>,
     tool: ToolKind,
     ground_footprint_w: i32,
     ground_footprint_h: i32,
+    asset_search: String,
+    asset_kind_filter: Option<AssetKind>,
     show_grid: bool,
     show_collision: bool,
     show_entity_bounds: bool,
+    show_zones: bool,
+    show_new_map_dialog: bool,
+    show_validation_panel: bool,
+    new_map_draft: NewMapDraft,
+    validation_issues: Vec<MapValidationIssue>,
+    last_autosave: Instant,
+    rectangle_drag_start: Option<[i32; 2]>,
+    rectangle_drag_current: Option<[i32; 2]>,
     pan: Vec2,
     zoom: f32,
     mouse_tile: Option<[i32; 2]>,
@@ -108,8 +207,10 @@ struct EditorApp {
 impl EditorApp {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let project_root = project_root();
+        configure_editor_fonts(&cc.egui_ctx);
         let map_path = project_root.join(DEFAULT_MAP_PATH);
         let map_entries = scan_map_entries(&project_root);
+        let config = load_editor_config(&project_root);
         let registry = AssetRegistry::scan(&project_root).unwrap_or_else(|error| {
             eprintln!("asset scan failed: {error:?}");
             AssetRegistry::default()
@@ -123,19 +224,36 @@ impl EditorApp {
             map_path,
             map_entries,
             pending_open_path: None,
+            open_confirm_path: None,
+            delete_confirm_path: None,
+            config,
             save_as_id,
             dirty: false,
             registry,
             document,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            clipboard: None,
             selected_asset: None,
             selected_item: None,
             active_layer: LayerKind::Ground,
-            tool: ToolKind::PaintTile,
+            layer_states: default_layer_states(),
+            tool: ToolKind::Brush,
             ground_footprint_w: 4,
             ground_footprint_h: 4,
+            asset_search: String::new(),
+            asset_kind_filter: None,
             show_grid: true,
             show_collision: true,
             show_entity_bounds: false,
+            show_zones: true,
+            show_new_map_dialog: false,
+            show_validation_panel: false,
+            new_map_draft: NewMapDraft::default(),
+            validation_issues: Vec::new(),
+            last_autosave: Instant::now(),
+            rectangle_drag_start: None,
+            rectangle_drag_current: None,
             pan: vec2(48.0, 48.0),
             zoom: 1.0,
             mouse_tile: None,
@@ -172,27 +290,65 @@ impl EditorApp {
             if input.consume_key(Modifiers::CTRL, Key::S) {
                 self.save_map();
             }
+            if input.consume_key(Modifiers::CTRL, Key::Z) {
+                self.undo();
+            }
+            if input.consume_key(Modifiers::CTRL, Key::Y) {
+                self.redo();
+            }
+            if input.consume_key(Modifiers::CTRL, Key::C) {
+                self.copy_selected_item();
+            }
+            if input.consume_key(Modifiers::CTRL, Key::V) {
+                self.paste_clipboard();
+            }
+            if input.consume_key(Modifiers::CTRL, Key::D) {
+                self.duplicate_selected_item();
+            }
+            if input.key_pressed(Key::Delete) {
+                self.delete_current_selection();
+            }
             if input.key_pressed(Key::Num1) {
                 self.tool = ToolKind::Select;
             }
             if input.key_pressed(Key::Num2) {
-                self.tool = ToolKind::PaintTile;
+                self.tool = ToolKind::Brush;
             }
             if input.key_pressed(Key::Num3) {
-                self.tool = ToolKind::PlaceObject;
+                self.tool = ToolKind::Rectangle;
             }
             if input.key_pressed(Key::Num4) {
                 self.tool = ToolKind::Erase;
+            }
+            if input.key_pressed(Key::Num5) {
+                self.tool = ToolKind::Eyedropper;
+            }
+            if input.key_pressed(Key::Num6) {
+                self.tool = ToolKind::Collision;
+                self.active_layer = LayerKind::Collision;
             }
         });
     }
 
     fn save_map(&mut self) {
+        self.validation_issues = self.validate_current_map();
+        if self
+            .validation_issues
+            .iter()
+            .any(|issue| issue.severity == MapValidationSeverity::Error)
+        {
+            self.show_validation_panel = true;
+            self.status = "保存失败：地图校验有错误".to_owned();
+            return;
+        }
+
         match self.document.save(&self.map_path) {
             Ok(()) => {
                 self.dirty = false;
                 self.pending_open_path = None;
+                self.open_confirm_path = None;
                 self.refresh_map_entries();
+                self.push_recent_map(self.map_path.clone());
                 self.status = format!(
                     "Saved {}",
                     display_project_path(&self.project_root, &self.map_path)
@@ -210,6 +366,7 @@ impl EditorApp {
             return;
         };
 
+        self.push_undo_snapshot();
         self.document.id = id.clone();
         self.save_as_id = id.clone();
         self.map_path = maps_dir(&self.project_root).join(format!("{id}.ron"));
@@ -219,25 +376,29 @@ impl EditorApp {
 
     fn open_selected_map(&mut self) {
         let path = self.selected_map_path.clone();
-        if self.dirty && path != self.map_path && self.pending_open_path.as_ref() != Some(&path) {
-            self.pending_open_path = Some(path.clone());
-            self.status = format!(
-                "Unsaved changes in {}. Click Open again to discard them.",
-                display_project_path(&self.project_root, &self.map_path)
-            );
+        if self.dirty && path != self.map_path {
+            self.open_confirm_path = Some(path);
             return;
         }
 
+        self.open_map(path);
+    }
+
+    fn open_map(&mut self, path: PathBuf) {
         match MapDocument::load(&path) {
             Ok(document) => {
-                self.map_path = path;
+                self.map_path = path.clone();
                 self.document = document;
                 self.save_as_id = self.document.id.clone();
                 self.selected_item = None;
                 self.selected_asset = None;
                 self.pending_open_path = None;
+                self.open_confirm_path = None;
+                self.undo_stack.clear();
+                self.redo_stack.clear();
                 self.active_layer = LayerKind::Ground;
                 self.dirty = false;
+                self.push_recent_map(path.clone());
                 self.status = format!(
                     "Opened {}",
                     display_project_path(&self.project_root, &self.map_path)
@@ -266,6 +427,294 @@ impl EditorApp {
     fn mark_dirty(&mut self) {
         self.dirty = true;
         self.pending_open_path = None;
+        self.validation_issues.clear();
+    }
+
+    fn push_undo_snapshot(&mut self) {
+        if self.undo_stack.last() == Some(&self.document) {
+            return;
+        }
+        self.undo_stack.push(self.document.clone());
+        if self.undo_stack.len() > 100 {
+            self.undo_stack.remove(0);
+        }
+        self.redo_stack.clear();
+    }
+
+    fn undo(&mut self) {
+        let Some(previous) = self.undo_stack.pop() else {
+            self.status = "没有可撤销的操作".to_owned();
+            return;
+        };
+        self.redo_stack.push(self.document.clone());
+        self.document = previous;
+        self.selected_item = None;
+        self.mark_dirty();
+        self.status = "已撤销".to_owned();
+    }
+
+    fn redo(&mut self) {
+        let Some(next) = self.redo_stack.pop() else {
+            self.status = "没有可重做的操作".to_owned();
+            return;
+        };
+        self.undo_stack.push(self.document.clone());
+        self.document = next;
+        self.selected_item = None;
+        self.mark_dirty();
+        self.status = "已重做".to_owned();
+    }
+
+    fn validate_current_map(&self) -> Vec<MapValidationIssue> {
+        match AssetDatabase::load(&self.project_root.join(DEFAULT_ASSET_DB_PATH)) {
+            Ok(database) => validate_map(&self.document, &database),
+            Err(error) => vec![MapValidationIssue {
+                severity: MapValidationSeverity::Error,
+                message: format!("素材数据库读取失败：{error:#}"),
+            }],
+        }
+    }
+
+    fn push_recent_map(&mut self, path: PathBuf) {
+        let label = display_project_path(&self.project_root, &path);
+        self.config.recent_maps.retain(|entry| entry != &label);
+        self.config.recent_maps.insert(0, label);
+        self.config.recent_maps.truncate(10);
+        let _ = save_editor_config(&self.project_root, &self.config);
+    }
+
+    fn delete_map_file(&mut self, path: PathBuf) {
+        match fs::remove_file(&path) {
+            Ok(()) => {
+                let label = display_project_path(&self.project_root, &path);
+                self.config.recent_maps.retain(|entry| entry != &label);
+                let _ = save_editor_config(&self.project_root, &self.config);
+                self.refresh_map_entries();
+                self.delete_confirm_path = None;
+
+                if path == self.map_path {
+                    if let Some(next) = self
+                        .map_entries
+                        .iter()
+                        .find(|entry| entry.path != path)
+                        .map(|entry| entry.path.clone())
+                    {
+                        self.open_map(next);
+                    } else {
+                        self.document = MapDocument::new_landing_site();
+                        let id = unique_map_id(&self.project_root, &self.document.id);
+                        self.document.id = id.clone();
+                        self.map_path = maps_dir(&self.project_root).join(format!("{id}.ron"));
+                        self.selected_map_path = self.map_path.clone();
+                        self.save_as_id = id;
+                        self.selected_item = None;
+                        self.selected_asset = None;
+                        self.undo_stack.clear();
+                        self.redo_stack.clear();
+                        self.dirty = true;
+                    }
+                }
+
+                self.status = format!("已删除地图 {label}");
+            }
+            Err(error) => {
+                self.status = format!(
+                    "删除地图失败 {}：{error:#}",
+                    display_project_path(&self.project_root, &path)
+                );
+            }
+        }
+    }
+
+    fn autosave_if_needed(&mut self) {
+        if !self.dirty || self.last_autosave.elapsed() < Duration::from_secs(60) {
+            return;
+        }
+        self.last_autosave = Instant::now();
+        let path = maps_dir(&self.project_root)
+            .join(".autosave")
+            .join(format!("{}.ron", self.document.id));
+        match self.document.save(&path) {
+            Ok(()) => {
+                self.status = format!(
+                    "Autosaved {}",
+                    display_project_path(&self.project_root, &path)
+                );
+            }
+            Err(error) => {
+                self.status = format!("Autosave failed: {error:#}");
+            }
+        }
+    }
+
+    fn layer_state(&self, layer: LayerKind) -> LayerUiState {
+        self.layer_states.get(&layer).copied().unwrap_or_default()
+    }
+
+    fn active_layer_locked(&self) -> bool {
+        self.layer_state(self.active_layer).locked
+    }
+
+    fn copy_selected_item(&mut self) {
+        let Some(selection) = self.selected_item.clone() else {
+            self.status = "请先选择对象".to_owned();
+            return;
+        };
+        self.clipboard = self.clipboard_for_selection(&selection);
+        self.status = if self.clipboard.is_some() {
+            format!("已复制 {}", selection.label())
+        } else {
+            "当前选择不能复制".to_owned()
+        };
+    }
+
+    fn paste_clipboard(&mut self) {
+        let Some(item) = self.clipboard.clone() else {
+            self.status = "剪贴板为空".to_owned();
+            return;
+        };
+        self.push_undo_snapshot();
+        let selection = match item {
+            ClipboardItem::Ground(mut tile) => {
+                tile.x = (tile.x + 1).clamp(0, self.document.width.saturating_sub(1) as i32);
+                tile.y = (tile.y + 1).clamp(0, self.document.height.saturating_sub(1) as i32);
+                self.document.layers.ground.push(tile.clone());
+                SelectedItem {
+                    layer: LayerKind::Ground,
+                    id: ground_selection_id(tile.x, tile.y),
+                }
+            }
+            ClipboardItem::Decal(mut instance) => {
+                instance.id = next_editor_object_id("decal", &self.document.layers.decals);
+                instance.x += 1.0;
+                instance.y += 1.0;
+                self.document.layers.decals.push(instance.clone());
+                SelectedItem {
+                    layer: LayerKind::Decals,
+                    id: instance.id,
+                }
+            }
+            ClipboardItem::Object(mut instance) => {
+                instance.id = next_editor_object_id("obj", &self.document.layers.objects);
+                instance.x += 1.0;
+                instance.y += 1.0;
+                self.document.layers.objects.push(instance.clone());
+                SelectedItem {
+                    layer: LayerKind::Objects,
+                    id: instance.id,
+                }
+            }
+            ClipboardItem::Entity(mut instance) => {
+                instance.id = next_editor_entity_id("ent", &self.document.layers.entities);
+                instance.x += 1.0;
+                instance.y += 1.0;
+                self.document.layers.entities.push(instance.clone());
+                SelectedItem {
+                    layer: LayerKind::Entities,
+                    id: instance.id,
+                }
+            }
+        };
+        self.selected_item = Some(selection);
+        self.mark_dirty();
+        self.status = "已粘贴".to_owned();
+    }
+
+    fn duplicate_selected_item(&mut self) {
+        self.copy_selected_item();
+        self.paste_clipboard();
+    }
+
+    fn delete_current_selection(&mut self) {
+        let Some(selection) = self.selected_item.clone() else {
+            self.status = "请先选择对象".to_owned();
+            return;
+        };
+        if self.layer_state(selection.layer).locked {
+            self.status = format!("{} 已锁定", selection.layer.zh_label());
+            return;
+        }
+        self.push_undo_snapshot();
+        self.delete_selected_item(&selection);
+        self.selected_item = None;
+        self.mark_dirty();
+        self.status = format!("已删除 {}", selection.label());
+    }
+
+    fn clipboard_for_selection(&self, selection: &SelectedItem) -> Option<ClipboardItem> {
+        match selection.layer {
+            LayerKind::Ground => {
+                let [x, y] = parse_ground_selection_id(&selection.id)?;
+                self.document
+                    .layers
+                    .ground
+                    .iter()
+                    .find(|tile| tile.x == x && tile.y == y)
+                    .cloned()
+                    .map(ClipboardItem::Ground)
+            }
+            LayerKind::Decals => self
+                .document
+                .layers
+                .decals
+                .iter()
+                .find(|instance| instance.id == selection.id)
+                .cloned()
+                .map(ClipboardItem::Decal),
+            LayerKind::Objects => self
+                .document
+                .layers
+                .objects
+                .iter()
+                .find(|instance| instance.id == selection.id)
+                .cloned()
+                .map(ClipboardItem::Object),
+            LayerKind::Entities => self
+                .document
+                .layers
+                .entities
+                .iter()
+                .find(|instance| instance.id == selection.id)
+                .cloned()
+                .map(ClipboardItem::Entity),
+            LayerKind::Zones | LayerKind::Collision => None,
+        }
+    }
+
+    fn asset_for_selection(&self, selection: &SelectedItem) -> Option<String> {
+        match selection.layer {
+            LayerKind::Ground => {
+                let [x, y] = parse_ground_selection_id(&selection.id)?;
+                self.document
+                    .layers
+                    .ground
+                    .iter()
+                    .find(|tile| tile.x == x && tile.y == y)
+                    .map(|tile| tile.asset.clone())
+            }
+            LayerKind::Decals => self
+                .document
+                .layers
+                .decals
+                .iter()
+                .find(|instance| instance.id == selection.id)
+                .map(|instance| instance.asset.clone()),
+            LayerKind::Objects => self
+                .document
+                .layers
+                .objects
+                .iter()
+                .find(|instance| instance.id == selection.id)
+                .map(|instance| instance.asset.clone()),
+            LayerKind::Entities => self
+                .document
+                .layers
+                .entities
+                .iter()
+                .find(|instance| instance.id == selection.id)
+                .map(|instance| instance.asset.clone()),
+            LayerKind::Zones | LayerKind::Collision => None,
+        }
     }
 
     fn selected_asset(&self) -> Option<&AssetEntry> {
@@ -275,77 +724,216 @@ impl EditorApp {
     }
 
     fn draw_top_bar(&mut self, ui: &mut egui::Ui) {
+        self.draw_menu_bar(ui);
+        ui.separator();
+        self.draw_tool_bar(ui);
+    }
+
+    fn draw_menu_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label("Map");
-            egui::ComboBox::from_id_salt("map_file")
-                .width(210.0)
-                .selected_text(map_label_for_path(
-                    &self.project_root,
-                    &self.map_entries,
-                    &self.selected_map_path,
-                ))
-                .show_ui(ui, |ui| {
-                    for entry in &self.map_entries {
-                        ui.selectable_value(
-                            &mut self.selected_map_path,
-                            entry.path.clone(),
-                            &entry.label,
-                        );
+            ui.menu_button("文件", |ui| {
+                if ui.button("新建地图").clicked() {
+                    self.new_map_draft = NewMapDraft::default();
+                    self.show_new_map_dialog = true;
+                    ui.close();
+                }
+                ui.menu_button("打开地图", |ui| {
+                    for entry in self.map_entries.clone() {
+                        if ui.button(&entry.label).clicked() {
+                            self.selected_map_path = entry.path.clone();
+                            self.open_selected_map();
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    if ui.button("刷新列表").clicked() {
+                        self.refresh_map_entries();
+                        ui.close();
                     }
                 });
-            if ui.button("Open").clicked() {
-                self.open_selected_map();
-            }
-            if ui.button("Refresh").clicked() {
-                self.refresh_map_entries();
-            }
+                ui.menu_button("最近地图", |ui| {
+                    if self.config.recent_maps.is_empty() {
+                        ui.label("暂无");
+                    }
+                    for recent in self.config.recent_maps.clone() {
+                        if ui.button(&recent).clicked() {
+                            let path = self.project_root.join(&recent);
+                            if self.dirty && path != self.map_path {
+                                self.open_confirm_path = Some(path);
+                            } else {
+                                self.open_map(path);
+                            }
+                            ui.close();
+                        }
+                    }
+                });
+                if ui.button("保存").clicked() {
+                    self.save_map();
+                    ui.close();
+                }
+                if ui.button("另存为").clicked() {
+                    self.save_map_as();
+                    ui.close();
+                }
+                if ui.button("删除地图").clicked() {
+                    self.delete_confirm_path = Some(self.selected_map_path.clone());
+                    ui.close();
+                }
+                if ui.button("还原").clicked() {
+                    if self.dirty {
+                        self.open_confirm_path = Some(self.map_path.clone());
+                    }
+                    ui.close();
+                }
+            });
 
-            ui.separator();
-            if ui.button("New").clicked() {
-                self.document = MapDocument::new_landing_site();
-                let id = unique_map_id(&self.project_root, &self.document.id);
-                self.document.id = id.clone();
-                self.selected_item = None;
-                self.selected_asset = None;
-                self.save_as_id = id;
-                self.map_path =
-                    maps_dir(&self.project_root).join(format!("{}.ron", self.save_as_id));
-                self.selected_map_path = self.map_path.clone();
-                self.dirty = true;
-                self.status = "New overworld_landing_site map".to_owned();
-            }
-            if ui.button("Save").clicked() {
-                self.save_map();
-            }
-            ui.label("Id");
-            ui.add(
-                egui::TextEdit::singleline(&mut self.save_as_id)
-                    .desired_width(170.0)
-                    .clip_text(false),
-            );
-            if ui.button("Save As").clicked() {
-                self.save_map_as();
-            }
+            ui.menu_button("编辑", |ui| {
+                if ui
+                    .add_enabled(!self.undo_stack.is_empty(), egui::Button::new("撤销"))
+                    .clicked()
+                {
+                    self.undo();
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(!self.redo_stack.is_empty(), egui::Button::new("重做"))
+                    .clicked()
+                {
+                    self.redo();
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("复制").clicked() {
+                    self.copy_selected_item();
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(self.clipboard.is_some(), egui::Button::new("粘贴"))
+                    .clicked()
+                {
+                    self.paste_clipboard();
+                    ui.close();
+                }
+                if ui.button("复制一份").clicked() {
+                    self.duplicate_selected_item();
+                    ui.close();
+                }
+                if ui.button("删除").clicked() {
+                    self.delete_current_selection();
+                    ui.close();
+                }
+            });
 
-            ui.separator();
-            ui.label("Tool");
+            ui.menu_button("视图", |ui| {
+                ui.checkbox(&mut self.show_grid, "网格");
+                ui.checkbox(&mut self.show_collision, "碰撞");
+                ui.checkbox(&mut self.show_entity_bounds, "实体边界");
+                ui.checkbox(&mut self.show_zones, "区域");
+                ui.separator();
+                if ui.button("重置视图").clicked() {
+                    self.pan = vec2(48.0, 48.0);
+                    self.zoom = 1.0;
+                    ui.close();
+                }
+            });
+
+            ui.menu_button("地图", |ui| {
+                if ui.button("校验地图").clicked() {
+                    self.validation_issues = self.validate_current_map();
+                    self.show_validation_panel = true;
+                    self.status = validation_summary(&self.validation_issues);
+                    ui.close();
+                }
+                ui.label(format!(
+                    "{} / {}x{} / {}px",
+                    self.document.id,
+                    self.document.width,
+                    self.document.height,
+                    self.document.tile_size
+                ));
+            });
+
+            ui.menu_button("图层", |ui| {
+                for layer in LayerKind::ALL {
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(&mut self.active_layer, layer, layer.zh_label());
+                        let state = self.layer_states.entry(layer).or_default();
+                        ui.checkbox(&mut state.visible, "显示");
+                        ui.checkbox(&mut state.locked, "锁定");
+                    });
+                }
+            });
+
+            ui.menu_button("工具", |ui| {
+                for tool in ToolKind::ALL {
+                    if ui
+                        .selectable_value(&mut self.tool, tool, tool.label())
+                        .clicked()
+                    {
+                        if tool == ToolKind::Collision {
+                            self.active_layer = LayerKind::Collision;
+                        } else if tool == ToolKind::Zone {
+                            self.active_layer = LayerKind::Zones;
+                        }
+                        ui.close();
+                    }
+                }
+            });
+
+            ui.menu_button("素材", |ui| {
+                if ui.button("重新扫描 Metadata").clicked() {
+                    match AssetRegistry::scan(&self.project_root) {
+                        Ok(registry) => {
+                            self.registry = registry;
+                            self.status = "素材 metadata 已重新加载".to_owned();
+                        }
+                        Err(error) => {
+                            self.status = format!("素材 metadata 读取失败：{error:#}");
+                        }
+                    }
+                    ui.close();
+                }
+                ui.label(format!("{} 个素材", self.registry.assets().len()));
+            });
+
+            ui.menu_button("帮助", |ui| {
+                ui.label("Ctrl+S 保存");
+                ui.label("Ctrl+Z 撤销 / Ctrl+Y 重做");
+                ui.label("1-6 切换常用工具");
+                ui.label("空格拖拽平移，滚轮缩放");
+            });
+        });
+    }
+
+    fn draw_tool_bar(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            ui.label("工具");
             for tool in ToolKind::ALL {
-                ui.selectable_value(&mut self.tool, tool, tool.label());
+                if ui
+                    .selectable_value(&mut self.tool, tool, tool.label())
+                    .clicked()
+                {
+                    if tool == ToolKind::Collision {
+                        self.active_layer = LayerKind::Collision;
+                    } else if tool == ToolKind::Zone {
+                        self.active_layer = LayerKind::Zones;
+                    }
+                }
             }
 
             ui.separator();
-            ui.label("Layer");
+            ui.label("图层");
             egui::ComboBox::from_id_salt("active_layer")
-                .selected_text(self.active_layer.label())
+                .selected_text(self.active_layer.zh_label())
                 .show_ui(ui, |ui| {
                     for layer in LayerKind::ALL {
-                        ui.selectable_value(&mut self.active_layer, layer, layer.label());
+                        ui.selectable_value(&mut self.active_layer, layer, layer.zh_label());
                     }
                 });
 
             if self.active_layer == LayerKind::Ground {
                 ui.separator();
-                ui.label("Ground Size");
+                ui.label("地块尺寸");
                 ui.add(
                     egui::DragValue::new(&mut self.ground_footprint_w)
                         .range(1..=self.document.width as i32)
@@ -361,22 +949,22 @@ impl EditorApp {
             }
 
             ui.separator();
-            if ui.button("Flip X").clicked() {
+            if ui.button("水平翻转").clicked() {
                 self.flip_selected_item();
             }
-            if ui.button("Rot -90").clicked() {
+            if ui.button("左转").clicked() {
                 self.rotate_selected_item(-90);
             }
-            if ui.button("Rot +90").clicked() {
+            if ui.button("右转").clicked() {
                 self.rotate_selected_item(90);
             }
-            if ui.button("Reset Xform").clicked() {
+            if ui.button("重置变换").clicked() {
                 self.reset_selected_transform();
             }
 
             if let Some([mut width, mut height]) = self.ground_size_for_selection() {
                 ui.separator();
-                ui.label("Selected Ground");
+                ui.label("选中地块");
                 let width_changed = ui
                     .add(
                         egui::DragValue::new(&mut width)
@@ -399,22 +987,43 @@ impl EditorApp {
             }
 
             ui.separator();
-            ui.checkbox(&mut self.show_grid, "Grid");
-            ui.checkbox(&mut self.show_collision, "Collision");
-            ui.checkbox(&mut self.show_entity_bounds, "Entity Bounds");
+            ui.checkbox(&mut self.show_grid, "网格");
+            ui.checkbox(&mut self.show_collision, "碰撞");
+            ui.checkbox(&mut self.show_entity_bounds, "实体边界");
         });
     }
 
     fn draw_asset_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Overworld Assets");
-        ui.small(format!("{} PNG assets", self.registry.assets().len()));
+        ui.heading("资源库");
+        ui.small(format!("{} 个 metadata 素材", self.registry.assets().len()));
+        ui.add(
+            egui::TextEdit::singleline(&mut self.asset_search)
+                .hint_text("搜索 id / tag / path")
+                .desired_width(f32::INFINITY),
+        );
+        ui.horizontal_wrapped(|ui| {
+            ui.selectable_value(&mut self.asset_kind_filter, None, "全部");
+            for kind in AssetKind::ALL {
+                ui.selectable_value(&mut self.asset_kind_filter, Some(kind), kind.zh_label());
+            }
+        });
         ui.separator();
 
+        let search = self.asset_search.to_ascii_lowercase();
         for category in self.registry.categories() {
             egui::CollapsingHeader::new(category_label(category))
                 .default_open(category == "tiles" || category == "props")
                 .show(ui, |ui| {
                     for asset in self.registry.in_category(category) {
+                        if self
+                            .asset_kind_filter
+                            .is_some_and(|kind| kind != asset.kind)
+                        {
+                            continue;
+                        }
+                        if !search.is_empty() && !asset_matches_search(asset, &search) {
+                            continue;
+                        }
                         let selected = self.selected_asset.as_deref() == Some(asset.id.as_str());
                         let response = ui
                             .horizontal(|ui| {
@@ -446,16 +1055,429 @@ impl EditorApp {
                             self.selected_asset = Some(asset.id.clone());
                             self.selected_item = None;
                             self.active_layer = asset.default_layer;
-                            self.tool = if asset.kind == AssetKind::Tile {
-                                ToolKind::PaintTile
-                            } else {
-                                ToolKind::PlaceObject
-                            };
+                            self.tool = ToolKind::Brush;
                             self.status = format!("Selected {}", asset.id);
                         }
                     }
                 });
         }
+    }
+
+    fn draw_layer_panel(&mut self, ui: &mut egui::Ui) {
+        ui.heading("图层");
+        ui.separator();
+        for layer in LayerKind::ALL {
+            let count = self.layer_item_count(layer);
+            ui.horizontal(|ui| {
+                ui.selectable_value(
+                    &mut self.active_layer,
+                    layer,
+                    format!("{} ({count})", layer.zh_label()),
+                );
+                let state = self.layer_states.entry(layer).or_default();
+                ui.checkbox(&mut state.visible, "显");
+                ui.checkbox(&mut state.locked, "锁");
+            });
+        }
+    }
+
+    fn layer_item_count(&self, layer: LayerKind) -> usize {
+        match layer {
+            LayerKind::Ground => self.document.layers.ground.len(),
+            LayerKind::Decals => self.document.layers.decals.len(),
+            LayerKind::Objects => self.document.layers.objects.len(),
+            LayerKind::Entities => self.document.layers.entities.len(),
+            LayerKind::Zones => self.document.layers.zones.len(),
+            LayerKind::Collision => self.document.layers.collision.len(),
+        }
+    }
+
+    fn draw_inspector_panel(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Inspector");
+        ui.separator();
+
+        if let Some(selection) = self.selected_item.clone() {
+            self.draw_selection_inspector(ui, selection);
+        } else if let Some(asset) = self.selected_asset().cloned() {
+            self.draw_asset_inspector(ui, &asset);
+        } else {
+            self.draw_map_inspector(ui);
+        }
+    }
+
+    fn draw_map_inspector(&mut self, ui: &mut egui::Ui) {
+        ui.label("地图属性");
+        let mut next = self.document.clone();
+        let mut changed = false;
+        changed |= ui.text_edit_singleline(&mut next.id).changed();
+        changed |= ui.text_edit_singleline(&mut next.mode).changed();
+        changed |= ui
+            .add(
+                egui::DragValue::new(&mut next.width)
+                    .range(1..=512)
+                    .prefix("宽 "),
+            )
+            .changed();
+        changed |= ui
+            .add(
+                egui::DragValue::new(&mut next.height)
+                    .range(1..=512)
+                    .prefix("高 "),
+            )
+            .changed();
+        changed |= ui
+            .add(
+                egui::DragValue::new(&mut next.tile_size)
+                    .range(1..=256)
+                    .prefix("格 "),
+            )
+            .changed();
+
+        ui.separator();
+        ui.label("出生点");
+        for spawn in &mut next.spawns {
+            ui.horizontal(|ui| {
+                changed |= ui.text_edit_singleline(&mut spawn.id).changed();
+                changed |= ui
+                    .add(egui::DragValue::new(&mut spawn.x).speed(0.1).prefix("x "))
+                    .changed();
+                changed |= ui
+                    .add(egui::DragValue::new(&mut spawn.y).speed(0.1).prefix("y "))
+                    .changed();
+            });
+        }
+
+        if changed {
+            self.push_undo_snapshot();
+            self.document = next;
+            self.save_as_id = self.document.id.clone();
+            self.mark_dirty();
+        }
+    }
+
+    fn draw_asset_inspector(&self, ui: &mut egui::Ui, asset: &AssetEntry) {
+        ui.label("素材默认属性");
+        ui.monospace(&asset.id);
+        ui.label(format!("类型：{}", asset.kind.zh_label()));
+        ui.label(format!("分类：{}", category_label(&asset.category)));
+        ui.label(format!("默认图层：{}", asset.default_layer.zh_label()));
+        ui.label(format!("锚点：{}", anchor_label(asset.anchor)));
+        ui.label(format!("吸附：{}", snap_label(asset.snap)));
+        ui.label(format!(
+            "默认尺寸：{:.1} x {:.1}",
+            asset.default_size[0], asset.default_size[1]
+        ));
+        if let Some(entity_type) = &asset.entity_type {
+            ui.label(format!("实体类型：{entity_type}"));
+        }
+        if let Some(codex_id) = &asset.codex_id {
+            ui.label(format!("图鉴：{codex_id}"));
+        }
+        if !asset.tags.is_empty() {
+            ui.label(format!("Tags：{}", asset.tags.join(", ")));
+        }
+        ui.small(&asset.relative_path);
+    }
+
+    fn draw_selection_inspector(&mut self, ui: &mut egui::Ui, selection: SelectedItem) {
+        ui.label(format!("选中：{}", selection.label()));
+        if self.layer_state(selection.layer).locked {
+            ui.colored_label(Color32::YELLOW, "当前图层已锁定");
+        }
+
+        let mut next = self.document.clone();
+        let mut changed = false;
+        let mut next_selection = selection.clone();
+
+        match selection.layer {
+            LayerKind::Ground => {
+                if let Some([x, y]) = parse_ground_selection_id(&selection.id) {
+                    if let Some(tile) = next
+                        .layers
+                        .ground
+                        .iter_mut()
+                        .find(|tile| tile.x == x && tile.y == y)
+                    {
+                        changed |= ui.text_edit_singleline(&mut tile.asset).changed();
+                        changed |= ui
+                            .add(egui::DragValue::new(&mut tile.x).prefix("x "))
+                            .changed();
+                        changed |= ui
+                            .add(egui::DragValue::new(&mut tile.y).prefix("y "))
+                            .changed();
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut tile.w)
+                                    .range(1..=512)
+                                    .prefix("w "),
+                            )
+                            .changed();
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut tile.h)
+                                    .range(1..=512)
+                                    .prefix("h "),
+                            )
+                            .changed();
+                        changed |= ui.checkbox(&mut tile.flip_x, "水平翻转").changed();
+                        changed |= ui
+                            .add(egui::DragValue::new(&mut tile.rotation).prefix("旋转 "))
+                            .changed();
+                        next_selection.id = ground_selection_id(tile.x, tile.y);
+                    }
+                }
+            }
+            LayerKind::Decals => {
+                if let Some(instance) = next
+                    .layers
+                    .decals
+                    .iter_mut()
+                    .find(|instance| instance.id == selection.id)
+                {
+                    changed |= object_instance_editor(ui, instance);
+                    next_selection.id = instance.id.clone();
+                }
+            }
+            LayerKind::Objects => {
+                if let Some(instance) = next
+                    .layers
+                    .objects
+                    .iter_mut()
+                    .find(|instance| instance.id == selection.id)
+                {
+                    changed |= object_instance_editor(ui, instance);
+                    next_selection.id = instance.id.clone();
+                }
+            }
+            LayerKind::Entities => {
+                if let Some(instance) = next
+                    .layers
+                    .entities
+                    .iter_mut()
+                    .find(|instance| instance.id == selection.id)
+                {
+                    changed |= ui.text_edit_singleline(&mut instance.id).changed();
+                    changed |= ui.text_edit_singleline(&mut instance.asset).changed();
+                    changed |= ui.text_edit_singleline(&mut instance.entity_type).changed();
+                    changed |= ui
+                        .add(
+                            egui::DragValue::new(&mut instance.x)
+                                .speed(0.1)
+                                .prefix("x "),
+                        )
+                        .changed();
+                    changed |= ui
+                        .add(
+                            egui::DragValue::new(&mut instance.y)
+                                .speed(0.1)
+                                .prefix("y "),
+                        )
+                        .changed();
+                    changed |= ui
+                        .add(
+                            egui::DragValue::new(&mut instance.scale_x)
+                                .range(0.05..=8.0)
+                                .speed(0.01)
+                                .prefix("宽缩放 "),
+                        )
+                        .changed();
+                    changed |= ui
+                        .add(
+                            egui::DragValue::new(&mut instance.scale_y)
+                                .range(0.05..=8.0)
+                                .speed(0.01)
+                                .prefix("高缩放 "),
+                        )
+                        .changed();
+                    changed |= ui
+                        .add(egui::DragValue::new(&mut instance.z_index).prefix("层级 "))
+                        .changed();
+                    entity_rect_editor(ui, "碰撞范围", &mut instance.collision_rect, &mut changed);
+                    entity_rect_editor(
+                        ui,
+                        "交互范围",
+                        &mut instance.interaction_rect,
+                        &mut changed,
+                    );
+                    changed |= ui.checkbox(&mut instance.flip_x, "水平翻转").changed();
+                    changed |= ui
+                        .add(egui::DragValue::new(&mut instance.rotation).prefix("旋转 "))
+                        .changed();
+                    next_selection.id = instance.id.clone();
+                }
+            }
+            LayerKind::Zones => {
+                if let Some(zone) = next
+                    .layers
+                    .zones
+                    .iter_mut()
+                    .find(|zone| zone.id == selection.id)
+                {
+                    changed |= ui.text_edit_singleline(&mut zone.id).changed();
+                    changed |= ui.text_edit_singleline(&mut zone.zone_type).changed();
+                    next_selection.id = zone.id.clone();
+                    ui.label(format!("点数：{}", zone.points.len()));
+                }
+            }
+            LayerKind::Collision => {
+                ui.label("碰撞格请用碰撞工具绘制或擦除");
+            }
+        }
+
+        if changed && !self.layer_state(selection.layer).locked {
+            self.push_undo_snapshot();
+            self.document = next;
+            self.selected_item = Some(next_selection);
+            self.mark_dirty();
+        }
+    }
+
+    fn draw_dialogs(&mut self, ctx: &EguiContext) {
+        if self.show_new_map_dialog {
+            egui::Window::new("新建地图")
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.text_edit_singleline(&mut self.new_map_draft.id);
+                    ui.text_edit_singleline(&mut self.new_map_draft.mode);
+                    ui.add(
+                        egui::DragValue::new(&mut self.new_map_draft.width)
+                            .range(1..=512)
+                            .prefix("宽 "),
+                    );
+                    ui.add(
+                        egui::DragValue::new(&mut self.new_map_draft.height)
+                            .range(1..=512)
+                            .prefix("高 "),
+                    );
+                    ui.add(
+                        egui::DragValue::new(&mut self.new_map_draft.tile_size)
+                            .range(1..=256)
+                            .prefix("格 "),
+                    );
+                    ui.separator();
+                    ui.label("出生点");
+                    ui.text_edit_singleline(&mut self.new_map_draft.spawn_id);
+                    ui.add(
+                        egui::DragValue::new(&mut self.new_map_draft.spawn_x)
+                            .speed(0.1)
+                            .prefix("x "),
+                    );
+                    ui.add(
+                        egui::DragValue::new(&mut self.new_map_draft.spawn_y)
+                            .speed(0.1)
+                            .prefix("y "),
+                    );
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui.button("创建").clicked() {
+                            self.create_new_map_from_draft();
+                        }
+                        if ui.button("取消").clicked() {
+                            self.show_new_map_dialog = false;
+                        }
+                    });
+                });
+        }
+
+        if let Some(path) = self.open_confirm_path.clone() {
+            egui::Window::new("未保存的修改")
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.label(format!(
+                        "当前地图 {} 有未保存修改。",
+                        display_project_path(&self.project_root, &self.map_path)
+                    ));
+                    ui.horizontal(|ui| {
+                        if ui.button("保存并打开").clicked() {
+                            self.save_map();
+                            if !self.dirty {
+                                self.open_map(path.clone());
+                            }
+                        }
+                        if ui.button("放弃修改").clicked() {
+                            self.open_map(path.clone());
+                        }
+                        if ui.button("取消").clicked() {
+                            self.open_confirm_path = None;
+                        }
+                    });
+                });
+        }
+
+        if let Some(path) = self.delete_confirm_path.clone() {
+            egui::Window::new("删除地图")
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.label(format!(
+                        "确定删除 {}？",
+                        display_project_path(&self.project_root, &path)
+                    ));
+                    ui.horizontal(|ui| {
+                        if ui.button("删除").clicked() {
+                            self.delete_map_file(path.clone());
+                        }
+                        if ui.button("取消").clicked() {
+                            self.delete_confirm_path = None;
+                        }
+                    });
+                });
+        }
+
+        if self.show_validation_panel {
+            egui::Window::new("地图校验")
+                .default_width(420.0)
+                .show(ctx, |ui| {
+                    ui.label(validation_summary(&self.validation_issues));
+                    ui.separator();
+                    if self.validation_issues.is_empty() {
+                        ui.label("没有问题");
+                    }
+                    for issue in &self.validation_issues {
+                        let color = match issue.severity {
+                            MapValidationSeverity::Error => Color32::RED,
+                            MapValidationSeverity::Warning => Color32::YELLOW,
+                        };
+                        ui.colored_label(color, &issue.message);
+                    }
+                    if ui.button("关闭").clicked() {
+                        self.show_validation_panel = false;
+                    }
+                });
+        }
+    }
+
+    fn create_new_map_from_draft(&mut self) {
+        let Some(id) = sanitize_map_id(&self.new_map_draft.id) else {
+            self.status = "新建失败：地图 id 为空".to_owned();
+            return;
+        };
+        let id = unique_map_id(&self.project_root, &id);
+        self.document = MapDocument {
+            id: id.clone(),
+            mode: self.new_map_draft.mode.clone(),
+            tile_size: self.new_map_draft.tile_size.max(1),
+            width: self.new_map_draft.width.max(1),
+            height: self.new_map_draft.height.max(1),
+            layers: Default::default(),
+            spawns: vec![content::SpawnPoint {
+                id: self.new_map_draft.spawn_id.clone(),
+                x: self.new_map_draft.spawn_x,
+                y: self.new_map_draft.spawn_y,
+            }],
+        };
+        self.map_path = maps_dir(&self.project_root).join(format!("{id}.ron"));
+        self.selected_map_path = self.map_path.clone();
+        self.save_as_id = id;
+        self.selected_item = None;
+        self.selected_asset = None;
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+        self.dirty = true;
+        self.show_new_map_dialog = false;
+        self.status = "已创建新地图".to_owned();
     }
 
     fn draw_canvas(&mut self, ui: &mut egui::Ui, ctx: &EguiContext) {
@@ -510,6 +1532,7 @@ impl EditorApp {
         }
 
         self.draw_ground_footprint_preview(rect, &painter);
+        self.draw_rectangle_preview(rect, &painter);
         self.handle_canvas_selection(&response, rect, ctx);
         self.handle_canvas_placement(&response, rect, ctx);
     }
@@ -539,28 +1562,33 @@ impl EditorApp {
             };
 
             ui.label(selection.label());
-            if ui.button("Flip X").clicked() {
+            if ui.button("水平翻转").clicked() {
                 self.flip_selected_item();
                 ui.close();
             }
-            if ui.button("Rotate +90").clicked() {
+            if ui.button("右转 90").clicked() {
                 self.rotate_selected_item(90);
                 ui.close();
             }
-            if ui.button("Rotate -90").clicked() {
+            if ui.button("左转 90").clicked() {
                 self.rotate_selected_item(-90);
                 ui.close();
             }
-            if ui.button("Reset Transform").clicked() {
+            if ui.button("重置变换").clicked() {
                 self.reset_selected_transform();
                 ui.close();
             }
             ui.separator();
-            if ui.button("Delete").clicked() {
-                self.delete_selected_item(&selection);
-                self.selected_item = None;
-                self.mark_dirty();
-                self.status = format!("Deleted {}", selection.label());
+            if ui.button("复制").clicked() {
+                self.copy_selected_item();
+                ui.close();
+            }
+            if ui.button("复制一份").clicked() {
+                self.duplicate_selected_item();
+                ui.close();
+            }
+            if ui.button("删除").clicked() {
+                self.delete_current_selection();
                 ui.close();
             }
         });
@@ -591,15 +1619,21 @@ impl EditorApp {
         ctx: &EguiContext,
     ) {
         let space_down = ctx.input(|input| input.key_down(Key::Space));
-        if self.tool == ToolKind::Select || self.tool == ToolKind::Pan || space_down {
+        if matches!(self.tool, ToolKind::Select | ToolKind::Pan | ToolKind::Zoom) || space_down {
             return;
         }
 
         let primary_down = ctx.input(|input| input.pointer.primary_down());
         let continuous_paint = self.tool == ToolKind::Erase
-            || (self.tool == ToolKind::PaintTile
+            || self.tool == ToolKind::Collision
+            || (self.tool == ToolKind::Brush
                 && matches!(self.active_layer, LayerKind::Ground | LayerKind::Collision));
-        let should_place = if continuous_paint {
+        let should_place = if self.tool == ToolKind::Rectangle {
+            response.drag_started()
+                || response.dragged()
+                || response.drag_stopped()
+                || response.clicked()
+        } else if continuous_paint {
             primary_down && (response.hovered() || response.dragged())
         } else {
             response.clicked()
@@ -618,26 +1652,83 @@ impl EditorApp {
         let Some([tile_x, tile_y]) = self.screen_to_tile(canvas_rect, mouse) else {
             return;
         };
+        let raw_map_pos = self
+            .screen_to_map_position(canvas_rect, mouse)
+            .unwrap_or([tile_x as f32, tile_y as f32]);
+
+        if self.tool == ToolKind::Rectangle {
+            self.handle_rectangle_tool(response, tile_x, tile_y);
+            return;
+        }
+
+        if self.tool == ToolKind::Eyedropper {
+            if let Some(selection) = self.hit_test_placed_item(canvas_rect, mouse) {
+                if let Some(asset_id) = self.asset_for_selection(&selection) {
+                    self.selected_asset = Some(asset_id.clone());
+                    self.selected_item = None;
+                    self.active_layer = selection.layer;
+                    self.tool = ToolKind::Brush;
+                    self.status = format!("吸取素材 {}", asset_id);
+                }
+            }
+            return;
+        }
+
+        if self.active_layer_locked() {
+            self.status = format!("{} 已锁定", self.active_layer.zh_label());
+            return;
+        }
+
+        if self.tool == ToolKind::Zone || self.active_layer == LayerKind::Zones {
+            self.push_undo_snapshot();
+            let id = next_editor_zone_id("zone", &self.document.layers.zones);
+            self.document.layers.zones.push(content::ZoneInstance {
+                id: id.clone(),
+                zone_type: "Trigger".to_owned(),
+                points: vec![
+                    [tile_x as f32, tile_y as f32],
+                    [tile_x as f32 + 1.0, tile_y as f32],
+                    [tile_x as f32 + 1.0, tile_y as f32 + 1.0],
+                    [tile_x as f32, tile_y as f32 + 1.0],
+                ],
+            });
+            self.selected_item = Some(SelectedItem {
+                layer: LayerKind::Zones,
+                id,
+            });
+            self.mark_dirty();
+            self.status = format!("Zone {}, {}", tile_x, tile_y);
+            return;
+        }
 
         if self.tool == ToolKind::Erase {
+            self.push_undo_snapshot();
             self.document.erase_at(self.active_layer, tile_x, tile_y);
             self.mark_dirty();
             self.status = format!("Erased {}, {}", tile_x, tile_y);
             return;
         }
 
-        if self.active_layer == LayerKind::Collision {
+        if self.tool == ToolKind::Collision || self.active_layer == LayerKind::Collision {
+            self.push_undo_snapshot();
             self.document.place_collision(tile_x, tile_y);
             self.mark_dirty();
             self.status = format!("Collision {}, {}", tile_x, tile_y);
             return;
         }
 
-        let Some(asset_id) = self.selected_asset().map(|asset| asset.id.clone()) else {
+        let Some((asset_id, entity_type, place_pos)) = self.selected_asset().map(|asset| {
+            (
+                asset.id.clone(),
+                asset.entity_type.clone(),
+                self.snapped_map_position(raw_map_pos, Some(asset)),
+            )
+        }) else {
             self.status = "Select an asset first".to_owned();
             return;
         };
         self.selected_item = None;
+        self.push_undo_snapshot();
 
         let placed_ground_size = match self.active_layer {
             LayerKind::Ground => {
@@ -648,22 +1739,23 @@ impl EditorApp {
             }
             LayerKind::Decals => {
                 self.document
-                    .place_decal(&asset_id, tile_x as f32, tile_y as f32);
+                    .place_decal(&asset_id, place_pos[0], place_pos[1]);
                 None
             }
             LayerKind::Objects => {
                 self.document
-                    .place_object(&asset_id, tile_x as f32, tile_y as f32);
+                    .place_object(&asset_id, place_pos[0], place_pos[1]);
                 None
             }
             LayerKind::Entities => {
+                let entity_type = entity_type.unwrap_or_else(|| "Decoration".to_owned());
                 self.document
-                    .place_entity(&asset_id, tile_x as f32, tile_y as f32);
+                    .place_entity(&asset_id, &entity_type, place_pos[0], place_pos[1]);
                 None
             }
             LayerKind::Zones => {
                 self.document
-                    .place_decal(&asset_id, tile_x as f32, tile_y as f32);
+                    .place_decal(&asset_id, place_pos[0], place_pos[1]);
                 None
             }
             LayerKind::Collision => unreachable!(),
@@ -703,6 +1795,9 @@ impl EditorApp {
             if let Some(selection) = &self.selected_item {
                 self.active_layer = selection.layer;
                 self.status = format!("Selected {}", selection.label());
+                if !self.layer_state(selection.layer).locked {
+                    self.push_undo_snapshot();
+                }
             } else {
                 self.status = "No object selected".to_owned();
             }
@@ -712,6 +1807,10 @@ impl EditorApp {
             let Some(selection) = self.selected_item.clone() else {
                 return;
             };
+            if self.layer_state(selection.layer).locked {
+                self.status = format!("{} 已锁定", selection.layer.zh_label());
+                return;
+            }
             let Some([tile_x, tile_y]) = self.screen_to_tile(canvas_rect, pointer_pos) else {
                 return;
             };
@@ -744,10 +1843,80 @@ impl EditorApp {
         }
     }
 
+    fn handle_rectangle_tool(&mut self, response: &egui::Response, tile_x: i32, tile_y: i32) {
+        if !matches!(self.active_layer, LayerKind::Ground | LayerKind::Collision) {
+            self.status = "矩形工具目前用于地表和碰撞图层".to_owned();
+            return;
+        }
+        if self.active_layer_locked() {
+            self.status = format!("{} 已锁定", self.active_layer.zh_label());
+            return;
+        }
+
+        if response.drag_started() || self.rectangle_drag_start.is_none() {
+            self.rectangle_drag_start = Some([tile_x, tile_y]);
+        }
+        self.rectangle_drag_current = Some([tile_x, tile_y]);
+
+        if response.drag_stopped() || response.clicked() {
+            let start = self.rectangle_drag_start.unwrap_or([tile_x, tile_y]);
+            let end = self.rectangle_drag_current.unwrap_or([tile_x, tile_y]);
+            self.apply_rectangle_tool(start, end);
+            self.rectangle_drag_start = None;
+            self.rectangle_drag_current = None;
+        }
+    }
+
+    fn apply_rectangle_tool(&mut self, start: [i32; 2], end: [i32; 2]) {
+        let min_x = start[0]
+            .min(end[0])
+            .clamp(0, self.document.width as i32 - 1);
+        let max_x = start[0]
+            .max(end[0])
+            .clamp(0, self.document.width as i32 - 1);
+        let min_y = start[1]
+            .min(end[1])
+            .clamp(0, self.document.height as i32 - 1);
+        let max_y = start[1]
+            .max(end[1])
+            .clamp(0, self.document.height as i32 - 1);
+        self.push_undo_snapshot();
+
+        match self.active_layer {
+            LayerKind::Ground => {
+                let Some(asset_id) = self.selected_asset().map(|asset| asset.id.clone()) else {
+                    self.status = "矩形填充需要先选择地表素材".to_owned();
+                    return;
+                };
+                for y in min_y..=max_y {
+                    for x in min_x..=max_x {
+                        self.document.place_tile(&asset_id, x, y);
+                    }
+                }
+                self.status = format!(
+                    "矩形填充 {}: {}x{}",
+                    asset_id,
+                    max_x - min_x + 1,
+                    max_y - min_y + 1
+                );
+            }
+            LayerKind::Collision => {
+                for y in min_y..=max_y {
+                    for x in min_x..=max_x {
+                        self.document.place_collision(x, y);
+                    }
+                }
+                self.status = format!("矩形碰撞: {}x{}", max_x - min_x + 1, max_y - min_y + 1);
+            }
+            _ => {}
+        }
+        self.mark_dirty();
+    }
+
     fn hit_test_placed_item(&self, canvas_rect: Rect, pointer_pos: Pos2) -> Option<SelectedItem> {
         for entity in self.document.layers.entities.iter().rev() {
             if self
-                .object_screen_rect(canvas_rect, &entity.asset, entity.x, entity.y)
+                .entity_instance_screen_rect(canvas_rect, entity)
                 .is_some_and(|rect| rect.contains(pointer_pos))
             {
                 return Some(SelectedItem {
@@ -759,7 +1928,7 @@ impl EditorApp {
 
         for object in self.document.layers.objects.iter().rev() {
             if self
-                .object_screen_rect(canvas_rect, &object.asset, object.x, object.y)
+                .object_instance_screen_rect(canvas_rect, object)
                 .is_some_and(|rect| rect.contains(pointer_pos))
             {
                 return Some(SelectedItem {
@@ -771,12 +1940,24 @@ impl EditorApp {
 
         for decal in self.document.layers.decals.iter().rev() {
             if self
-                .object_screen_rect(canvas_rect, &decal.asset, decal.x, decal.y)
+                .object_instance_screen_rect(canvas_rect, decal)
                 .is_some_and(|rect| rect.contains(pointer_pos))
             {
                 return Some(SelectedItem {
                     layer: LayerKind::Decals,
                     id: decal.id.clone(),
+                });
+            }
+        }
+
+        for zone in self.document.layers.zones.iter().rev() {
+            if self
+                .zone_screen_rect(canvas_rect, zone)
+                .is_some_and(|rect| rect.contains(pointer_pos))
+            {
+                return Some(SelectedItem {
+                    layer: LayerKind::Zones,
+                    id: zone.id.clone(),
                 });
             }
         }
@@ -902,7 +2083,12 @@ impl EditorApp {
                 .layers
                 .entities
                 .retain(|instance| instance.id != selection.id),
-            LayerKind::Zones | LayerKind::Collision => {}
+            LayerKind::Zones => self
+                .document
+                .layers
+                .zones
+                .retain(|instance| instance.id != selection.id),
+            LayerKind::Collision => {}
         }
     }
 
@@ -916,6 +2102,11 @@ impl EditorApp {
             return;
         };
 
+        if self.layer_state(selection.layer).locked {
+            self.status = format!("{} 已锁定", selection.layer.zh_label());
+            return;
+        }
+        self.push_undo_snapshot();
         self.set_transform_for_selection(&selection, !flip_x, rotation);
         self.mark_dirty();
         self.status = format!("Flipped {}", selection.label());
@@ -931,6 +2122,11 @@ impl EditorApp {
             return;
         };
 
+        if self.layer_state(selection.layer).locked {
+            self.status = format!("{} 已锁定", selection.layer.zh_label());
+            return;
+        }
+        self.push_undo_snapshot();
         self.set_transform_for_selection(&selection, flip_x, normalize_rotation(rotation + delta));
         self.mark_dirty();
         self.status = format!("Rotated {}", selection.label());
@@ -942,6 +2138,11 @@ impl EditorApp {
             return;
         };
 
+        if self.layer_state(selection.layer).locked {
+            self.status = format!("{} 已锁定", selection.layer.zh_label());
+            return;
+        }
+        self.push_undo_snapshot();
         self.set_transform_for_selection(&selection, false, 0);
         self.mark_dirty();
         self.status = format!("Reset transform for {}", selection.label());
@@ -1075,6 +2276,11 @@ impl EditorApp {
         let max_height = (self.document.height as i32 - y).max(1);
         let mut resized_to = None;
 
+        if self.layer_state(LayerKind::Ground).locked {
+            self.status = "地表图层已锁定".to_owned();
+            return;
+        }
+        self.push_undo_snapshot();
         if let Some(tile) = self
             .document
             .layers
@@ -1104,45 +2310,99 @@ impl EditorApp {
     }
 
     fn draw_layers(&self, canvas_rect: Rect, painter: &egui::Painter) {
-        for tile in &self.document.layers.ground {
-            let rect = self.tile_screen_rect(canvas_rect, tile.x, tile.y, tile.w, tile.h);
-            self.draw_asset_image(painter, &tile.asset, rect, tile.flip_x, tile.rotation);
+        if self.layer_state(LayerKind::Ground).visible {
+            for tile in &self.document.layers.ground {
+                let rect = self.tile_screen_rect(canvas_rect, tile.x, tile.y, tile.w, tile.h);
+                self.draw_asset_image(painter, &tile.asset, rect, tile.flip_x, tile.rotation);
+            }
         }
 
-        for decal in &self.document.layers.decals {
-            self.draw_object_like(
-                canvas_rect,
-                painter,
-                &decal.asset,
-                decal.x,
-                decal.y,
-                decal.flip_x,
-                decal.rotation,
-            );
+        if self.layer_state(LayerKind::Decals).visible {
+            for decal in &self.document.layers.decals {
+                self.draw_object_like(
+                    canvas_rect,
+                    painter,
+                    &decal.asset,
+                    decal.x,
+                    decal.y,
+                    decal.scale_x,
+                    decal.scale_y,
+                    decal.flip_x,
+                    decal.rotation,
+                );
+            }
         }
 
-        for object in &self.document.layers.objects {
-            self.draw_object_like(
-                canvas_rect,
-                painter,
-                &object.asset,
-                object.x,
-                object.y,
-                object.flip_x,
-                object.rotation,
-            );
+        if self.layer_state(LayerKind::Objects).visible {
+            let mut objects = self.document.layers.objects.iter().collect::<Vec<_>>();
+            objects.sort_by(|left, right| {
+                left.z_index
+                    .cmp(&right.z_index)
+                    .then_with(|| left.y.total_cmp(&right.y))
+            });
+            for object in objects {
+                self.draw_object_like(
+                    canvas_rect,
+                    painter,
+                    &object.asset,
+                    object.x,
+                    object.y,
+                    object.scale_x,
+                    object.scale_y,
+                    object.flip_x,
+                    object.rotation,
+                );
+            }
         }
 
-        for entity in &self.document.layers.entities {
-            self.draw_object_like(
-                canvas_rect,
-                painter,
-                &entity.asset,
-                entity.x,
-                entity.y,
-                entity.flip_x,
-                entity.rotation,
-            );
+        if self.layer_state(LayerKind::Entities).visible {
+            let mut entities = self.document.layers.entities.iter().collect::<Vec<_>>();
+            entities.sort_by(|left, right| {
+                left.z_index
+                    .cmp(&right.z_index)
+                    .then_with(|| left.y.total_cmp(&right.y))
+            });
+            for entity in entities {
+                self.draw_object_like(
+                    canvas_rect,
+                    painter,
+                    &entity.asset,
+                    entity.x,
+                    entity.y,
+                    entity.scale_x,
+                    entity.scale_y,
+                    entity.flip_x,
+                    entity.rotation,
+                );
+            }
+        }
+
+        if self.show_zones && self.layer_state(LayerKind::Zones).visible {
+            self.draw_zones(canvas_rect, painter);
+        }
+    }
+
+    fn draw_zones(&self, canvas_rect: Rect, painter: &egui::Painter) {
+        let tile_size = self.document.tile_size as f32;
+        for zone in &self.document.layers.zones {
+            let points = zone
+                .points
+                .iter()
+                .map(|point| {
+                    self.world_to_screen(
+                        canvas_rect,
+                        vec2(point[0] * tile_size, point[1] * tile_size),
+                    )
+                })
+                .collect::<Vec<_>>();
+            if points.len() < 2 {
+                continue;
+            }
+            painter.add(Shape::convex_polygon(
+                points.clone(),
+                Color32::from_rgba_unmultiplied(80, 160, 255, 32),
+                Stroke::new(1.5, Color32::from_rgb(80, 180, 255)),
+            ));
         }
     }
 
@@ -1153,33 +2413,89 @@ impl EditorApp {
         asset_id: &str,
         x: f32,
         y: f32,
+        scale_x: f32,
+        scale_y: f32,
         flip_x: bool,
         rotation: i32,
     ) {
-        if let Some(rect) = self.object_screen_rect(canvas_rect, asset_id, x, y) {
+        if let Some(rect) =
+            self.object_screen_rect_scaled(canvas_rect, asset_id, x, y, scale_x, scale_y)
+        {
             self.draw_asset_image(painter, asset_id, rect, flip_x, rotation);
         }
     }
 
-    fn object_screen_rect(
+    fn object_screen_rect_scaled(
         &self,
         canvas_rect: Rect,
         asset_id: &str,
         x: f32,
         y: f32,
+        scale_x: f32,
+        scale_y: f32,
     ) -> Option<Rect> {
         let asset = self.registry.get(asset_id)?;
         let tile_size = self.document.tile_size as f32;
         let anchor = self.world_to_screen(
             canvas_rect,
-            vec2((x + 0.5) * tile_size, (y + 1.0) * tile_size),
+            anchor_grid_to_world(tile_size, x, y, asset.anchor),
         );
-        let size = vec2(asset.default_size[0], asset.default_size[1]) * self.zoom;
+        let size = vec2(
+            asset.default_size[0] * scale_x.max(0.05),
+            asset.default_size[1] * scale_y.max(0.05),
+        ) * self.zoom;
 
-        Some(Rect::from_min_size(
-            Pos2::new(anchor.x - size.x * 0.5, anchor.y - size.y),
-            size,
-        ))
+        Some(screen_rect_from_anchor(anchor, size, asset.anchor))
+    }
+
+    fn object_instance_screen_rect(
+        &self,
+        canvas_rect: Rect,
+        instance: &content::ObjectInstance,
+    ) -> Option<Rect> {
+        self.object_screen_rect_scaled(
+            canvas_rect,
+            &instance.asset,
+            instance.x,
+            instance.y,
+            instance.scale_x,
+            instance.scale_y,
+        )
+    }
+
+    fn entity_instance_screen_rect(
+        &self,
+        canvas_rect: Rect,
+        instance: &content::EntityInstance,
+    ) -> Option<Rect> {
+        self.object_screen_rect_scaled(
+            canvas_rect,
+            &instance.asset,
+            instance.x,
+            instance.y,
+            instance.scale_x,
+            instance.scale_y,
+        )
+    }
+
+    fn zone_screen_rect(&self, canvas_rect: Rect, zone: &content::ZoneInstance) -> Option<Rect> {
+        let tile_size = self.document.tile_size as f32;
+        let mut points = zone.points.iter().map(|point| {
+            self.world_to_screen(
+                canvas_rect,
+                vec2(point[0] * tile_size, point[1] * tile_size),
+            )
+        });
+        let first = points.next()?;
+        let mut min = first;
+        let mut max = first;
+        for point in points {
+            min.x = min.x.min(point.x);
+            min.y = min.y.min(point.y);
+            max.x = max.x.max(point.x);
+            max.y = max.y.max(point.y);
+        }
+        Some(Rect::from_min_max(min, max))
     }
 
     fn draw_asset_image(
@@ -1213,6 +2529,9 @@ impl EditorApp {
     }
 
     fn draw_collision(&self, canvas_rect: Rect, painter: &egui::Painter) {
+        if !self.layer_state(LayerKind::Collision).visible {
+            return;
+        }
         let tile_size = self.document.tile_size as f32;
         for cell in &self.document.layers.collision {
             if !cell.solid {
@@ -1265,28 +2584,29 @@ impl EditorApp {
                 .decals
                 .iter()
                 .find(|instance| instance.id == selection.id)
-                .and_then(|instance| {
-                    self.object_screen_rect(canvas_rect, &instance.asset, instance.x, instance.y)
-                }),
+                .and_then(|instance| self.object_instance_screen_rect(canvas_rect, instance)),
             LayerKind::Objects => self
                 .document
                 .layers
                 .objects
                 .iter()
                 .find(|instance| instance.id == selection.id)
-                .and_then(|instance| {
-                    self.object_screen_rect(canvas_rect, &instance.asset, instance.x, instance.y)
-                }),
+                .and_then(|instance| self.object_instance_screen_rect(canvas_rect, instance)),
             LayerKind::Entities => self
                 .document
                 .layers
                 .entities
                 .iter()
                 .find(|instance| instance.id == selection.id)
-                .and_then(|instance| {
-                    self.object_screen_rect(canvas_rect, &instance.asset, instance.x, instance.y)
-                }),
-            LayerKind::Zones | LayerKind::Collision => None,
+                .and_then(|instance| self.entity_instance_screen_rect(canvas_rect, instance)),
+            LayerKind::Zones => self
+                .document
+                .layers
+                .zones
+                .iter()
+                .find(|zone| zone.id == selection.id)
+                .and_then(|zone| self.zone_screen_rect(canvas_rect, zone)),
+            LayerKind::Collision => None,
         };
 
         if let Some(rect) = rect {
@@ -1300,7 +2620,9 @@ impl EditorApp {
     }
 
     fn draw_ground_footprint_preview(&self, canvas_rect: Rect, painter: &egui::Painter) {
-        if self.tool != ToolKind::PaintTile || self.active_layer != LayerKind::Ground {
+        if !matches!(self.tool, ToolKind::Brush | ToolKind::Rectangle)
+            || self.active_layer != LayerKind::Ground
+        {
             return;
         }
         if self.selected_asset.is_none() {
@@ -1321,6 +2643,37 @@ impl EditorApp {
             rect,
             0.0,
             Stroke::new(2.0, Color32::from_rgb(130, 235, 165)),
+            StrokeKind::Inside,
+        );
+    }
+
+    fn draw_rectangle_preview(&self, canvas_rect: Rect, painter: &egui::Painter) {
+        if self.tool != ToolKind::Rectangle {
+            return;
+        }
+        let Some(start) = self.rectangle_drag_start else {
+            return;
+        };
+        let Some(end) = self.rectangle_drag_current.or(self.mouse_tile) else {
+            return;
+        };
+
+        let min_x = start[0].min(end[0]);
+        let max_x = start[0].max(end[0]);
+        let min_y = start[1].min(end[1]);
+        let max_y = start[1].max(end[1]);
+        let rect = self.tile_screen_rect(
+            canvas_rect,
+            min_x,
+            min_y,
+            max_x - min_x + 1,
+            max_y - min_y + 1,
+        );
+        painter.rect_filled(rect, 0.0, Color32::from_rgba_unmultiplied(80, 160, 255, 30));
+        painter.rect_stroke(
+            rect,
+            0.0,
+            Stroke::new(2.0, Color32::from_rgb(80, 180, 255)),
             StrokeKind::Inside,
         );
     }
@@ -1360,7 +2713,7 @@ impl EditorApp {
             ui.separator();
             ui.label(format!("Transform: {transform}"));
             ui.separator();
-            ui.label(format!("Layer: {}", self.active_layer.label()));
+            ui.label(format!("Layer: {}", self.active_layer.zh_label()));
             ui.separator();
             ui.label(format!(
                 "Ground Size: {}x{}",
@@ -1390,12 +2743,36 @@ impl EditorApp {
             Some([x, y])
         }
     }
+
+    fn screen_to_map_position(&self, canvas_rect: Rect, screen: Pos2) -> Option<[f32; 2]> {
+        let local = (screen - canvas_rect.min - self.pan) / self.zoom;
+        let tile_size = self.document.tile_size as f32;
+        let x = local.x / tile_size;
+        let y = local.y / tile_size;
+
+        if x < 0.0 || y < 0.0 || x >= self.document.width as f32 || y >= self.document.height as f32
+        {
+            None
+        } else {
+            Some([x, y])
+        }
+    }
+
+    fn snapped_map_position(&self, raw: [f32; 2], asset: Option<&AssetEntry>) -> [f32; 2] {
+        let snap = asset.map(|asset| asset.snap).unwrap_or(SnapMode::Grid);
+        match snap {
+            SnapMode::Grid => [raw[0].floor(), raw[1].floor()],
+            SnapMode::HalfGrid => [(raw[0] * 2.0).round() * 0.5, (raw[1] * 2.0).round() * 0.5],
+            SnapMode::Free => [raw[0], raw[1]],
+        }
+    }
 }
 
 impl eframe::App for EditorApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.handle_shortcuts(&ctx);
+        self.autosave_if_needed();
 
         egui::Panel::top("top_bar").show_inside(ui, |ui| self.draw_top_bar(ui));
         egui::Panel::bottom("status_bar").show_inside(ui, |ui| self.draw_status_bar(ui));
@@ -1405,7 +2782,18 @@ impl eframe::App for EditorApp {
             .show_inside(ui, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| self.draw_asset_panel(ui));
             });
+        egui::Panel::left("layer_panel")
+            .resizable(true)
+            .default_size(180.0)
+            .show_inside(ui, |ui| self.draw_layer_panel(ui));
+        egui::Panel::right("inspector_panel")
+            .resizable(true)
+            .default_size(300.0)
+            .show_inside(ui, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| self.draw_inspector_panel(ui));
+            });
         egui::CentralPanel::default().show_inside(ui, |ui| self.draw_canvas(ui, &ctx));
+        self.draw_dialogs(&ctx);
     }
 }
 
@@ -1485,6 +2873,57 @@ fn maps_dir(project_root: &Path) -> PathBuf {
     project_root.join("assets").join("data").join("maps")
 }
 
+fn configure_editor_fonts(ctx: &EguiContext) {
+    let mut fonts = FontDefinitions::default();
+    let font_name = "alien_archive_ui".to_owned();
+    fonts.font_data.insert(
+        font_name.clone(),
+        Arc::new(FontData::from_static(include_bytes!(
+            "../assets/fonts/ui.ttf"
+        ))),
+    );
+
+    for family in [FontFamily::Proportional, FontFamily::Monospace] {
+        fonts
+            .families
+            .entry(family)
+            .or_default()
+            .insert(0, font_name.clone());
+    }
+
+    ctx.set_fonts(fonts);
+}
+
+fn editor_config_path(project_root: &Path) -> PathBuf {
+    project_root.join(".editor").join("editor_config.ron")
+}
+
+fn load_editor_config(project_root: &Path) -> EditorConfig {
+    let path = editor_config_path(project_root);
+    let Ok(source) = fs::read_to_string(&path) else {
+        return EditorConfig::default();
+    };
+    ron::from_str(&source).unwrap_or_default()
+}
+
+fn save_editor_config(project_root: &Path, config: &EditorConfig) -> Result<()> {
+    let path = editor_config_path(project_root);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    let source = ron::ser::to_string_pretty(config, ron::ser::PrettyConfig::new())
+        .context("failed to serialize editor config")?;
+    fs::write(&path, source).with_context(|| format!("failed to write {}", path.display()))
+}
+
+fn default_layer_states() -> HashMap<LayerKind, LayerUiState> {
+    LayerKind::ALL
+        .into_iter()
+        .map(|layer| (layer, LayerUiState::default()))
+        .collect()
+}
+
 fn scan_map_entries(project_root: &Path) -> Vec<MapListEntry> {
     let Ok(entries) = fs::read_dir(maps_dir(project_root)) else {
         return Vec::new();
@@ -1504,18 +2943,6 @@ fn scan_map_entries(project_root: &Path) -> Vec<MapListEntry> {
 
     maps.sort_by(|left, right| left.label.cmp(&right.label));
     maps
-}
-
-fn map_label_for_path(
-    project_root: &Path,
-    entries: &[MapListEntry],
-    selected_path: &Path,
-) -> String {
-    entries
-        .iter()
-        .find(|entry| entry.path == selected_path)
-        .map(|entry| entry.label.clone())
-        .unwrap_or_else(|| display_project_path(project_root, selected_path))
 }
 
 fn sanitize_map_id(id: &str) -> Option<String> {
@@ -1560,6 +2987,23 @@ fn fit_centered_rect(bounds: Rect, source_size: Vec2) -> Rect {
     let scale = (bounds.width() / width).min(bounds.height() / height);
 
     Rect::from_center_size(bounds.center(), vec2(width * scale, height * scale))
+}
+
+fn anchor_grid_to_world(tile_size: f32, x: f32, y: f32, anchor: AnchorKind) -> Vec2 {
+    match anchor {
+        AnchorKind::TopLeft => vec2(x * tile_size, y * tile_size),
+        AnchorKind::Center => vec2((x + 0.5) * tile_size, (y + 0.5) * tile_size),
+        AnchorKind::BottomCenter => vec2((x + 0.5) * tile_size, (y + 1.0) * tile_size),
+    }
+}
+
+fn screen_rect_from_anchor(anchor: Pos2, size: Vec2, anchor_kind: AnchorKind) -> Rect {
+    let min = match anchor_kind {
+        AnchorKind::TopLeft => anchor,
+        AnchorKind::Center => Pos2::new(anchor.x - size.x * 0.5, anchor.y - size.y * 0.5),
+        AnchorKind::BottomCenter => Pos2::new(anchor.x - size.x * 0.5, anchor.y - size.y),
+    };
+    Rect::from_min_size(min, size)
 }
 
 fn paint_transformed_image(
@@ -1611,18 +3055,191 @@ fn normalize_rotation(rotation: i32) -> i32 {
 
 fn category_label(category: &str) -> &str {
     match category {
-        "tiles" => "Tiles",
-        "decals" => "Decals",
-        "props" => "Props",
-        "flora" => "Flora",
-        "fauna" => "Fauna",
-        "structures" => "Structures",
-        "ruins" => "Ruins",
-        "interactables" => "Interactables",
-        "pickups" => "Pickups",
-        "zones" => "Zones",
+        "tiles" => "地块",
+        "decals" => "贴花",
+        "props" => "道具",
+        "flora" => "植物",
+        "fauna" => "生物",
+        "structures" => "结构",
+        "ruins" => "遗迹",
+        "interactables" => "交互物",
+        "pickups" => "拾取物",
+        "zones" => "区域",
         _ => category,
     }
+}
+
+fn anchor_label(anchor: AnchorKind) -> &'static str {
+    match anchor {
+        AnchorKind::TopLeft => "左上",
+        AnchorKind::Center => "中心",
+        AnchorKind::BottomCenter => "底部中心",
+    }
+}
+
+fn snap_label(snap: SnapMode) -> &'static str {
+    match snap {
+        SnapMode::Grid => "网格",
+        SnapMode::HalfGrid => "半格",
+        SnapMode::Free => "自由",
+    }
+}
+
+fn asset_matches_search(asset: &AssetEntry, search: &str) -> bool {
+    asset.id.to_ascii_lowercase().contains(search)
+        || asset.relative_path.to_ascii_lowercase().contains(search)
+        || asset
+            .tags
+            .iter()
+            .any(|tag| tag.to_ascii_lowercase().contains(search))
+}
+
+fn object_instance_editor(ui: &mut egui::Ui, instance: &mut content::ObjectInstance) -> bool {
+    let mut changed = false;
+    changed |= ui.text_edit_singleline(&mut instance.id).changed();
+    changed |= ui.text_edit_singleline(&mut instance.asset).changed();
+    changed |= ui
+        .add(
+            egui::DragValue::new(&mut instance.x)
+                .speed(0.1)
+                .prefix("x "),
+        )
+        .changed();
+    changed |= ui
+        .add(
+            egui::DragValue::new(&mut instance.y)
+                .speed(0.1)
+                .prefix("y "),
+        )
+        .changed();
+    changed |= ui
+        .add(
+            egui::DragValue::new(&mut instance.scale_x)
+                .range(0.05..=8.0)
+                .speed(0.01)
+                .prefix("宽缩放 "),
+        )
+        .changed();
+    changed |= ui
+        .add(
+            egui::DragValue::new(&mut instance.scale_y)
+                .range(0.05..=8.0)
+                .speed(0.01)
+                .prefix("高缩放 "),
+        )
+        .changed();
+    changed |= ui
+        .add(egui::DragValue::new(&mut instance.z_index).prefix("层级 "))
+        .changed();
+    changed |= ui.checkbox(&mut instance.flip_x, "水平翻转").changed();
+    changed |= ui
+        .add(egui::DragValue::new(&mut instance.rotation).prefix("旋转 "))
+        .changed();
+    changed
+}
+
+fn entity_rect_editor(
+    ui: &mut egui::Ui,
+    label: &str,
+    rect: &mut Option<InstanceRect>,
+    changed: &mut bool,
+) {
+    ui.separator();
+    ui.horizontal(|ui| {
+        ui.label(label);
+        if rect.is_none() && ui.button("添加").clicked() {
+            *rect = Some(InstanceRect {
+                offset: [0.0, 0.0],
+                size: [1.0, 1.0],
+            });
+            *changed = true;
+        }
+        if rect.is_some() && ui.button("清除").clicked() {
+            *rect = None;
+            *changed = true;
+        }
+    });
+
+    let Some(rect) = rect else {
+        return;
+    };
+
+    ui.horizontal(|ui| {
+        *changed |= ui
+            .add(
+                egui::DragValue::new(&mut rect.offset[0])
+                    .speed(0.05)
+                    .prefix("x "),
+            )
+            .changed();
+        *changed |= ui
+            .add(
+                egui::DragValue::new(&mut rect.offset[1])
+                    .speed(0.05)
+                    .prefix("y "),
+            )
+            .changed();
+    });
+    ui.horizontal(|ui| {
+        *changed |= ui
+            .add(
+                egui::DragValue::new(&mut rect.size[0])
+                    .range(0.05..=32.0)
+                    .speed(0.05)
+                    .prefix("w "),
+            )
+            .changed();
+        *changed |= ui
+            .add(
+                egui::DragValue::new(&mut rect.size[1])
+                    .range(0.05..=32.0)
+                    .speed(0.05)
+                    .prefix("h "),
+            )
+            .changed();
+    });
+}
+
+fn validation_summary(issues: &[MapValidationIssue]) -> String {
+    let errors = issues
+        .iter()
+        .filter(|issue| issue.severity == MapValidationSeverity::Error)
+        .count();
+    let warnings = issues
+        .iter()
+        .filter(|issue| issue.severity == MapValidationSeverity::Warning)
+        .count();
+    format!("校验结果：{errors} 个错误，{warnings} 个警告")
+}
+
+fn next_editor_object_id(prefix: &str, instances: &[content::ObjectInstance]) -> String {
+    for index in 1.. {
+        let candidate = format!("{prefix}_{index:03}");
+        if instances.iter().all(|instance| instance.id != candidate) {
+            return candidate;
+        }
+    }
+    unreachable!("unbounded id scan should always find a candidate")
+}
+
+fn next_editor_entity_id(prefix: &str, instances: &[content::EntityInstance]) -> String {
+    for index in 1.. {
+        let candidate = format!("{prefix}_{index:03}");
+        if instances.iter().all(|instance| instance.id != candidate) {
+            return candidate;
+        }
+    }
+    unreachable!("unbounded id scan should always find a candidate")
+}
+
+fn next_editor_zone_id(prefix: &str, instances: &[content::ZoneInstance]) -> String {
+    for index in 1.. {
+        let candidate = format!("{prefix}_{index:03}");
+        if instances.iter().all(|instance| instance.id != candidate) {
+            return candidate;
+        }
+    }
+    unreachable!("unbounded id scan should always find a candidate")
 }
 
 fn ground_selection_id(x: i32, y: i32) -> String {

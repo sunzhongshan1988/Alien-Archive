@@ -1,10 +1,14 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
 };
 
 use anyhow::{Context, Result, bail};
+use content::{
+    AnchorKind, AssetDatabase, DEFAULT_ASSET_DB_PATH, InstanceRect, MapDocument as EditorMapFile,
+    ObjectInstance as EditorObjectInstance,
+};
 use runtime::{Color, Rect, Renderer, Vec2};
 use serde::Deserialize;
 
@@ -52,7 +56,13 @@ impl Map {
             }
         }
 
-        for sprite in &self.sprites {
+        let mut sprites = self.sprites.iter().collect::<Vec<_>>();
+        sprites.sort_by(|left, right| {
+            left.z_index
+                .cmp(&right.z_index)
+                .then_with(|| left.rect.bottom().total_cmp(&right.rect.bottom()))
+        });
+        for sprite in sprites {
             renderer.draw_image_transformed(
                 &sprite.texture_id,
                 sprite.rect,
@@ -62,7 +72,15 @@ impl Map {
             );
         }
 
-        for entity in &self.entities {
+        let mut entities = self.entities.iter().collect::<Vec<_>>();
+        entities.sort_by(|left, right| {
+            left.z_index.cmp(&right.z_index).then_with(|| {
+                left.sprite_rect
+                    .bottom()
+                    .total_cmp(&right.sprite_rect.bottom())
+            })
+        });
+        for entity in entities {
             if entity.kind != MapEntityKind::PlayerSpawn {
                 if let Some(texture_id) = &entity.texture_id {
                     renderer.draw_image_transformed(
@@ -99,7 +117,7 @@ impl Map {
                 self.entities
                     .iter()
                     .filter(|entity| entity.solid)
-                    .map(|entity| entity.rect),
+                    .map(|entity| entity.collision_rect.unwrap_or(entity.rect)),
             )
     }
 
@@ -164,9 +182,11 @@ impl Map {
                     id: entity.id,
                     kind: entity.kind,
                     rect: Rect::new(position, size),
+                    collision_rect: None,
                     sprite_rect: Rect::new(position, size),
                     color: color_from(entity.color),
                     solid: entity.solid,
+                    z_index: 0,
                     codex_id: entity.codex_id,
                     texture_id: None,
                     flip_x: false,
@@ -246,14 +266,22 @@ impl Map {
 
         let mut entities = Vec::new();
         for spawn in file.spawns {
-            let position = object_anchor_to_world(origin, tile_size, spawn.x, spawn.y);
+            let position = object_anchor_to_world(
+                origin,
+                tile_size,
+                spawn.x,
+                spawn.y,
+                AnchorKind::BottomCenter,
+            );
             entities.push(MapEntity {
                 id: spawn.id,
                 kind: MapEntityKind::PlayerSpawn,
                 rect: centered_rect(position, Vec2::new(tile_size, tile_size)),
+                collision_rect: None,
                 sprite_rect: centered_rect(position, Vec2::new(tile_size, tile_size)),
                 color: Color::rgba(0.0, 0.0, 0.0, 0.0),
                 solid: false,
+                z_index: 0,
                 codex_id: None,
                 texture_id: None,
                 flip_x: false,
@@ -266,19 +294,29 @@ impl Map {
                 .get(&entity.asset)
                 .with_context(|| format!("unknown entity asset {}", entity.asset))?;
             textures.insert(asset.id.clone(), asset.path.clone());
-            let anchor = object_anchor_to_world(origin, tile_size, entity.x, entity.y);
-            let sprite_size = asset.default_size;
-            let sprite_rect = bottom_centered_rect(anchor, sprite_size);
-            let hit_rect = centered_rect(anchor, Vec2::new(tile_size, tile_size));
+            let anchor =
+                object_anchor_to_world(origin, tile_size, entity.x, entity.y, asset.anchor);
+            let sprite_size = scaled_size(asset.default_size, entity.scale_x, entity.scale_y);
+            let sprite_rect = anchored_rect(anchor, sprite_size, asset.anchor);
+            let default_rect = centered_rect(anchor, Vec2::new(tile_size, tile_size));
+            let hit_rect = entity
+                .interaction_rect
+                .map(|rect| instance_rect_to_world(origin, tile_size, entity.x, entity.y, rect))
+                .unwrap_or(default_rect);
+            let collision_rect = entity
+                .collision_rect
+                .map(|rect| instance_rect_to_world(origin, tile_size, entity.x, entity.y, rect));
 
             entities.push(MapEntity {
                 id: entity.id,
                 kind: map_entity_kind(&entity.entity_type),
                 rect: hit_rect,
+                collision_rect,
                 sprite_rect,
                 color: Color::rgba(0.65, 0.35, 1.0, 0.75),
                 solid: false,
-                codex_id: scan_codex_id(&entity.asset),
+                z_index: entity.z_index,
+                codex_id: asset.codex_id.clone(),
                 texture_id: Some(asset.id.clone()),
                 flip_x: entity.flip_x,
                 rotation: entity.rotation,
@@ -327,6 +365,7 @@ enum MapVisual {
 struct MapSprite {
     texture_id: String,
     rect: Rect,
+    z_index: i32,
     flip_x: bool,
     rotation: i32,
 }
@@ -337,9 +376,11 @@ pub struct MapEntity {
     pub id: String,
     pub kind: MapEntityKind,
     pub rect: Rect,
+    pub collision_rect: Option<Rect>,
     sprite_rect: Rect,
     pub color: Color,
     pub solid: bool,
+    z_index: i32,
     pub codex_id: Option<String>,
     texture_id: Option<String>,
     flip_x: bool,
@@ -390,99 +431,13 @@ struct MapEntityDef {
     codex_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct EditorMapFile {
-    #[allow(dead_code)]
-    id: String,
-    mode: String,
-    tile_size: u32,
-    width: u32,
-    height: u32,
-    layers: EditorMapLayers,
-    spawns: Vec<EditorSpawnPoint>,
-}
-
-#[derive(Debug, Deserialize)]
-struct EditorMapLayers {
-    ground: Vec<EditorTileInstance>,
-    decals: Vec<EditorObjectInstance>,
-    objects: Vec<EditorObjectInstance>,
-    entities: Vec<EditorEntityInstance>,
-    #[allow(dead_code)]
-    zones: Vec<EditorZoneInstance>,
-    collision: Vec<EditorCollisionCell>,
-}
-
-#[derive(Debug, Deserialize)]
-struct EditorTileInstance {
-    asset: String,
-    x: i32,
-    y: i32,
-    #[serde(default = "default_tile_extent")]
-    w: i32,
-    #[serde(default = "default_tile_extent")]
-    h: i32,
-    #[serde(default)]
-    flip_x: bool,
-    #[serde(default)]
-    rotation: i32,
-}
-
-#[derive(Debug, Deserialize)]
-struct EditorObjectInstance {
-    #[allow(dead_code)]
-    id: String,
-    asset: String,
-    x: f32,
-    y: f32,
-    #[serde(default)]
-    flip_x: bool,
-    #[serde(default)]
-    rotation: i32,
-}
-
-#[derive(Debug, Deserialize)]
-struct EditorEntityInstance {
-    id: String,
-    asset: String,
-    entity_type: String,
-    x: f32,
-    y: f32,
-    #[serde(default)]
-    flip_x: bool,
-    #[serde(default)]
-    rotation: i32,
-}
-
-#[derive(Debug, Deserialize)]
-struct EditorZoneInstance {
-    #[allow(dead_code)]
-    id: String,
-    #[allow(dead_code)]
-    zone_type: String,
-    #[allow(dead_code)]
-    points: Vec<[f32; 2]>,
-}
-
-#[derive(Debug, Deserialize)]
-struct EditorCollisionCell {
-    x: i32,
-    y: i32,
-    solid: bool,
-}
-
-#[derive(Debug, Deserialize)]
-struct EditorSpawnPoint {
-    id: String,
-    x: f32,
-    y: f32,
-}
-
 #[derive(Clone, Debug)]
 struct OverworldAsset {
     id: String,
     path: PathBuf,
     default_size: Vec2,
+    anchor: AnchorKind,
+    codex_id: Option<String>,
 }
 
 fn grid_to_world(origin: Vec2, tile_size: f32, column: i32, row: i32) -> Vec2 {
@@ -508,11 +463,16 @@ fn push_sprite(
         .get(&instance.asset)
         .with_context(|| format!("unknown object asset {}", instance.asset))?;
     textures.insert(asset.id.clone(), asset.path.clone());
-    let anchor = object_anchor_to_world(origin, tile_size, instance.x, instance.y);
+    let anchor = object_anchor_to_world(origin, tile_size, instance.x, instance.y, asset.anchor);
 
     sprites.push(MapSprite {
         texture_id: asset.id.clone(),
-        rect: bottom_centered_rect(anchor, asset.default_size),
+        rect: anchored_rect(
+            anchor,
+            scaled_size(asset.default_size, instance.scale_x, instance.scale_y),
+            asset.anchor,
+        ),
+        z_index: instance.z_index,
         flip_x: instance.flip_x,
         rotation: instance.rotation,
     });
@@ -520,10 +480,30 @@ fn push_sprite(
     Ok(())
 }
 
-fn object_anchor_to_world(origin: Vec2, tile_size: f32, x: f32, y: f32) -> Vec2 {
+fn object_anchor_to_world(
+    origin: Vec2,
+    tile_size: f32,
+    x: f32,
+    y: f32,
+    anchor: AnchorKind,
+) -> Vec2 {
+    match anchor {
+        AnchorKind::TopLeft => Vec2::new(origin.x + x * tile_size, origin.y + y * tile_size),
+        AnchorKind::Center => Vec2::new(
+            origin.x + (x + 0.5) * tile_size,
+            origin.y + (y + 0.5) * tile_size,
+        ),
+        AnchorKind::BottomCenter => Vec2::new(
+            origin.x + (x + 0.5) * tile_size,
+            origin.y + (y + 1.0) * tile_size,
+        ),
+    }
+}
+
+fn scaled_size(default_size: Vec2, scale_x: f32, scale_y: f32) -> Vec2 {
     Vec2::new(
-        origin.x + (x + 0.5) * tile_size,
-        origin.y + (y + 1.0) * tile_size,
+        default_size.x * scale_x.max(0.05),
+        default_size.y * scale_y.max(0.05),
     )
 }
 
@@ -534,8 +514,29 @@ fn centered_rect(center: Vec2, size: Vec2) -> Rect {
     )
 }
 
-fn bottom_centered_rect(anchor: Vec2, size: Vec2) -> Rect {
-    Rect::new(Vec2::new(anchor.x - size.x * 0.5, anchor.y - size.y), size)
+fn anchored_rect(anchor: Vec2, size: Vec2, anchor_kind: AnchorKind) -> Rect {
+    let origin = match anchor_kind {
+        AnchorKind::TopLeft => anchor,
+        AnchorKind::Center => Vec2::new(anchor.x - size.x * 0.5, anchor.y - size.y * 0.5),
+        AnchorKind::BottomCenter => Vec2::new(anchor.x - size.x * 0.5, anchor.y - size.y),
+    };
+    Rect::new(origin, size)
+}
+
+fn instance_rect_to_world(
+    origin: Vec2,
+    tile_size: f32,
+    x: f32,
+    y: f32,
+    rect: InstanceRect,
+) -> Rect {
+    Rect::new(
+        Vec2::new(
+            origin.x + (x + rect.offset[0]) * tile_size,
+            origin.y + (y + rect.offset[1]) * tile_size,
+        ),
+        Vec2::new(rect.size[0] * tile_size, rect.size[1] * tile_size),
+    )
 }
 
 fn map_entity_kind(value: &str) -> MapEntityKind {
@@ -549,111 +550,28 @@ fn map_entity_kind(value: &str) -> MapEntityKind {
     }
 }
 
-fn scan_codex_id(asset: &str) -> Option<String> {
-    if asset.starts_with("ow_flora_") {
-        Some(format!(
-            "codex.flora.{}",
-            asset.trim_start_matches("ow_flora_")
-        ))
-    } else if asset.starts_with("ow_ruin_") {
-        Some(format!(
-            "codex.ruin.{}",
-            asset.trim_start_matches("ow_ruin_")
-        ))
-    } else if asset.starts_with("ow_interact_") {
-        Some(format!(
-            "codex.interact.{}",
-            asset.trim_start_matches("ow_interact_")
-        ))
-    } else {
-        None
-    }
-}
-
 fn scan_overworld_assets() -> Result<HashMap<String, OverworldAsset>> {
     let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let sprites_root = resolve_asset_path(&project_root.join("assets").join("sprites"));
-    let mut assets = HashMap::new();
-    let mut seen_paths = HashSet::new();
+    let database = AssetDatabase::load(&resolve_asset_path(
+        &project_root.join(DEFAULT_ASSET_DB_PATH),
+    ))?;
 
-    for category in OVERWORLD_CATEGORIES {
-        let category_dir = sprites_root.join(category).join("overworld");
-        if !category_dir.exists() {
-            continue;
-        }
-
-        for entry in fs::read_dir(&category_dir)
-            .with_context(|| format!("failed to scan {}", category_dir.display()))?
-        {
-            let entry = entry?;
-            let path = entry.path();
-            if !path
-                .extension()
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("png"))
-            {
-                continue;
-            }
-            if !seen_paths.insert(path.clone()) {
-                continue;
-            }
-
-            let Some(id) = path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .map(str::to_owned)
-            else {
-                continue;
-            };
-
-            assets.insert(
-                id.clone(),
+    Ok(database
+        .assets
+        .into_iter()
+        .map(|asset| {
+            (
+                asset.id.clone(),
                 OverworldAsset {
-                    id,
-                    default_size: default_asset_size(
-                        category,
-                        image::image_dimensions(&path).with_context(|| {
-                            format!("failed to read image size {}", path.display())
-                        })?,
-                    ),
-                    path,
+                    id: asset.id,
+                    path: resolve_asset_path(&project_root.join(asset.path)),
+                    default_size: Vec2::new(asset.default_size[0], asset.default_size[1]),
+                    anchor: asset.anchor,
+                    codex_id: asset.codex_id,
                 },
-            );
-        }
-    }
-
-    Ok(assets)
-}
-
-const OVERWORLD_CATEGORIES: &[&str] = &[
-    "tiles",
-    "decals",
-    "props",
-    "flora",
-    "fauna",
-    "structures",
-    "ruins",
-    "interactables",
-    "pickups",
-    "zones",
-];
-
-fn default_asset_size(category: &str, source_size: (u32, u32)) -> Vec2 {
-    let target_height = match category {
-        "tiles" => 32.0,
-        "decals" | "zones" => 48.0,
-        "ruins" | "structures" => 128.0,
-        "interactables" | "fauna" | "pickups" => 72.0,
-        _ => 72.0,
-    };
-    let width = source_size.0.max(1) as f32;
-    let height = source_size.1.max(1) as f32;
-    let scale = target_height / height;
-
-    Vec2::new(width * scale, target_height)
-}
-
-fn default_tile_extent() -> i32 {
-    1
+            )
+        })
+        .collect())
 }
 
 fn parse_map_file(source: &str) -> Result<AnyMapFile> {

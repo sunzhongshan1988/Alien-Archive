@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+content = { package = "alien_archive_content", path = "../content" }
 image.workspace = true
 ron.workspace = true
 rusttype.workspace = true

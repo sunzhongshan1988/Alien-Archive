@@ -1,5 +1,11 @@
 [workspace]
-members = ["crates/runtime", "crates/game", "tools/sprite_sheet_compactor", "crates/editor"]
+members = [
+    "crates/runtime",
+    "crates/content",
+    "crates/game",
+    "tools/sprite_sheet_compactor",
+    "crates/editor",
+]
 resolver = "3"
 
 [workspace.package]

@@ -1,20 +1,10 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
+use std::path::{Path, PathBuf};
+
+use anyhow::Result;
+use content::{
+    AnchorKind, AssetDatabase, AssetDefinition, AssetKind, DEFAULT_ASSET_DB_PATH, LayerKind,
+    SnapMode,
 };
-
-use anyhow::{Context, Result};
-
-use crate::map_document::LayerKind;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AssetKind {
-    Tile,
-    Decal,
-    Object,
-    Entity,
-    Zone,
-}
 
 #[derive(Clone, Debug)]
 pub struct AssetEntry {
@@ -25,6 +15,11 @@ pub struct AssetEntry {
     pub kind: AssetKind,
     pub default_layer: LayerKind,
     pub default_size: [f32; 2],
+    pub anchor: AnchorKind,
+    pub snap: SnapMode,
+    pub entity_type: Option<String>,
+    pub codex_id: Option<String>,
+    pub tags: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -34,51 +29,16 @@ pub struct AssetRegistry {
 
 impl AssetRegistry {
     pub fn scan(project_root: &Path) -> Result<Self> {
-        let mut assets = Vec::new();
-        let sprites_root = project_root.join("assets").join("sprites");
+        let database = AssetDatabase::load(&project_root.join(DEFAULT_ASSET_DB_PATH))?;
+        Ok(Self::from_database(project_root, database))
+    }
 
-        for category in OVERWORLD_CATEGORIES {
-            let category_dir = sprites_root.join(category).join("overworld");
-            if !category_dir.exists() {
-                continue;
-            }
-
-            for entry in fs::read_dir(&category_dir)
-                .with_context(|| format!("failed to scan {}", category_dir.display()))?
-            {
-                let entry = entry?;
-                let path = entry.path();
-                if !path
-                    .extension()
-                    .is_some_and(|extension| extension.eq_ignore_ascii_case("png"))
-                {
-                    continue;
-                }
-
-                let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
-                    continue;
-                };
-
-                let kind = infer_asset_kind(category);
-                let source_size = image::image_dimensions(&path)
-                    .with_context(|| format!("failed to read image size {}", path.display()))?;
-                let relative_path = path
-                    .strip_prefix(project_root)
-                    .unwrap_or(&path)
-                    .to_string_lossy()
-                    .replace('\\', "/");
-
-                assets.push(AssetEntry {
-                    id: stem.to_owned(),
-                    category: category.to_string(),
-                    path,
-                    relative_path,
-                    kind,
-                    default_layer: default_layer(category, kind),
-                    default_size: default_size(category, kind, source_size),
-                });
-            }
-        }
+    pub fn from_database(project_root: &Path, database: AssetDatabase) -> Self {
+        let mut assets = database
+            .assets
+            .into_iter()
+            .map(|asset| asset_entry(project_root, asset))
+            .collect::<Vec<_>>();
 
         assets.sort_by(|left, right| {
             left.category
@@ -86,7 +46,7 @@ impl AssetRegistry {
                 .then_with(|| left.id.cmp(&right.id))
         });
 
-        Ok(Self { assets })
+        Self { assets }
     }
 
     pub fn assets(&self) -> &[AssetEntry] {
@@ -116,60 +76,22 @@ impl AssetRegistry {
     }
 }
 
-const OVERWORLD_CATEGORIES: &[&str] = &[
-    "tiles",
-    "decals",
-    "props",
-    "flora",
-    "fauna",
-    "structures",
-    "ruins",
-    "interactables",
-    "pickups",
-    "zones",
-];
+fn asset_entry(project_root: &Path, asset: AssetDefinition) -> AssetEntry {
+    let relative_path = asset.path.to_string_lossy().replace('\\', "/");
+    let path = project_root.join(&asset.path);
 
-fn infer_asset_kind(category: &str) -> AssetKind {
-    match category {
-        "tiles" => AssetKind::Tile,
-        "decals" => AssetKind::Decal,
-        "structures" | "ruins" | "interactables" => AssetKind::Entity,
-        "zones" => AssetKind::Zone,
-        _ => AssetKind::Object,
+    AssetEntry {
+        id: asset.id,
+        category: asset.category,
+        path,
+        relative_path,
+        kind: asset.kind,
+        default_layer: asset.default_layer,
+        default_size: asset.default_size,
+        anchor: asset.anchor,
+        snap: asset.snap,
+        entity_type: asset.entity_type,
+        codex_id: asset.codex_id,
+        tags: asset.tags,
     }
-}
-
-fn default_layer(category: &str, kind: AssetKind) -> LayerKind {
-    match kind {
-        AssetKind::Tile => LayerKind::Ground,
-        AssetKind::Decal => LayerKind::Decals,
-        AssetKind::Zone => LayerKind::Zones,
-        AssetKind::Entity => LayerKind::Entities,
-        AssetKind::Object => match category {
-            "pickups" | "fauna" => LayerKind::Entities,
-            _ => LayerKind::Objects,
-        },
-    }
-}
-
-fn default_size(category: &str, kind: AssetKind, source_size: (u32, u32)) -> [f32; 2] {
-    let target_height = match kind {
-        AssetKind::Tile => 32.0,
-        AssetKind::Decal | AssetKind::Zone => 48.0,
-        AssetKind::Entity => match category {
-            "ruins" | "structures" => 128.0,
-            _ => 72.0,
-        },
-        AssetKind::Object => 72.0,
-    };
-
-    scale_to_height(source_size, target_height)
-}
-
-fn scale_to_height(source_size: (u32, u32), target_height: f32) -> [f32; 2] {
-    let width = source_size.0.max(1) as f32;
-    let height = source_size.1.max(1) as f32;
-    let scale = target_height / height;
-
-    [width * scale, target_height]
 }

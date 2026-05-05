@@ -50,11 +50,21 @@ dependencies = [
 name = "alien_archive"
 version = "0.1.0"
 dependencies = [
+ "alien_archive_content",
  "alien_archive_runtime",
  "anyhow",
  "image",
  "ron",
  "rusttype",
+ "serde",
+]
+
+[[package]]
+name = "alien_archive_content"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ron",
  "serde",
 ]
 
@@ -541,6 +551,7 @@ dependencies = [
 name = "editor"
 version = "0.1.0"
 dependencies = [
+ "alien_archive_content",
  "anyhow",
  "eframe",
  "image",
