@@ -6,7 +6,7 @@ use crate::{
     world::{MapEntityKind, World},
 };
 
-use super::{GameContext, RenderContext, Scene, SceneId};
+use super::{GameContext, GameMenuTab, RenderContext, Scene, SceneId};
 
 const OVERWORLD_MAP: &str = "assets/data/maps/overworld_landing_site.ron";
 const FACILITY_ENTRY_SPAWN: &str = "entry";
@@ -58,11 +58,17 @@ impl Scene for OverworldScene {
         input: &InputState,
     ) -> Result<SceneCommand<SceneId>> {
         if input.just_pressed(Button::Pause) {
-            return Ok(SceneCommand::Push(SceneId::Pause));
+            return Ok(SceneCommand::Push(SceneId::GameMenu));
         }
 
         if input.just_pressed(Button::Inventory) {
-            return Ok(SceneCommand::Push(SceneId::Inventory));
+            ctx.game_menu_tab = GameMenuTab::Inventory;
+            return Ok(SceneCommand::Push(SceneId::GameMenu));
+        }
+
+        if input.just_pressed(Button::Profile) {
+            ctx.game_menu_tab = GameMenuTab::Profile;
+            return Ok(SceneCommand::Push(SceneId::GameMenu));
         }
 
         if input.just_pressed(Button::Interact)

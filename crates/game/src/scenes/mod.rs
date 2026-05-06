@@ -1,17 +1,21 @@
 mod facility_scene;
+mod game_menu_scene;
 mod inventory_scene;
 mod main_menu;
 mod overworld_scene;
 mod pause_scene;
+mod profile_scene;
 
 use anyhow::Result;
 use runtime::{Camera2d, InputState, Renderer, SceneCommand};
 
 use facility_scene::FacilityScene;
+use game_menu_scene::GameMenuScene;
 use inventory_scene::InventoryScene;
 use main_menu::MainMenuScene;
 use overworld_scene::OverworldScene;
 use pause_scene::PauseScene;
+use profile_scene::ProfileScene;
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -20,13 +24,83 @@ pub enum SceneId {
     MainMenu,
     Overworld,
     Facility,
+    GameMenu,
     Inventory,
+    Profile,
     Codex,
     Pause,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Language {
+    Chinese,
+    English,
+}
+
+impl Language {
+    pub const SUPPORTED: [Self; 2] = [Self::Chinese, Self::English];
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Chinese => Self::English,
+            Self::English => Self::Chinese,
+        }
+    }
+}
+
+impl Default for Language {
+    fn default() -> Self {
+        Self::SUPPORTED[0]
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GameMenuTab {
+    Profile,
+    Inventory,
+    Codex,
+    Map,
+    Quests,
+    Settings,
+}
+
+impl GameMenuTab {
+    pub const ALL: [Self; 6] = [
+        Self::Profile,
+        Self::Inventory,
+        Self::Codex,
+        Self::Map,
+        Self::Quests,
+        Self::Settings,
+    ];
+
+    pub fn next(self) -> Self {
+        let index = Self::ALL
+            .iter()
+            .position(|tab| *tab == self)
+            .unwrap_or_default();
+        Self::ALL[(index + 1) % Self::ALL.len()]
+    }
+
+    pub fn previous(self) -> Self {
+        let index = Self::ALL
+            .iter()
+            .position(|tab| *tab == self)
+            .unwrap_or_default();
+        Self::ALL[(index + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+}
+
+impl Default for GameMenuTab {
+    fn default() -> Self {
+        Self::Profile
+    }
+}
+
 #[derive(Default)]
 pub struct GameContext {
+    pub language: Language,
+    pub game_menu_tab: GameMenuTab,
     pub should_quit: bool,
     pub overworld_spawn_id: Option<String>,
     pub facility_spawn_id: Option<String>,
@@ -164,7 +238,12 @@ fn create_scene(scene_id: SceneId, ctx: &GameContext) -> Result<Box<dyn Scene>> 
         SceneId::Facility => Ok(Box::new(FacilityScene::new(
             ctx.facility_spawn_id.as_deref(),
         )?)),
-        SceneId::Inventory => Ok(Box::new(InventoryScene::new())),
+        SceneId::GameMenu => Ok(Box::new(GameMenuScene::new(
+            ctx.language,
+            ctx.game_menu_tab,
+        ))),
+        SceneId::Inventory => Ok(Box::new(InventoryScene::new(ctx.language))),
+        SceneId::Profile => Ok(Box::new(ProfileScene::new(ctx.language))),
         SceneId::Pause | SceneId::Codex => Ok(Box::new(PauseScene::new())),
     }
 }

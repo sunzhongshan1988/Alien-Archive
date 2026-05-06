@@ -16,6 +16,7 @@ pub enum Button {
     Scan,
     Interact,
     Inventory,
+    Profile,
     Confirm,
     Pause,
 }
@@ -129,6 +130,7 @@ fn key_to_buttons(code: KeyCode) -> &'static [Button] {
         KeyCode::KeyS | KeyCode::ArrowDown => &[Button::Down],
         KeyCode::KeyE => &[Button::Interact],
         KeyCode::KeyI | KeyCode::Tab => &[Button::Inventory],
+        KeyCode::KeyC => &[Button::Profile],
         KeyCode::Enter => &[Button::Confirm],
         KeyCode::Escape => &[Button::Pause],
         KeyCode::Space => &[Button::Scan, Button::Confirm],
