@@ -382,54 +382,141 @@ impl EditorApp {
         }
     }
 
+    fn set_tool(&mut self, tool: ToolKind) {
+        self.tool = tool;
+        if tool == ToolKind::Collision {
+            self.active_layer = LayerKind::Collision;
+        } else if tool == ToolKind::Zone {
+            self.active_layer = LayerKind::Zones;
+        }
+        self.status = format!("工具：{}", tool.label());
+    }
+
+    fn set_layer_shortcut(&mut self, layer: LayerKind) {
+        self.active_layer = layer;
+        self.tool = match layer {
+            LayerKind::Collision => ToolKind::Collision,
+            LayerKind::Zones => ToolKind::Zone,
+            _ => ToolKind::Brush,
+        };
+        self.status = format!("图层：{}", layer.zh_label());
+    }
+
+    fn cancel_current_operation_or_select(&mut self) {
+        let mut cancelled = false;
+        if !self.zone_draft_points.is_empty() {
+            self.zone_draft_points.clear();
+            cancelled = true;
+        }
+        if self.rectangle_drag_start.take().is_some()
+            || self.rectangle_drag_current.take().is_some()
+            || self.selection_marquee.take().is_some()
+            || self.resize_drag.take().is_some()
+            || self.multi_move_drag.take().is_some()
+            || self.zone_vertex_drag.take().is_some()
+        {
+            cancelled = true;
+        }
+
+        if cancelled {
+            self.status = "已取消当前操作".to_owned();
+        } else {
+            self.set_tool(ToolKind::Select);
+        }
+    }
+
     fn handle_shortcuts(&mut self, ctx: &EguiContext) {
+        let wants_keyboard_input = ctx.egui_wants_keyboard_input();
         ctx.input_mut(|input| {
-            if input.consume_key(Modifiers::CTRL, Key::S) {
+            if input.consume_key(Modifiers::COMMAND, Key::S) {
                 self.save_map();
             }
-            if input.consume_key(Modifiers::CTRL, Key::Z) {
-                self.undo();
+
+            if wants_keyboard_input {
+                return;
             }
-            if input.consume_key(Modifiers::CTRL, Key::Y) {
+            if input.consume_key(Modifiers::COMMAND, Key::Y)
+                || input.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)
+            {
                 self.redo();
             }
-            if input.consume_key(Modifiers::CTRL, Key::C) {
+            if input.consume_key(Modifiers::COMMAND, Key::Z) {
+                self.undo();
+            }
+            if input.consume_key(Modifiers::COMMAND, Key::C) {
                 self.copy_selected_item();
             }
-            if input.consume_key(Modifiers::CTRL, Key::V) {
+            if input.consume_key(Modifiers::COMMAND, Key::V) {
                 self.paste_clipboard();
             }
-            if input.consume_key(Modifiers::CTRL, Key::D) {
+            if input.consume_key(Modifiers::COMMAND, Key::D) {
                 self.duplicate_selected_item();
             }
             if input.key_pressed(Key::Delete) {
                 self.delete_current_selection();
             }
+
+            if input.key_pressed(Key::Escape) {
+                self.cancel_current_operation_or_select();
+            }
+
+            let unmodified = !input.modifiers.alt
+                && !input.modifiers.ctrl
+                && !input.modifiers.command
+                && !input.modifiers.mac_cmd;
+
+            if !unmodified {
+                return;
+            }
+
+            if input.key_pressed(Key::V) {
+                self.set_tool(ToolKind::Select);
+            }
+            if input.key_pressed(Key::B) {
+                self.set_tool(ToolKind::Brush);
+            }
+            if input.key_pressed(Key::G) {
+                self.set_tool(ToolKind::Bucket);
+            }
+            if input.key_pressed(Key::R) {
+                self.set_tool(ToolKind::Rectangle);
+            }
+            if input.key_pressed(Key::E) {
+                self.set_tool(ToolKind::Erase);
+            }
+            if input.key_pressed(Key::I) {
+                self.set_tool(ToolKind::Eyedropper);
+            }
+            if input.key_pressed(Key::C) {
+                self.set_tool(ToolKind::Collision);
+            }
+            if input.key_pressed(Key::A) {
+                self.set_tool(ToolKind::Zone);
+            }
+            if input.key_pressed(Key::H) {
+                self.set_tool(ToolKind::Pan);
+            }
+            if input.key_pressed(Key::Z) {
+                self.set_tool(ToolKind::Zoom);
+            }
+
             if input.key_pressed(Key::Num1) {
-                self.tool = ToolKind::Select;
+                self.set_layer_shortcut(LayerKind::Ground);
             }
             if input.key_pressed(Key::Num2) {
-                self.tool = ToolKind::Brush;
+                self.set_layer_shortcut(LayerKind::Decals);
             }
             if input.key_pressed(Key::Num3) {
-                self.tool = ToolKind::Bucket;
+                self.set_layer_shortcut(LayerKind::Objects);
             }
             if input.key_pressed(Key::Num4) {
-                self.tool = ToolKind::Rectangle;
+                self.set_layer_shortcut(LayerKind::Entities);
             }
             if input.key_pressed(Key::Num5) {
-                self.tool = ToolKind::Erase;
+                self.set_layer_shortcut(LayerKind::Collision);
             }
             if input.key_pressed(Key::Num6) {
-                self.tool = ToolKind::Eyedropper;
-            }
-            if input.key_pressed(Key::Num7) {
-                self.tool = ToolKind::Collision;
-                self.active_layer = LayerKind::Collision;
-            }
-            if input.key_pressed(Key::Escape) && !self.zone_draft_points.is_empty() {
-                self.zone_draft_points.clear();
-                self.status = "已取消区域绘制".to_owned();
+                self.set_layer_shortcut(LayerKind::Zones);
             }
         });
     }
@@ -481,14 +568,7 @@ impl EditorApp {
                 self.status = validation_summary(&self.validation_issues);
             }
             MenuCommand::SetLayer(layer) => self.active_layer = layer,
-            MenuCommand::SetTool(tool) => {
-                self.tool = tool;
-                if tool == ToolKind::Collision {
-                    self.active_layer = LayerKind::Collision;
-                } else if tool == ToolKind::Zone {
-                    self.active_layer = LayerKind::Zones;
-                }
-            }
+            MenuCommand::SetTool(tool) => self.set_tool(tool),
             MenuCommand::AddAsset => self.open_add_asset_dialog(),
             MenuCommand::EditSelectedAsset => {
                 if let Some(asset_id) = self.selected_asset.clone() {
@@ -1380,7 +1460,16 @@ impl EditorApp {
             ui.menu_button("图层", |ui| {
                 for layer in LayerKind::ALL {
                     ui.horizontal(|ui| {
-                        ui.selectable_value(&mut self.active_layer, layer, layer.zh_label());
+                        if ui
+                            .selectable_value(
+                                &mut self.active_layer,
+                                layer,
+                                format!("{} ({})", layer.zh_label(), layer_shortcut(layer)),
+                            )
+                            .clicked()
+                        {
+                            ui.close();
+                        }
                         let state = self.layer_states.entry(layer).or_default();
                         ui.checkbox(&mut state.visible, "显示");
                         ui.checkbox(&mut state.locked, "锁定");
@@ -1391,14 +1480,10 @@ impl EditorApp {
             ui.menu_button("工具", |ui| {
                 for tool in ToolKind::ALL {
                     if ui
-                        .selectable_value(&mut self.tool, tool, tool.label())
+                        .selectable_label(self.tool == tool, tool.menu_label())
                         .clicked()
                     {
-                        if tool == ToolKind::Collision {
-                            self.active_layer = LayerKind::Collision;
-                        } else if tool == ToolKind::Zone {
-                            self.active_layer = LayerKind::Zones;
-                        }
+                        self.set_tool(tool);
                         ui.close();
                     }
                 }
@@ -1456,10 +1541,12 @@ impl EditorApp {
             });
 
             ui.menu_button("帮助", |ui| {
-                ui.label("Ctrl+S 保存");
-                ui.label("Ctrl+Z 撤销 / Ctrl+Y 重做");
-                ui.label("1-6 切换常用工具");
+                ui.label("Cmd/Ctrl+S 保存");
+                ui.label("Cmd/Ctrl+Z 撤销 / Cmd/Ctrl+Shift+Z 重做");
+                ui.label("V/B/G/R/E/I/C/A/H/Z 切换工具");
+                ui.label("1-6 切换图层");
                 ui.label("空格拖拽平移，滚轮缩放");
+                ui.label("鼠标中键拖拽平移");
             });
         });
     }
@@ -1471,12 +1558,7 @@ impl EditorApp {
             toolbar_label(ui, "工具");
             for tool in ToolKind::ALL {
                 if toolbar_tool_button(ui, self.tool == tool, tool).clicked() {
-                    self.tool = tool;
-                    if tool == ToolKind::Collision {
-                        self.active_layer = LayerKind::Collision;
-                    } else if tool == ToolKind::Zone {
-                        self.active_layer = LayerKind::Zones;
-                    }
+                    self.set_tool(tool);
                 }
             }
 
@@ -2639,9 +2721,11 @@ impl EditorApp {
 
     fn apply_canvas_input(&mut self, response: &egui::Response, ctx: &EguiContext) {
         let space_down = ctx.input(|input| input.key_down(Key::Space));
-        let panning = self.tool == ToolKind::Pan || space_down;
+        let middle_pan = ctx.input(|input| input.pointer.button_down(egui::PointerButton::Middle))
+            && response.is_pointer_button_down_on();
+        let panning = self.tool == ToolKind::Pan || space_down || middle_pan;
 
-        if panning && response.dragged() {
+        if panning && (response.dragged() || middle_pan) {
             let pointer_delta = ctx.input(|input| input.pointer.delta());
             self.pan += pointer_delta;
         }
@@ -2662,7 +2746,17 @@ impl EditorApp {
         ctx: &EguiContext,
     ) {
         let space_down = ctx.input(|input| input.key_down(Key::Space));
-        if matches!(self.tool, ToolKind::Select | ToolKind::Pan | ToolKind::Zoom) || space_down {
+        let middle_button_active = ctx.input(|input| {
+            input.pointer.button_down(egui::PointerButton::Middle)
+                || input.pointer.button_released(egui::PointerButton::Middle)
+        });
+        if matches!(self.tool, ToolKind::Select | ToolKind::Pan | ToolKind::Zoom)
+            || space_down
+            || middle_button_active
+            || response.drag_started_by(egui::PointerButton::Middle)
+            || response.dragged_by(egui::PointerButton::Middle)
+            || response.clicked_by(egui::PointerButton::Middle)
+        {
             return;
         }
 
@@ -2831,7 +2925,17 @@ impl EditorApp {
         ctx: &EguiContext,
     ) {
         let space_down = ctx.input(|input| input.key_down(Key::Space));
-        if self.tool != ToolKind::Select || space_down {
+        let middle_button_active = ctx.input(|input| {
+            input.pointer.button_down(egui::PointerButton::Middle)
+                || input.pointer.button_released(egui::PointerButton::Middle)
+        });
+        if self.tool != ToolKind::Select
+            || space_down
+            || middle_button_active
+            || response.drag_started_by(egui::PointerButton::Middle)
+            || response.dragged_by(egui::PointerButton::Middle)
+            || response.clicked_by(egui::PointerButton::Middle)
+        {
             return;
         }
 
@@ -5013,6 +5117,17 @@ fn snap_label(snap: SnapMode) -> &'static str {
         SnapMode::Grid => "网格",
         SnapMode::HalfGrid => "半格",
         SnapMode::Free => "自由",
+    }
+}
+
+fn layer_shortcut(layer: LayerKind) -> &'static str {
+    match layer {
+        LayerKind::Ground => "1",
+        LayerKind::Decals => "2",
+        LayerKind::Objects => "3",
+        LayerKind::Entities => "4",
+        LayerKind::Collision => "5",
+        LayerKind::Zones => "6",
     }
 }
 

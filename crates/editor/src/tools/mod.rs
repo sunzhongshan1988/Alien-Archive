@@ -40,4 +40,23 @@ impl ToolKind {
             Self::Zoom => "缩放",
         }
     }
+
+    pub(crate) fn shortcut(self) -> &'static str {
+        match self {
+            Self::Select => "V",
+            Self::Brush => "B",
+            Self::Bucket => "G",
+            Self::Rectangle => "R",
+            Self::Erase => "E",
+            Self::Eyedropper => "I",
+            Self::Collision => "C",
+            Self::Zone => "A",
+            Self::Pan => "H",
+            Self::Zoom => "Z",
+        }
+    }
+
+    pub(crate) fn menu_label(self) -> String {
+        format!("{} ({})", self.label(), self.shortcut())
+    }
 }

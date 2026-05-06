@@ -53,7 +53,7 @@ pub(crate) fn toolbar_tool_button(
             visuals.fg_stroke.color
         },
     );
-    response.on_hover_text(tool.label())
+    response.on_hover_text(tool.menu_label())
 }
 
 pub(crate) fn toolbar_command_button(ui: &mut egui::Ui, text: &str, width: f32) -> egui::Response {
