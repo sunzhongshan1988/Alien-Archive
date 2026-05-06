@@ -1,5 +1,6 @@
 mod player;
 mod scenes;
+mod ui;
 mod world;
 
 use anyhow::Result;

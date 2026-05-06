@@ -1,4 +1,5 @@
 mod facility_scene;
+mod inventory_scene;
 mod main_menu;
 mod overworld_scene;
 mod pause_scene;
@@ -7,6 +8,7 @@ use anyhow::Result;
 use runtime::{Camera2d, InputState, Renderer, SceneCommand};
 
 use facility_scene::FacilityScene;
+use inventory_scene::InventoryScene;
 use main_menu::MainMenuScene;
 use overworld_scene::OverworldScene;
 use pause_scene::PauseScene;
@@ -18,6 +20,7 @@ pub enum SceneId {
     MainMenu,
     Overworld,
     Facility,
+    Inventory,
     Codex,
     Pause,
 }
@@ -161,6 +164,7 @@ fn create_scene(scene_id: SceneId, ctx: &GameContext) -> Result<Box<dyn Scene>> 
         SceneId::Facility => Ok(Box::new(FacilityScene::new(
             ctx.facility_spawn_id.as_deref(),
         )?)),
+        SceneId::Inventory => Ok(Box::new(InventoryScene::new())),
         SceneId::Pause | SceneId::Codex => Ok(Box::new(PauseScene::new())),
     }
 }

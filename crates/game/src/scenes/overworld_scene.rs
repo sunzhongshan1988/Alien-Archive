@@ -61,6 +61,10 @@ impl Scene for OverworldScene {
             return Ok(SceneCommand::Push(SceneId::Pause));
         }
 
+        if input.just_pressed(Button::Inventory) {
+            return Ok(SceneCommand::Push(SceneId::Inventory));
+        }
+
         if input.just_pressed(Button::Interact)
             && self.player_overlaps(MapEntityKind::FacilityEntrance)
         {

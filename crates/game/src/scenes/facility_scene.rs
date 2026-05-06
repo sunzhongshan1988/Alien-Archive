@@ -88,6 +88,10 @@ impl Scene for FacilityScene {
             return Ok(SceneCommand::Push(SceneId::Pause));
         }
 
+        if input.just_pressed(Button::Inventory) {
+            return Ok(SceneCommand::Push(SceneId::Inventory));
+        }
+
         if input.just_pressed(Button::Interact) && self.player_overlaps(MapEntityKind::FacilityExit)
         {
             ctx.overworld_spawn_id = Some(OVERWORLD_RETURN_SPAWN.to_owned());
