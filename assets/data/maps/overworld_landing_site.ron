@@ -734,6 +734,34 @@
                 w: 4,
                 h: 4,
             ),
+            /*[104]*/ (
+                asset: "ow_tile_scorched_sand",
+                x: 0,
+                y: 32,
+                w: 4,
+                h: 4,
+            ),
+            /*[105]*/ (
+                asset: "ow_tile_scorched_sand",
+                x: 4,
+                y: 32,
+                w: 4,
+                h: 4,
+            ),
+            /*[106]*/ (
+                asset: "ow_tile_scorched_sand",
+                x: 0,
+                y: 36,
+                w: 4,
+                h: 4,
+            ),
+            /*[107]*/ (
+                asset: "ow_tile_scorched_sand",
+                x: 4,
+                y: 36,
+                w: 4,
+                h: 4,
+            ),
         ],
         decals: [
             /*[0]*/ (

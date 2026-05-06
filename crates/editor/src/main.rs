@@ -255,6 +255,8 @@ struct EditorApp {
     show_collision: bool,
     show_entity_bounds: bool,
     show_zones: bool,
+    show_left_sidebar: bool,
+    show_right_sidebar: bool,
     show_new_map_dialog: bool,
     show_validation_panel: bool,
     new_map_draft: NewMapDraft,
@@ -333,6 +335,8 @@ impl EditorApp {
             show_collision: true,
             show_entity_bounds: false,
             show_zones: true,
+            show_left_sidebar: true,
+            show_right_sidebar: true,
             show_new_map_dialog: false,
             show_validation_panel: false,
             new_map_draft: NewMapDraft::default(),
@@ -1341,6 +1345,9 @@ impl EditorApp {
             });
 
             ui.menu_button("视图", |ui| {
+                ui.checkbox(&mut self.show_left_sidebar, "左侧栏");
+                ui.checkbox(&mut self.show_right_sidebar, "右侧栏");
+                ui.separator();
                 ui.checkbox(&mut self.show_grid, "网格");
                 ui.checkbox(&mut self.show_collision, "碰撞");
                 ui.checkbox(&mut self.show_entity_bounds, "实体边界");
@@ -1569,7 +1576,14 @@ impl EditorApp {
     }
 
     fn draw_asset_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("资源库");
+        ui.horizontal(|ui| {
+            ui.heading("资源库");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("<").on_hover_text("收起左侧栏").clicked() {
+                    self.show_left_sidebar = false;
+                }
+            });
+        });
         ui.small(format!("{} 个 metadata 素材", self.registry.assets().len()));
         ui.add(
             egui::TextEdit::singleline(&mut self.asset_search)
@@ -1757,7 +1771,14 @@ impl EditorApp {
     }
 
     fn draw_inspector_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Inspector");
+        ui.horizontal(|ui| {
+            ui.heading("Inspector");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button(">").on_hover_text("收起右侧栏").clicked() {
+                    self.show_right_sidebar = false;
+                }
+            });
+        });
         ui.separator();
 
         let selections = self.current_selection_list();
@@ -4825,22 +4846,50 @@ impl eframe::App for EditorApp {
 
         egui::Panel::top("top_bar").show_inside(ui, |ui| self.draw_top_bar(ui));
         egui::Panel::bottom("status_bar").show_inside(ui, |ui| self.draw_status_bar(ui));
-        egui::Panel::left("asset_panel")
-            .resizable(true)
-            .default_size(280.0)
-            .show_inside(ui, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| self.draw_asset_panel(ui));
-            });
-        egui::Panel::left("layer_panel")
-            .resizable(true)
-            .default_size(180.0)
-            .show_inside(ui, |ui| self.draw_layer_panel(ui));
-        egui::Panel::right("inspector_panel")
-            .resizable(true)
-            .default_size(300.0)
-            .show_inside(ui, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| self.draw_inspector_panel(ui));
-            });
+        if self.show_left_sidebar {
+            egui::Panel::left("asset_panel")
+                .resizable(true)
+                .default_size(280.0)
+                .show_inside(ui, |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| self.draw_asset_panel(ui));
+                });
+            egui::Panel::left("layer_panel")
+                .resizable(true)
+                .default_size(180.0)
+                .show_inside(ui, |ui| self.draw_layer_panel(ui));
+        } else {
+            egui::Panel::left("left_sidebar_collapsed")
+                .resizable(false)
+                .default_size(34.0)
+                .show_inside(ui, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(6.0);
+                        if ui.button(">").on_hover_text("展开左侧栏").clicked() {
+                            self.show_left_sidebar = true;
+                        }
+                    });
+                });
+        }
+        if self.show_right_sidebar {
+            egui::Panel::right("inspector_panel")
+                .resizable(true)
+                .default_size(300.0)
+                .show_inside(ui, |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| self.draw_inspector_panel(ui));
+                });
+        } else {
+            egui::Panel::right("right_sidebar_collapsed")
+                .resizable(false)
+                .default_size(34.0)
+                .show_inside(ui, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(6.0);
+                        if ui.button("<").on_hover_text("展开右侧栏").clicked() {
+                            self.show_right_sidebar = true;
+                        }
+                    });
+                });
+        }
         egui::CentralPanel::default().show_inside(ui, |ui| self.draw_canvas(ui, &ctx));
         self.draw_dialogs(&ctx);
     }
