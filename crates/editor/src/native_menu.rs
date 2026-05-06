@@ -88,11 +88,7 @@ fn build_menu() -> muda::Result<muda::Menu> {
         true,
         &[
             &menu_item("file.new", "新建地图", Some("CmdOrCtrl+n")),
-            &menu_item(
-                "file.open_selected",
-                "打开当前选择地图",
-                Some("CmdOrCtrl+o"),
-            ),
+            &menu_item("file.open_dialog", "打开...", Some("CmdOrCtrl+o")),
             &menu_item("file.refresh_maps", "刷新地图列表", None),
             &PredefinedMenuItem::separator(),
             &menu_item("file.save", "保存", Some("CmdOrCtrl+s")),
@@ -214,6 +210,7 @@ fn menu_item(id: &str, text: &str, accelerator: Option<&str>) -> muda::MenuItem 
 fn command_for_id(id: &str) -> Option<MenuCommand> {
     Some(match id {
         "file.new" => MenuCommand::NewMap,
+        "file.open_dialog" => MenuCommand::OpenMapDialog,
         "file.open_selected" => MenuCommand::OpenSelectedMap,
         "file.refresh_maps" => MenuCommand::RefreshMaps,
         "file.save" => MenuCommand::Save,

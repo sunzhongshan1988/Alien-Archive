@@ -1195,7 +1195,888 @@
             ),
         ],
         zones: [],
-        collision: [],
+        collision: [
+            /*[0]*/ (
+                x: 0,
+                y: 3,
+                solid: true,
+            ),
+            /*[1]*/ (
+                x: 1,
+                y: 3,
+                solid: true,
+            ),
+            /*[2]*/ (
+                x: 2,
+                y: 3,
+                solid: true,
+            ),
+            /*[3]*/ (
+                x: 3,
+                y: 3,
+                solid: true,
+            ),
+            /*[4]*/ (
+                x: 4,
+                y: 3,
+                solid: true,
+            ),
+            /*[5]*/ (
+                x: 5,
+                y: 3,
+                solid: true,
+            ),
+            /*[6]*/ (
+                x: 6,
+                y: 3,
+                solid: true,
+            ),
+            /*[7]*/ (
+                x: 7,
+                y: 3,
+                solid: true,
+            ),
+            /*[8]*/ (
+                x: 8,
+                y: 3,
+                solid: true,
+            ),
+            /*[9]*/ (
+                x: 9,
+                y: 3,
+                solid: true,
+            ),
+            /*[10]*/ (
+                x: 10,
+                y: 3,
+                solid: true,
+            ),
+            /*[11]*/ (
+                x: 11,
+                y: 3,
+                solid: true,
+            ),
+            /*[12]*/ (
+                x: 12,
+                y: 3,
+                solid: true,
+            ),
+            /*[13]*/ (
+                x: 13,
+                y: 3,
+                solid: true,
+            ),
+            /*[14]*/ (
+                x: 14,
+                y: 3,
+                solid: true,
+            ),
+            /*[15]*/ (
+                x: 15,
+                y: 3,
+                solid: true,
+            ),
+            /*[16]*/ (
+                x: 16,
+                y: 3,
+                solid: true,
+            ),
+            /*[17]*/ (
+                x: 17,
+                y: 3,
+                solid: true,
+            ),
+            /*[18]*/ (
+                x: 18,
+                y: 3,
+                solid: true,
+            ),
+            /*[19]*/ (
+                x: 19,
+                y: 3,
+                solid: true,
+            ),
+            /*[20]*/ (
+                x: 20,
+                y: 3,
+                solid: true,
+            ),
+            /*[21]*/ (
+                x: 21,
+                y: 3,
+                solid: true,
+            ),
+            /*[22]*/ (
+                x: 22,
+                y: 3,
+                solid: true,
+            ),
+            /*[23]*/ (
+                x: 23,
+                y: 3,
+                solid: true,
+            ),
+            /*[24]*/ (
+                x: 24,
+                y: 3,
+                solid: true,
+            ),
+            /*[25]*/ (
+                x: 25,
+                y: 3,
+                solid: true,
+            ),
+            /*[26]*/ (
+                x: 26,
+                y: 3,
+                solid: true,
+            ),
+            /*[27]*/ (
+                x: 27,
+                y: 3,
+                solid: true,
+            ),
+            /*[28]*/ (
+                x: 32,
+                y: 3,
+                solid: true,
+            ),
+            /*[29]*/ (
+                x: 33,
+                y: 3,
+                solid: true,
+            ),
+            /*[30]*/ (
+                x: 34,
+                y: 3,
+                solid: true,
+            ),
+            /*[31]*/ (
+                x: 36,
+                y: 3,
+                solid: true,
+            ),
+            /*[32]*/ (
+                x: 37,
+                y: 3,
+                solid: true,
+            ),
+            /*[33]*/ (
+                x: 38,
+                y: 3,
+                solid: true,
+            ),
+            /*[34]*/ (
+                x: 39,
+                y: 3,
+                solid: true,
+            ),
+            /*[35]*/ (
+                x: 35,
+                y: 3,
+                solid: true,
+            ),
+            /*[36]*/ (
+                x: 40,
+                y: 0,
+                solid: true,
+            ),
+            /*[37]*/ (
+                x: 41,
+                y: 0,
+                solid: true,
+            ),
+            /*[38]*/ (
+                x: 42,
+                y: 0,
+                solid: true,
+            ),
+            /*[39]*/ (
+                x: 43,
+                y: 0,
+                solid: true,
+            ),
+            /*[40]*/ (
+                x: 44,
+                y: 0,
+                solid: true,
+            ),
+            /*[41]*/ (
+                x: 45,
+                y: 0,
+                solid: true,
+            ),
+            /*[42]*/ (
+                x: 46,
+                y: 0,
+                solid: true,
+            ),
+            /*[43]*/ (
+                x: 47,
+                y: 0,
+                solid: true,
+            ),
+            /*[44]*/ (
+                x: 48,
+                y: 0,
+                solid: true,
+            ),
+            /*[45]*/ (
+                x: 49,
+                y: 0,
+                solid: true,
+            ),
+            /*[46]*/ (
+                x: 50,
+                y: 0,
+                solid: true,
+            ),
+            /*[47]*/ (
+                x: 51,
+                y: 0,
+                solid: true,
+            ),
+            /*[48]*/ (
+                x: 51,
+                y: 1,
+                solid: true,
+            ),
+            /*[49]*/ (
+                x: 51,
+                y: 2,
+                solid: true,
+            ),
+            /*[50]*/ (
+                x: 51,
+                y: 3,
+                solid: true,
+            ),
+            /*[51]*/ (
+                x: 51,
+                y: 4,
+                solid: true,
+            ),
+            /*[52]*/ (
+                x: 51,
+                y: 5,
+                solid: true,
+            ),
+            /*[53]*/ (
+                x: 51,
+                y: 6,
+                solid: true,
+            ),
+            /*[54]*/ (
+                x: 51,
+                y: 7,
+                solid: true,
+            ),
+            /*[55]*/ (
+                x: 51,
+                y: 9,
+                solid: true,
+            ),
+            /*[56]*/ (
+                x: 51,
+                y: 10,
+                solid: true,
+            ),
+            /*[57]*/ (
+                x: 51,
+                y: 11,
+                solid: true,
+            ),
+            /*[58]*/ (
+                x: 51,
+                y: 12,
+                solid: true,
+            ),
+            /*[59]*/ (
+                x: 51,
+                y: 13,
+                solid: true,
+            ),
+            /*[60]*/ (
+                x: 51,
+                y: 14,
+                solid: true,
+            ),
+            /*[61]*/ (
+                x: 51,
+                y: 15,
+                solid: true,
+            ),
+            /*[62]*/ (
+                x: 51,
+                y: 16,
+                solid: true,
+            ),
+            /*[63]*/ (
+                x: 51,
+                y: 18,
+                solid: true,
+            ),
+            /*[64]*/ (
+                x: 51,
+                y: 19,
+                solid: true,
+            ),
+            /*[65]*/ (
+                x: 51,
+                y: 20,
+                solid: true,
+            ),
+            /*[66]*/ (
+                x: 51,
+                y: 21,
+                solid: true,
+            ),
+            /*[67]*/ (
+                x: 51,
+                y: 17,
+                solid: true,
+            ),
+            /*[68]*/ (
+                x: 51,
+                y: 8,
+                solid: true,
+            ),
+            /*[69]*/ (
+                x: 51,
+                y: 24,
+                solid: true,
+            ),
+            /*[70]*/ (
+                x: 51,
+                y: 23,
+                solid: true,
+            ),
+            /*[71]*/ (
+                x: 51,
+                y: 22,
+                solid: true,
+            ),
+            /*[72]*/ (
+                x: 51,
+                y: 26,
+                solid: true,
+            ),
+            /*[73]*/ (
+                x: 51,
+                y: 25,
+                solid: true,
+            ),
+            /*[74]*/ (
+                x: 51,
+                y: 27,
+                solid: true,
+            ),
+            /*[75]*/ (
+                x: 51,
+                y: 28,
+                solid: true,
+            ),
+            /*[76]*/ (
+                x: 51,
+                y: 29,
+                solid: true,
+            ),
+            /*[77]*/ (
+                x: 51,
+                y: 30,
+                solid: true,
+            ),
+            /*[78]*/ (
+                x: 51,
+                y: 31,
+                solid: true,
+            ),
+            /*[79]*/ (
+                x: 50,
+                y: 31,
+                solid: true,
+            ),
+            /*[80]*/ (
+                x: 49,
+                y: 31,
+                solid: true,
+            ),
+            /*[81]*/ (
+                x: 48,
+                y: 31,
+                solid: true,
+            ),
+            /*[82]*/ (
+                x: 47,
+                y: 31,
+                solid: true,
+            ),
+            /*[83]*/ (
+                x: 46,
+                y: 31,
+                solid: true,
+            ),
+            /*[84]*/ (
+                x: 45,
+                y: 31,
+                solid: true,
+            ),
+            /*[85]*/ (
+                x: 44,
+                y: 31,
+                solid: true,
+            ),
+            /*[86]*/ (
+                x: 43,
+                y: 31,
+                solid: true,
+            ),
+            /*[87]*/ (
+                x: 42,
+                y: 31,
+                solid: true,
+            ),
+            /*[88]*/ (
+                x: 41,
+                y: 31,
+                solid: true,
+            ),
+            /*[89]*/ (
+                x: 40,
+                y: 31,
+                solid: true,
+            ),
+            /*[90]*/ (
+                x: 39,
+                y: 31,
+                solid: true,
+            ),
+            /*[91]*/ (
+                x: 38,
+                y: 31,
+                solid: true,
+            ),
+            /*[92]*/ (
+                x: 37,
+                y: 31,
+                solid: true,
+            ),
+            /*[93]*/ (
+                x: 36,
+                y: 31,
+                solid: true,
+            ),
+            /*[94]*/ (
+                x: 35,
+                y: 31,
+                solid: true,
+            ),
+            /*[95]*/ (
+                x: 33,
+                y: 31,
+                solid: true,
+            ),
+            /*[96]*/ (
+                x: 32,
+                y: 31,
+                solid: true,
+            ),
+            /*[97]*/ (
+                x: 34,
+                y: 31,
+                solid: true,
+            ),
+            /*[98]*/ (
+                x: 15,
+                y: 36,
+                solid: true,
+            ),
+            /*[99]*/ (
+                x: 14,
+                y: 36,
+                solid: true,
+            ),
+            /*[100]*/ (
+                x: 13,
+                y: 36,
+                solid: true,
+            ),
+            /*[101]*/ (
+                x: 12,
+                y: 36,
+                solid: true,
+            ),
+            /*[102]*/ (
+                x: 11,
+                y: 36,
+                solid: true,
+            ),
+            /*[103]*/ (
+                x: 10,
+                y: 36,
+                solid: true,
+            ),
+            /*[104]*/ (
+                x: 9,
+                y: 36,
+                solid: true,
+            ),
+            /*[105]*/ (
+                x: 8,
+                y: 36,
+                solid: true,
+            ),
+            /*[106]*/ (
+                x: 7,
+                y: 36,
+                solid: true,
+            ),
+            /*[107]*/ (
+                x: 6,
+                y: 36,
+                solid: true,
+            ),
+            /*[108]*/ (
+                x: 5,
+                y: 36,
+                solid: true,
+            ),
+            /*[109]*/ (
+                x: 4,
+                y: 36,
+                solid: true,
+            ),
+            /*[110]*/ (
+                x: 3,
+                y: 36,
+                solid: true,
+            ),
+            /*[111]*/ (
+                x: 0,
+                y: 36,
+                solid: true,
+            ),
+            /*[112]*/ (
+                x: 1,
+                y: 36,
+                solid: true,
+            ),
+            /*[113]*/ (
+                x: 2,
+                y: 36,
+                solid: true,
+            ),
+            /*[114]*/ (
+                x: 15,
+                y: 37,
+                solid: true,
+            ),
+            /*[115]*/ (
+                x: 15,
+                y: 38,
+                solid: true,
+            ),
+            /*[116]*/ (
+                x: 15,
+                y: 39,
+                solid: true,
+            ),
+            /*[117]*/ (
+                x: 16,
+                y: 39,
+                solid: true,
+            ),
+            /*[118]*/ (
+                x: 17,
+                y: 39,
+                solid: true,
+            ),
+            /*[119]*/ (
+                x: 18,
+                y: 39,
+                solid: true,
+            ),
+            /*[120]*/ (
+                x: 19,
+                y: 39,
+                solid: true,
+            ),
+            /*[121]*/ (
+                x: 20,
+                y: 39,
+                solid: true,
+            ),
+            /*[122]*/ (
+                x: 21,
+                y: 39,
+                solid: true,
+            ),
+            /*[123]*/ (
+                x: 22,
+                y: 39,
+                solid: true,
+            ),
+            /*[124]*/ (
+                x: 23,
+                y: 39,
+                solid: true,
+            ),
+            /*[125]*/ (
+                x: 24,
+                y: 39,
+                solid: true,
+            ),
+            /*[126]*/ (
+                x: 25,
+                y: 39,
+                solid: true,
+            ),
+            /*[127]*/ (
+                x: 26,
+                y: 39,
+                solid: true,
+            ),
+            /*[128]*/ (
+                x: 27,
+                y: 39,
+                solid: true,
+            ),
+            /*[129]*/ (
+                x: 27,
+                y: 38,
+                solid: true,
+            ),
+            /*[130]*/ (
+                x: 27,
+                y: 37,
+                solid: true,
+            ),
+            /*[131]*/ (
+                x: 27,
+                y: 36,
+                solid: true,
+            ),
+            /*[132]*/ (
+                x: 27,
+                y: 35,
+                solid: true,
+            ),
+            /*[133]*/ (
+                x: 27,
+                y: 34,
+                solid: true,
+            ),
+            /*[134]*/ (
+                x: 28,
+                y: 32,
+                solid: true,
+            ),
+            /*[135]*/ (
+                x: 27,
+                y: 32,
+                solid: true,
+            ),
+            /*[136]*/ (
+                x: 27,
+                y: 33,
+                solid: true,
+            ),
+            /*[137]*/ (
+                x: 29,
+                y: 32,
+                solid: true,
+            ),
+            /*[138]*/ (
+                x: 30,
+                y: 32,
+                solid: true,
+            ),
+            /*[139]*/ (
+                x: 31,
+                y: 32,
+                solid: true,
+            ),
+            /*[140]*/ (
+                x: 32,
+                y: 32,
+                solid: true,
+            ),
+            /*[141]*/ (
+                x: 0,
+                y: 35,
+                solid: true,
+            ),
+            /*[142]*/ (
+                x: 0,
+                y: 34,
+                solid: true,
+            ),
+            /*[143]*/ (
+                x: 0,
+                y: 33,
+                solid: true,
+            ),
+            /*[144]*/ (
+                x: 0,
+                y: 32,
+                solid: true,
+            ),
+            /*[145]*/ (
+                x: 0,
+                y: 31,
+                solid: true,
+            ),
+            /*[146]*/ (
+                x: 0,
+                y: 30,
+                solid: true,
+            ),
+            /*[147]*/ (
+                x: 0,
+                y: 29,
+                solid: true,
+            ),
+            /*[148]*/ (
+                x: 0,
+                y: 28,
+                solid: true,
+            ),
+            /*[149]*/ (
+                x: 0,
+                y: 27,
+                solid: true,
+            ),
+            /*[150]*/ (
+                x: 0,
+                y: 26,
+                solid: true,
+            ),
+            /*[151]*/ (
+                x: 0,
+                y: 25,
+                solid: true,
+            ),
+            /*[152]*/ (
+                x: 0,
+                y: 24,
+                solid: true,
+            ),
+            /*[153]*/ (
+                x: 0,
+                y: 23,
+                solid: true,
+            ),
+            /*[154]*/ (
+                x: 0,
+                y: 22,
+                solid: true,
+            ),
+            /*[155]*/ (
+                x: 0,
+                y: 21,
+                solid: true,
+            ),
+            /*[156]*/ (
+                x: 0,
+                y: 20,
+                solid: true,
+            ),
+            /*[157]*/ (
+                x: 0,
+                y: 19,
+                solid: true,
+            ),
+            /*[158]*/ (
+                x: 0,
+                y: 18,
+                solid: true,
+            ),
+            /*[159]*/ (
+                x: 0,
+                y: 17,
+                solid: true,
+            ),
+            /*[160]*/ (
+                x: 0,
+                y: 16,
+                solid: true,
+            ),
+            /*[161]*/ (
+                x: 0,
+                y: 15,
+                solid: true,
+            ),
+            /*[162]*/ (
+                x: 0,
+                y: 14,
+                solid: true,
+            ),
+            /*[163]*/ (
+                x: 0,
+                y: 13,
+                solid: true,
+            ),
+            /*[164]*/ (
+                x: 0,
+                y: 12,
+                solid: true,
+            ),
+            /*[165]*/ (
+                x: 0,
+                y: 11,
+                solid: true,
+            ),
+            /*[166]*/ (
+                x: 0,
+                y: 10,
+                solid: true,
+            ),
+            /*[167]*/ (
+                x: 0,
+                y: 9,
+                solid: true,
+            ),
+            /*[168]*/ (
+                x: 0,
+                y: 8,
+                solid: true,
+            ),
+            /*[169]*/ (
+                x: 0,
+                y: 5,
+                solid: true,
+            ),
+            /*[170]*/ (
+                x: 0,
+                y: 4,
+                solid: true,
+            ),
+            /*[171]*/ (
+                x: 0,
+                y: 6,
+                solid: true,
+            ),
+            /*[172]*/ (
+                x: 0,
+                y: 7,
+                solid: true,
+            ),
+            /*[173]*/ (
+                x: 40,
+                y: 1,
+                solid: true,
+            ),
+            /*[174]*/ (
+                x: 40,
+                y: 2,
+                solid: true,
+            ),
+            /*[175]*/ (
+                x: 40,
+                y: 3,
+                solid: true,
+            ),
+        ],
     ),
     spawns: [
         /*[0]*/ (

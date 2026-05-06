@@ -10,7 +10,7 @@ use super::{GameContext, RenderContext, Scene, SceneId};
 
 const OVERWORLD_MAP: &str = "assets/data/maps/overworld_landing_site.ron";
 const FACILITY_ENTRY_SPAWN: &str = "entry";
-const OVERWORLD_CAMERA_ZOOM: f32 = 2.0;
+const OVERWORLD_CAMERA_ZOOM: f32 = 1.5;
 
 pub struct OverworldScene {
     player: Player,
@@ -68,7 +68,8 @@ impl Scene for OverworldScene {
             return Ok(SceneCommand::Switch(SceneId::Facility));
         }
 
-        self.player.update(dt, input);
+        self.player
+            .update_topdown(dt, input, self.world.solid_rects());
         self.camera.position = self.player.position;
 
         Ok(SceneCommand::None)

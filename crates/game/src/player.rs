@@ -1,11 +1,12 @@
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use runtime::{Color, InputState, Rect, Renderer, Vec2};
+use runtime::{Color, InputState, Rect, Renderer, Vec2, collision::rects_overlap};
 
 const PLAYER_SPEED: f32 = 260.0;
-const PLAYER_SIZE: Vec2 = Vec2::new(38.0, 54.0);
-const PLAYER_SPRITE_SIZE: Vec2 = Vec2::new(96.0, 96.0);
+const PLAYER_SIZE: Vec2 = Vec2::new(32.0, 46.0);
+const PLAYER_TOPDOWN_COLLISION_SIZE: Vec2 = Vec2::new(24.0, 30.0);
+const PLAYER_SPRITE_SIZE: Vec2 = Vec2::new(72.0, 72.0);
 const TOPDOWN_ANIMATION_FPS: f32 = 6.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -81,11 +82,13 @@ impl Player {
         Ok(())
     }
 
-    pub fn update(&mut self, dt: f32, input: &InputState) {
-        let movement = input.movement();
-        self.position += movement * PLAYER_SPEED * dt;
-        self.set_topdown_animation(animation_for_movement(movement));
-        self.tick_animation(dt);
+    pub fn update_topdown(
+        &mut self,
+        dt: f32,
+        input: &InputState,
+        solid_rects: impl IntoIterator<Item = Rect>,
+    ) {
+        self.update_topdown_movement(dt, input.movement(), solid_rects);
     }
 
     pub fn tick_animation(&mut self, dt: f32) {
@@ -127,6 +130,51 @@ impl Player {
             self.topdown_animation = animation;
             self.animation_time = 0.0;
         }
+    }
+
+    fn update_topdown_movement(
+        &mut self,
+        dt: f32,
+        movement: Vec2,
+        solid_rects: impl IntoIterator<Item = Rect>,
+    ) {
+        let solid_rects = solid_rects.into_iter().collect::<Vec<_>>();
+        let movement = movement.normalized();
+        let delta = movement * PLAYER_SPEED * dt;
+
+        self.move_topdown_axis(Vec2::new(delta.x, 0.0), &solid_rects);
+        self.move_topdown_axis(Vec2::new(0.0, delta.y), &solid_rects);
+        self.set_topdown_animation(animation_for_movement(movement));
+        self.tick_animation(dt);
+    }
+
+    fn move_topdown_axis(&mut self, delta: Vec2, solid_rects: &[Rect]) {
+        if delta.length_squared() <= f32::EPSILON {
+            return;
+        }
+
+        self.position += delta;
+
+        for solid in solid_rects {
+            let player_rect = self.topdown_collision_rect();
+            if !rects_overlap(player_rect, *solid) {
+                continue;
+            }
+
+            if delta.x > 0.0 {
+                self.position.x = solid.origin.x - player_rect.size.x * 0.5;
+            } else if delta.x < 0.0 {
+                self.position.x = solid.right() + player_rect.size.x * 0.5;
+            } else if delta.y > 0.0 {
+                self.position.y = solid.origin.y - player_rect.size.y * 0.5;
+            } else if delta.y < 0.0 {
+                self.position.y = solid.bottom() + player_rect.size.y * 0.5;
+            }
+        }
+    }
+
+    fn topdown_collision_rect(&self) -> Rect {
+        centered_rect(self.position, PLAYER_TOPDOWN_COLLISION_SIZE)
     }
 }
 
@@ -250,5 +298,32 @@ mod tests {
             animation_for_movement(Vec2::ZERO),
             TopdownAnimation::IdleDown
         );
+    }
+
+    #[test]
+    fn topdown_collision_blocks_horizontal_motion() {
+        let solid = Rect::new(Vec2::new(20.0, -16.0), Vec2::new(32.0, 32.0));
+        let mut player = Player::new(Vec2::ZERO);
+
+        player.update_topdown_movement(0.2, Vec2::new(1.0, 0.0), [solid]);
+
+        assert_eq!(
+            player.position,
+            Vec2::new(solid.origin.x - PLAYER_TOPDOWN_COLLISION_SIZE.x * 0.5, 0.0)
+        );
+    }
+
+    #[test]
+    fn topdown_collision_slides_along_free_axis() {
+        let solid = Rect::new(Vec2::new(20.0, -16.0), Vec2::new(32.0, 32.0));
+        let mut player = Player::new(Vec2::ZERO);
+
+        player.update_topdown_movement(0.2, Vec2::new(1.0, 1.0), [solid]);
+
+        assert_eq!(
+            player.position.x,
+            solid.origin.x - PLAYER_TOPDOWN_COLLISION_SIZE.x * 0.5
+        );
+        assert!(player.position.y > 0.0);
     }
 }

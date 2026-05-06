@@ -47,6 +47,7 @@ use util::{geometry::*, ids::*, sanitize::*};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MenuCommand {
     NewMap,
+    OpenMapDialog,
     OpenSelectedMap,
     RefreshMaps,
     Save,
@@ -432,6 +433,9 @@ impl EditorApp {
     fn handle_shortcuts(&mut self, ctx: &EguiContext) {
         let wants_keyboard_input = ctx.egui_wants_keyboard_input();
         ctx.input_mut(|input| {
+            if input.consume_key(Modifiers::COMMAND, Key::O) {
+                self.open_map_dialog();
+            }
             if input.consume_key(Modifiers::COMMAND, Key::S) {
                 self.save_map();
             }
@@ -537,6 +541,7 @@ impl EditorApp {
                 self.new_map_draft = NewMapDraft::default();
                 self.show_new_map_dialog = true;
             }
+            MenuCommand::OpenMapDialog => self.open_map_dialog(),
             MenuCommand::OpenSelectedMap => self.open_selected_map(),
             MenuCommand::RefreshMaps => self.refresh_map_entries(),
             MenuCommand::Save => self.save_map(),
@@ -630,6 +635,24 @@ impl EditorApp {
         self.map_path = maps_dir(&self.project_root).join(format!("{id}.ron"));
         self.selected_map_path = self.map_path.clone();
         self.save_map();
+    }
+
+    fn open_map_dialog(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .set_title("打开地图")
+            .set_directory(maps_dir(&self.project_root))
+            .add_filter("RON 地图", &["ron"])
+            .pick_file()
+        else {
+            return;
+        };
+
+        self.selected_map_path = path.clone();
+        if self.dirty && path != self.map_path {
+            self.open_confirm_path = Some(path);
+        } else {
+            self.open_map(path);
+        }
     }
 
     fn open_selected_map(&mut self) {
@@ -1341,7 +1364,11 @@ impl EditorApp {
                     self.show_new_map_dialog = true;
                     ui.close();
                 }
-                ui.menu_button("打开地图", |ui| {
+                if ui.button("打开...").clicked() {
+                    self.open_map_dialog();
+                    ui.close();
+                }
+                ui.menu_button("从列表打开", |ui| {
                     for entry in self.map_entries.clone() {
                         if ui.button(&entry.label).clicked() {
                             self.selected_map_path = entry.path.clone();
