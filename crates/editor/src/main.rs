@@ -248,6 +248,8 @@ struct EditorApp {
     tool: ToolKind,
     ground_footprint_w: i32,
     ground_footprint_h: i32,
+    collision_brush_w: i32,
+    collision_brush_h: i32,
     rectangle_erase_mode: bool,
     asset_search: String,
     asset_kind_filter: Option<AssetKind>,
@@ -328,6 +330,8 @@ impl EditorApp {
             tool: ToolKind::Brush,
             ground_footprint_w: 4,
             ground_footprint_h: 4,
+            collision_brush_w: 1,
+            collision_brush_h: 1,
             rectangle_erase_mode: false,
             asset_search: String::new(),
             asset_kind_filter: None,
@@ -1589,6 +1593,26 @@ impl EditorApp {
                 toolbar_centered(ui, vec2(54.0, 26.0), |ui| {
                     ui.add(
                         egui::DragValue::new(&mut self.ground_footprint_h)
+                            .range(1..=self.document.height as i32)
+                            .speed(0.1)
+                            .prefix("H "),
+                    );
+                });
+            } else if self.active_layer == LayerKind::Collision || self.tool == ToolKind::Collision
+            {
+                ui.separator();
+                toolbar_label(ui, "碰撞尺寸");
+                toolbar_centered(ui, vec2(54.0, 26.0), |ui| {
+                    ui.add(
+                        egui::DragValue::new(&mut self.collision_brush_w)
+                            .range(1..=self.document.width as i32)
+                            .speed(0.1)
+                            .prefix("W "),
+                    );
+                });
+                toolbar_centered(ui, vec2(54.0, 26.0), |ui| {
+                    ui.add(
+                        egui::DragValue::new(&mut self.collision_brush_h)
                             .range(1..=self.document.height as i32)
                             .speed(0.1)
                             .prefix("H "),
@@ -3323,7 +3347,7 @@ impl EditorApp {
     }
 
     fn paint_collision_brush(&mut self, x: i32, y: i32) {
-        let [width, height] = self.selected_ground_footprint_at(x, y);
+        let [width, height] = self.clamped_collision_brush_at(x, y);
         for yy in y..y + height {
             for xx in x..x + width {
                 self.document.place_collision(xx, yy);
@@ -3332,7 +3356,11 @@ impl EditorApp {
     }
 
     fn erase_brush_at(&mut self, x: i32, y: i32) {
-        let [width, height] = self.clamped_ground_footprint_at(x, y);
+        let [width, height] = if self.active_layer == LayerKind::Collision {
+            self.clamped_collision_brush_at(x, y)
+        } else {
+            self.clamped_ground_footprint_at(x, y)
+        };
         for yy in y..y + height {
             for xx in x..x + width {
                 self.document.erase_at(self.active_layer, xx, yy);
@@ -4274,6 +4302,16 @@ impl EditorApp {
         ]
     }
 
+    fn clamped_collision_brush_at(&self, x: i32, y: i32) -> [i32; 2] {
+        let max_width = (self.document.width as i32 - x).max(1);
+        let max_height = (self.document.height as i32 - y).max(1);
+
+        [
+            self.collision_brush_w.clamp(1, max_width),
+            self.collision_brush_h.clamp(1, max_height),
+        ]
+    }
+
     fn selected_ground_footprint_at(&self, x: i32, y: i32) -> [i32; 2] {
         self.selected_asset()
             .map(|asset| self.clamped_tile_footprint_at(asset, x, y))
@@ -4736,36 +4774,40 @@ impl EditorApp {
     }
 
     fn draw_ground_footprint_preview(&self, canvas_rect: Rect, painter: &egui::Painter) {
-        if !matches!(self.tool, ToolKind::Brush | ToolKind::Rectangle)
-            || self.active_layer != LayerKind::Ground
-        {
+        if !matches!(
+            (self.active_layer, self.tool),
+            (LayerKind::Ground, ToolKind::Brush | ToolKind::Rectangle)
+                | (
+                    LayerKind::Collision,
+                    ToolKind::Brush | ToolKind::Rectangle | ToolKind::Collision
+                )
+        ) {
             return;
         }
-        if self.selected_asset.is_none() {
+        if self.active_layer == LayerKind::Ground && self.selected_asset.is_none() {
             return;
         }
         let Some([x, y]) = self.mouse_tile else {
             return;
         };
 
-        let [width, height] = self.clamped_ground_footprint_at(x, y);
+        let [width, height] = if self.active_layer == LayerKind::Collision {
+            self.clamped_collision_brush_at(x, y)
+        } else {
+            self.clamped_ground_footprint_at(x, y)
+        };
         let rect = self.tile_screen_rect(canvas_rect, x, y, width, height);
+        let color = if self.active_layer == LayerKind::Collision {
+            THEME_COLLISION
+        } else {
+            THEME_ACCENT
+        };
         painter.rect_filled(
             rect,
             0.0,
-            Color32::from_rgba_unmultiplied(
-                THEME_ACCENT.r(),
-                THEME_ACCENT.g(),
-                THEME_ACCENT.b(),
-                32,
-            ),
+            Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 32),
         );
-        painter.rect_stroke(
-            rect,
-            0.0,
-            Stroke::new(2.0, THEME_ACCENT_STRONG),
-            StrokeKind::Inside,
-        );
+        painter.rect_stroke(rect, 0.0, Stroke::new(2.0, color), StrokeKind::Inside);
     }
 
     fn draw_rectangle_preview(&self, canvas_rect: Rect, painter: &egui::Painter) {
