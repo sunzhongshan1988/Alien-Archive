@@ -47,6 +47,13 @@ impl World {
             .find(|entity| entity.kind == kind)
     }
 
+    pub fn entities(&self, kind: MapEntityKind) -> impl Iterator<Item = &MapEntity> + '_ {
+        self.map
+            .entities()
+            .iter()
+            .filter(move |entity| entity.kind == kind)
+    }
+
     #[allow(dead_code)]
     pub fn solid_rects(&self) -> impl Iterator<Item = Rect> + '_ {
         self.map.solid_rects()

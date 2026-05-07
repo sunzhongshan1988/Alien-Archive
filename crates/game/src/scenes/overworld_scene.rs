@@ -6,7 +6,10 @@ use crate::{
     world::{MapEntityKind, World},
 };
 
-use super::{GameContext, GameMenuTab, RenderContext, Scene, SceneId};
+use super::{
+    GameContext, GameMenuTab, RenderContext, Scene, SceneId,
+    scan_system::{ScanState, nearby_scan_target},
+};
 
 const OVERWORLD_MAP: &str = "assets/data/maps/overworld_landing_site.ron";
 const FACILITY_ENTRY_SPAWN: &str = "entry";
@@ -16,6 +19,7 @@ pub struct OverworldScene {
     player: Player,
     world: World,
     camera: Camera2d,
+    scan: ScanState,
 }
 
 impl OverworldScene {
@@ -27,6 +31,7 @@ impl OverworldScene {
             camera: Camera2d::follow_with_zoom(player.position, OVERWORLD_CAMERA_ZOOM),
             player,
             world,
+            scan: ScanState::default(),
         })
     }
 
@@ -78,6 +83,10 @@ impl Scene for OverworldScene {
             return Ok(SceneCommand::Switch(SceneId::Facility));
         }
 
+        let scan_target = nearby_scan_target(&self.world, self.player.rect());
+        self.scan
+            .update(ctx, dt, input.is_down(Button::Scan), scan_target);
+
         self.player
             .update_topdown(dt, input, self.world.solid_rects());
         self.camera.position = self.player.position;
@@ -88,6 +97,7 @@ impl Scene for OverworldScene {
     fn render(&mut self, ctx: &mut RenderContext<'_>) -> Result<()> {
         self.world.draw(ctx.renderer);
         self.player.draw_topdown(ctx.renderer);
+        self.scan.draw(ctx.renderer);
         Ok(())
     }
 

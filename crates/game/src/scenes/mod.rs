@@ -5,9 +5,11 @@ mod main_menu;
 mod overworld_scene;
 mod pause_scene;
 mod profile_scene;
+mod scan_system;
 
 use anyhow::Result;
 use runtime::{Camera2d, InputState, Renderer, SceneCommand};
+use std::collections::HashSet;
 
 use facility_scene::FacilityScene;
 use game_menu_scene::GameMenuScene;
@@ -104,6 +106,7 @@ pub struct GameContext {
     pub should_quit: bool,
     pub overworld_spawn_id: Option<String>,
     pub facility_spawn_id: Option<String>,
+    pub scanned_codex_ids: HashSet<String>,
 }
 
 pub struct RenderContext<'a> {

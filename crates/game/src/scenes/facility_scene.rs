@@ -6,7 +6,10 @@ use crate::{
     world::{MapEntityKind, World},
 };
 
-use super::{GameContext, GameMenuTab, RenderContext, Scene, SceneId};
+use super::{
+    GameContext, GameMenuTab, RenderContext, Scene, SceneId,
+    scan_system::{ScanState, nearby_scan_target},
+};
 
 const FACILITY_MAP: &str = "assets/data/maps/facility_ruin_01.ron";
 const OVERWORLD_RETURN_SPAWN: &str = "facility_return";
@@ -21,6 +24,7 @@ pub struct FacilityScene {
     velocity: Vec2,
     floor_y: f32,
     grounded: bool,
+    scan: ScanState,
 }
 
 impl FacilityScene {
@@ -35,6 +39,7 @@ impl FacilityScene {
             world,
             velocity: Vec2::ZERO,
             grounded: true,
+            scan: ScanState::default(),
         })
     }
 
@@ -44,7 +49,7 @@ impl FacilityScene {
             .is_some_and(|entity| rects_overlap(self.player.rect(), entity.rect))
     }
 
-    fn update_sideview_player(&mut self, dt: f32, input: &InputState) {
+    fn update_sideview_player(&mut self, dt: f32, input: &InputState, scan_jump_blocked: bool) {
         let horizontal = match (input.is_down(Button::Left), input.is_down(Button::Right)) {
             (true, false) => -1.0,
             (false, true) => 1.0,
@@ -53,7 +58,10 @@ impl FacilityScene {
 
         self.velocity.x = horizontal * RUN_SPEED;
 
-        if self.grounded && (input.just_pressed(Button::Up) || input.just_pressed(Button::Scan)) {
+        if self.grounded
+            && (input.just_pressed(Button::Up)
+                || (input.just_pressed(Button::Scan) && !scan_jump_blocked))
+        {
             self.velocity.y = -JUMP_SPEED;
             self.grounded = false;
         }
@@ -104,7 +112,11 @@ impl Scene for FacilityScene {
             return Ok(SceneCommand::Switch(SceneId::Overworld));
         }
 
-        self.update_sideview_player(dt, input);
+        let scan_target = nearby_scan_target(&self.world, self.player.rect());
+        self.scan
+            .update(ctx, dt, input.is_down(Button::Scan), scan_target);
+
+        self.update_sideview_player(dt, input, self.scan.should_capture_scan_button());
         self.camera.position = self.player.position;
 
         Ok(SceneCommand::None)
@@ -113,6 +125,7 @@ impl Scene for FacilityScene {
     fn render(&mut self, ctx: &mut RenderContext<'_>) -> Result<()> {
         self.world.draw(ctx.renderer);
         self.player.draw(ctx.renderer);
+        self.scan.draw(ctx.renderer);
         Ok(())
     }
 
