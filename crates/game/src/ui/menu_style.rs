@@ -28,6 +28,7 @@ pub mod space {
     pub const BOTTOM_ACTION_LEFT: f32 = 14.0;
     pub const BOTTOM_ACTION_RIGHT_CLEARANCE: f32 = 150.0;
     pub const BOTTOM_ACTION_TOP: f32 = 16.0;
+    pub const BOTTOM_ACTION_GAP: f32 = 8.0;
     pub const LANGUAGE_CHOICE_RIGHT: f32 = 300.0;
     pub const LANGUAGE_CHOICE_GAP: f32 = 140.0;
     pub const LANGUAGE_CHOICE_TOP: f32 = 21.0;
@@ -54,7 +55,6 @@ pub mod skin {
     pub const RETURN_BUTTON: &str = "menu.skin_return_button";
     pub const SLOT_SELECTED: &str = "menu.skin_slot_selected";
     pub const SLOT_EMPTY: &str = "menu.skin_slot_empty";
-    pub const CODEX_CARD: &str = "menu.skin_codex_card";
     pub const LANGUAGE_TOGGLE: &str = "menu.skin_language_toggle";
 }
 
@@ -111,10 +111,6 @@ pub const TEXTURES: &[TextureAsset] = &[
     TextureAsset {
         texture_id: skin::SLOT_EMPTY,
         path: "assets/images/ui/menu/skin_slot_empty_ai.png",
-    },
-    TextureAsset {
-        texture_id: skin::CODEX_CARD,
-        path: "assets/images/ui/menu/skin_codex_card_ai.png",
     },
     TextureAsset {
         texture_id: skin::LANGUAGE_TOGGLE,
@@ -402,17 +398,16 @@ impl MenuLayout {
         let strip_x = self.bottom.origin.x + space::BOTTOM_ACTION_LEFT * self.scale;
         let strip_w =
             return_button.origin.x - strip_x - space::BOTTOM_ACTION_RIGHT_CLEARANCE * self.scale;
-        let width = strip_w / action_count.max(1) as f32;
+        let gap = space::BOTTOM_ACTION_GAP * self.scale;
+        let count = action_count.max(1);
+        let width = (strip_w - gap * count.saturating_sub(1) as f32) / count as f32;
 
         Rect::new(
             Vec2::new(
-                strip_x + index as f32 * width,
+                strip_x + index as f32 * (width + gap),
                 self.bottom.origin.y + space::BOTTOM_ACTION_TOP * self.scale,
             ),
-            Vec2::new(
-                width - 2.0 * self.scale,
-                metric::RETURN_BUTTON_HEIGHT * self.scale,
-            ),
+            Vec2::new(width.max(0.0), metric::RETURN_BUTTON_HEIGHT * self.scale),
         )
     }
 

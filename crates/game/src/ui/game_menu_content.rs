@@ -249,6 +249,23 @@ pub fn stat_header(language: Language) -> &'static str {
     }
 }
 
+pub fn compact_vital_label(index: usize, language: Language) -> &'static str {
+    match language {
+        Language::Chinese => match index {
+            0 => "生命",
+            1 => "体力",
+            2 => "护甲",
+            _ => "负重",
+        },
+        Language::English => match index {
+            0 => "Health",
+            1 => "Stamina",
+            2 => "Armor",
+            _ => "Carry",
+        },
+    }
+}
+
 pub fn profile_core_header(language: Language) -> &'static str {
     match language {
         Language::Chinese => "属性",

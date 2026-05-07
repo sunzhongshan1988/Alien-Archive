@@ -6,9 +6,9 @@ use rusttype::Font;
 
 use crate::ui::game_menu_content::{
     BOTTOM_ACTIONS, CODEX_PREVIEWS, QUEST_PREVIEWS, category_label, close_hint,
-    codex_discoveries_title, codex_progress_label, empty_slot_body, empty_slot_title,
-    inventory_hint, language_option_label, language_setting_label, locked_label, map_labels,
-    menu_status, placeholder_text, profile_core_header, profile_level_label,
+    codex_discoveries_title, codex_progress_label, compact_vital_label, empty_slot_body,
+    empty_slot_title, inventory_hint, language_option_label, language_setting_label, locked_label,
+    map_labels, menu_status, placeholder_text, profile_core_header, profile_level_label,
     profile_research_header, quantity_label, rarity_label, research_label, return_label,
     return_sublabel, settings_hint, stack_limit_label, stat_header, tab_index, tab_label,
     tab_sublabel, tab_subtitle, tab_title, top_location_label, top_location_value,
@@ -275,23 +275,15 @@ impl GameMenuScene {
 
         let location_panel = header_panels[1];
         draw_header_cell(renderer, viewport, location_panel, layout.scale);
-        if let Some(label) = &self.text.top_location_label {
-            draw_text(
+        if let (Some(label), Some(value)) =
+            (&self.text.top_location_label, &self.text.top_location_value)
+        {
+            draw_header_text_group(
                 renderer,
+                viewport,
+                location_panel,
                 label,
-                viewport,
-                location_panel.origin.x + 24.0 * layout.scale,
-                location_panel.origin.y + 20.0 * layout.scale,
-                color::TEXT_MUTED,
-            );
-        }
-        if let Some(value) = &self.text.top_location_value {
-            draw_text_strong(
-                renderer,
                 value,
-                viewport,
-                location_panel.origin.x + 24.0 * layout.scale,
-                location_panel.origin.y + 48.0 * layout.scale,
                 color::TEXT_CYAN,
                 layout.scale,
             );
@@ -299,23 +291,15 @@ impl GameMenuScene {
 
         let status_panel = header_panels[2];
         draw_header_cell(renderer, viewport, status_panel, layout.scale);
-        if let Some(label) = &self.text.top_status_label {
-            draw_text(
+        if let (Some(label), Some(value)) =
+            (&self.text.top_status_label, &self.text.top_status_value)
+        {
+            draw_header_text_group(
                 renderer,
+                viewport,
+                status_panel,
                 label,
-                viewport,
-                status_panel.origin.x + 20.0 * layout.scale,
-                status_panel.origin.y + 20.0 * layout.scale,
-                color::TEXT_MUTED,
-            );
-        }
-        if let Some(value) = &self.text.top_status_value {
-            draw_text_strong(
-                renderer,
                 value,
-                viewport,
-                status_panel.origin.x + 20.0 * layout.scale,
-                status_panel.origin.y + 48.0 * layout.scale,
                 color::TEXT_GREEN,
                 layout.scale,
             );
@@ -323,46 +307,14 @@ impl GameMenuScene {
 
         let resource_panel = header_panels[3];
         draw_header_cell(renderer, viewport, resource_panel, layout.scale);
-        draw_resource_marker(
-            renderer,
-            viewport,
-            Vec2::new(
-                resource_panel.origin.x + 26.0 * layout.scale,
-                resource_panel.origin.y + 38.0 * layout.scale,
-            ),
-            icon::RESOURCE_CRYSTAL,
-            Color::rgba(0.24, 0.78, 1.0, 0.96),
-            layout.scale,
-        );
-        if let Some(crystals) = &self.text.top_crystals {
-            draw_text(
+        if let (Some(crystals), Some(credits)) = (&self.text.top_crystals, &self.text.top_credits) {
+            draw_header_resources(
                 renderer,
+                viewport,
+                resource_panel,
                 crystals,
-                viewport,
-                resource_panel.origin.x + 52.0 * layout.scale,
-                resource_panel.origin.y + 31.0 * layout.scale,
-                Color::rgba(0.88, 1.0, 0.98, 1.0),
-            );
-        }
-        draw_resource_marker(
-            renderer,
-            viewport,
-            Vec2::new(
-                resource_panel.origin.x + 142.0 * layout.scale,
-                resource_panel.origin.y + 38.0 * layout.scale,
-            ),
-            icon::RESOURCE_COIN,
-            Color::rgba(0.95, 0.67, 0.22, 0.96),
-            layout.scale,
-        );
-        if let Some(credits) = &self.text.top_credits {
-            draw_text(
-                renderer,
                 credits,
-                viewport,
-                resource_panel.origin.x + 166.0 * layout.scale,
-                resource_panel.origin.y + 31.0 * layout.scale,
-                Color::rgba(0.88, 1.0, 0.98, 1.0),
+                layout.scale,
             );
         }
     }
@@ -434,7 +386,7 @@ impl GameMenuScene {
 
             let nav_padding = Insets::new(30.0, 10.0, 0.0, 0.0).scaled(layout.scale);
             let icon_width = 52.0 * layout.scale;
-            let nav_gap = 14.0 * layout.scale;
+            let nav_gap = 6.0 * layout.scale;
             let text_width =
                 (rect.size.x - nav_padding.left - nav_padding.right - icon_width - nav_gap)
                     .max(0.0);
@@ -447,33 +399,29 @@ impl GameMenuScene {
             let text_rect = nav_parts[1];
 
             draw_nav_icon(renderer, viewport, tab, icon_rect, active, layout.scale);
-            if let Some(label) = self.text.nav_labels.get(index) {
-                draw_text_strong(
+            if let (Some(label), Some(sublabel)) = (
+                self.text.nav_labels.get(index),
+                self.text.nav_sublabels.get(index),
+            ) {
+                draw_two_line_menu_text(
                     renderer,
-                    label,
                     viewport,
-                    text_rect.origin.x,
-                    text_rect.origin.y + 13.0 * layout.scale,
+                    text_rect,
+                    label,
+                    sublabel,
                     if active {
                         Color::rgba(0.94, 1.0, 0.98, 1.0)
                     } else {
                         Color::rgba(0.60, 0.78, 0.84, 0.96)
                     },
-                    layout.scale,
-                );
-            }
-            if let Some(sublabel) = self.text.nav_sublabels.get(index) {
-                draw_text(
-                    renderer,
-                    sublabel,
-                    viewport,
-                    text_rect.origin.x + 2.0 * layout.scale,
-                    text_rect.origin.y + 46.0 * layout.scale,
                     if active {
                         Color::rgba(0.72, 0.96, 1.0, 0.95)
                     } else {
                         Color::rgba(0.50, 0.68, 0.74, 0.92)
                     },
+                    layout.scale,
+                    0.0,
+                    true,
                 );
             }
         }
@@ -532,25 +480,25 @@ impl GameMenuScene {
                 );
             }
             draw_bottom_icon(renderer, viewport, rect, index, layout.scale);
-            if let Some(label) = self.text.bottom_action_labels.get(index) {
-                draw_text_strong(
-                    renderer,
-                    label,
-                    viewport,
-                    rect.origin.x + 86.0 * layout.scale,
-                    rect.origin.y + 20.0 * layout.scale,
-                    Color::rgba(0.88, 1.0, 0.98, 1.0),
-                    layout.scale,
+            if let (Some(label), Some(sublabel)) = (
+                self.text.bottom_action_labels.get(index),
+                self.text.bottom_action_sublabels.get(index),
+            ) {
+                let text_rect = Rect::new(
+                    Vec2::new(rect.origin.x + 66.0 * layout.scale, rect.origin.y),
+                    Vec2::new(rect.size.x - 74.0 * layout.scale, rect.size.y),
                 );
-            }
-            if let Some(sublabel) = self.text.bottom_action_sublabels.get(index) {
-                draw_text(
+                draw_two_line_menu_text(
                     renderer,
-                    sublabel,
                     viewport,
-                    rect.origin.x + 88.0 * layout.scale,
-                    rect.origin.y + 49.0 * layout.scale,
+                    text_rect,
+                    label,
+                    sublabel,
+                    Color::rgba(0.88, 1.0, 0.98, 1.0),
                     Color::rgba(0.46, 0.80, 0.92, 0.94),
+                    layout.scale,
+                    -1.0 * layout.scale,
+                    false,
                 );
             }
         }
@@ -584,25 +532,29 @@ impl GameMenuScene {
             );
         }
         draw_return_icon(renderer, viewport, return_button, layout.scale);
-        if let Some(label) = &self.text.return_label {
-            draw_text_strong(
-                renderer,
-                label,
-                viewport,
-                return_button.origin.x + 92.0 * layout.scale,
-                return_button.origin.y + 20.0 * layout.scale,
-                color::TEXT_RETURN,
-                layout.scale,
+        if let (Some(label), Some(sublabel)) = (&self.text.return_label, &self.text.return_sublabel)
+        {
+            let text_rect = Rect::new(
+                Vec2::new(
+                    return_button.origin.x + 92.0 * layout.scale,
+                    return_button.origin.y,
+                ),
+                Vec2::new(
+                    return_button.size.x - 104.0 * layout.scale,
+                    return_button.size.y,
+                ),
             );
-        }
-        if let Some(sublabel) = &self.text.return_sublabel {
-            draw_text(
+            draw_two_line_menu_text(
                 renderer,
-                sublabel,
                 viewport,
-                return_button.origin.x + 94.0 * layout.scale,
-                return_button.origin.y + 49.0 * layout.scale,
+                text_rect,
+                label,
+                sublabel,
+                color::TEXT_RETURN,
                 color::TEXT_RETURN_SUB,
+                layout.scale,
+                -1.0 * layout.scale,
+                false,
             );
         }
     }
@@ -704,13 +656,13 @@ impl GameMenuScene {
 
         let portrait_frame = Rect::new(
             Vec2::new(
-                portrait_panel.origin.x + 34.0 * layout.scale,
-                portrait_panel.origin.y + 64.0 * layout.scale,
+                portrait_panel.origin.x + 10.0 * layout.scale,
+                portrait_panel.origin.y + 52.0 * layout.scale,
             ),
             Vec2::new(
-                portrait_panel.size.x - 68.0 * layout.scale,
-                (portrait_panel.size.y - 254.0 * layout.scale)
-                    .clamp(260.0 * layout.scale, 400.0 * layout.scale),
+                portrait_panel.size.x - 20.0 * layout.scale,
+                (portrait_panel.size.y - 182.0 * layout.scale)
+                    .clamp(360.0 * layout.scale, 500.0 * layout.scale),
             ),
         );
         if let Some(image_size) = renderer.texture_size(EXPLORER_PORTRAIT_TEXTURE_ID) {
@@ -723,7 +675,18 @@ impl GameMenuScene {
                 Color::rgba(1.0, 1.0, 1.0, 1.0),
             );
         }
-        let info_y = portrait_frame.bottom() + 18.0 * layout.scale;
+        let level_panel = Rect::new(
+            Vec2::new(
+                portrait_panel.origin.x + 24.0 * layout.scale,
+                portrait_panel.bottom() - 72.0 * layout.scale,
+            ),
+            Vec2::new(
+                portrait_panel.size.x - 48.0 * layout.scale,
+                52.0 * layout.scale,
+            ),
+        );
+        let info_y = (level_panel.origin.y - 64.0 * layout.scale)
+            .max(portrait_frame.bottom() + 12.0 * layout.scale);
         if let Some(role) = &self.text.profile_role {
             draw_text(
                 renderer,
@@ -745,16 +708,6 @@ impl GameMenuScene {
             );
         }
 
-        let level_panel = Rect::new(
-            Vec2::new(
-                portrait_panel.origin.x + 24.0 * layout.scale,
-                portrait_panel.bottom() - 72.0 * layout.scale,
-            ),
-            Vec2::new(
-                portrait_panel.size.x - 48.0 * layout.scale,
-                52.0 * layout.scale,
-            ),
-        );
         draw_screen_rect(
             renderer,
             viewport,
@@ -845,40 +798,59 @@ impl GameMenuScene {
                 Color::rgba(0.46, 0.95, 1.0, 1.0),
             );
         }
+        let row_count = self.text.profile_core_stats.len();
+        let row_gap = 6.0 * layout.scale;
+        let row_height = 40.0 * layout.scale;
+        let rows_area = Rect::new(
+            Vec2::new(
+                attributes_panel.origin.x + 20.0 * layout.scale,
+                attributes_panel.origin.y + 64.0 * layout.scale,
+            ),
+            Vec2::new(
+                attributes_panel.size.x - 40.0 * layout.scale,
+                attributes_panel.size.y - 84.0 * layout.scale,
+            ),
+        );
+        let row_sizes = vec![row_height; row_count];
+        let attribute_rows = Stack::vertical()
+            .gap(row_gap)
+            .fixed_main(rows_area, &row_sizes, None);
         for (index, (label, value)) in self.text.profile_core_stats.iter().enumerate() {
             let stat = profile.core_stats[index];
-            let row_y = attributes_panel.origin.y + (66.0 + index as f32 * 47.0) * layout.scale;
+            let Some(row) = attribute_rows.get(index).copied() else {
+                continue;
+            };
+            let icon_size = 30.0 * layout.scale;
             let icon_rect = Rect::new(
-                Vec2::new(
-                    attributes_panel.origin.x + 22.0 * layout.scale,
-                    row_y - 3.0 * layout.scale,
-                ),
-                Vec2::new(28.0 * layout.scale, 28.0 * layout.scale),
+                Vec2::new(row.origin.x, row.origin.y + (row.size.y - icon_size) * 0.5),
+                Vec2::new(icon_size, icon_size),
             );
+            let text_x = row.origin.x + 48.0 * layout.scale;
+            let text_y = row.origin.y - 2.0 * layout.scale;
+            let value_y = text_y + 1.0 * layout.scale;
+            let pips_y = row.origin.y + row.size.y - 12.0 * layout.scale;
+
             draw_attribute_icon(renderer, viewport, icon_rect, index, layout.scale);
             draw_text(
                 renderer,
                 label,
                 viewport,
-                attributes_panel.origin.x + 64.0 * layout.scale,
-                row_y,
+                text_x,
+                text_y,
                 Color::rgba(0.68, 0.88, 0.92, 0.96),
             );
             draw_text(
                 renderer,
                 value,
                 viewport,
-                attributes_panel.right() - value.size.x - 22.0 * layout.scale,
-                row_y,
+                row.right() - value.size.x,
+                value_y,
                 Color::rgba(0.90, 1.0, 0.96, 1.0),
             );
             draw_score_pips(
                 renderer,
                 viewport,
-                Vec2::new(
-                    attributes_panel.origin.x + 64.0 * layout.scale,
-                    row_y + 24.0 * layout.scale,
-                ),
+                Vec2::new(text_x, pips_y),
                 stat.value,
                 layout.scale,
             );
@@ -894,41 +866,67 @@ impl GameMenuScene {
                 Color::rgba(0.46, 0.95, 1.0, 1.0),
             );
         }
+        let research_count = self.text.profile_research_stats.len();
+        let research_rows_area = Rect::new(
+            Vec2::new(
+                research_panel.origin.x + 24.0 * layout.scale,
+                research_panel.origin.y + 56.0 * layout.scale,
+            ),
+            Vec2::new(
+                research_panel.size.x - 48.0 * layout.scale,
+                research_panel.size.y - 76.0 * layout.scale,
+            ),
+        );
+        let research_gap = 8.0 * layout.scale;
+        let research_row_height = if research_count == 0 {
+            0.0
+        } else {
+            ((research_rows_area.size.y - research_gap * research_count.saturating_sub(1) as f32)
+                / research_count as f32)
+                .max(24.0 * layout.scale)
+        };
+        let research_row_sizes = vec![research_row_height; research_count];
+        let research_rows = Stack::vertical().gap(research_gap).fixed_main(
+            research_rows_area,
+            &research_row_sizes,
+            None,
+        );
         for (index, (label, value)) in self.text.profile_research_stats.iter().enumerate() {
             let stat = profile.research_stats[index];
-            let row_gap = ((research_panel.size.y - 70.0 * layout.scale) / 3.0)
-                .clamp(18.0 * layout.scale, 28.0 * layout.scale);
-            let row_y = research_panel.origin.y + 44.0 * layout.scale + index as f32 * row_gap;
+            let Some(row) = research_rows.get(index).copied() else {
+                continue;
+            };
             draw_compact_stat_bar(
                 renderer,
                 viewport,
-                research_panel,
+                row,
                 label,
                 value,
                 stat.value as f32 / stat.max as f32,
-                row_y,
                 layout.scale,
             );
         }
 
-        let card_gap = 10.0 * layout.scale;
-        let card_width = (vital_panel.size.x - 5.0 * card_gap) / 4.0;
-        let card_y_padding = if vital_panel.size.y < 120.0 * layout.scale {
-            10.0 * layout.scale
+        let stat_count = self.text.profile_stats.len();
+        let stat_gap = 12.0 * layout.scale;
+        let stat_area = inset_rect(vital_panel, 18.0 * layout.scale);
+        let stat_width = if stat_count == 0 {
+            0.0
         } else {
-            18.0 * layout.scale
+            ((stat_area.size.x - stat_gap * stat_count.saturating_sub(1) as f32)
+                / stat_count as f32)
+                .max(0.0)
         };
+        let stat_columns = Stack::horizontal().gap(stat_gap).fixed_main(
+            stat_area,
+            &vec![stat_width; stat_count],
+            None,
+        );
         for (index, (label, value)) in self.text.profile_stats.iter().enumerate() {
             let stat = profile.vital_stats[index];
-            let card = Rect::new(
-                Vec2::new(
-                    vital_panel.origin.x
-                        + 14.0 * layout.scale
-                        + index as f32 * (card_width + card_gap),
-                    vital_panel.origin.y + card_y_padding,
-                ),
-                Vec2::new(card_width, vital_panel.size.y - card_y_padding * 2.0),
-            );
+            let Some(card) = stat_columns.get(index).copied() else {
+                continue;
+            };
             draw_status_card(
                 renderer,
                 viewport,
@@ -1706,7 +1704,7 @@ impl GameMenuScene {
                         renderer,
                         font,
                         &format!("game_menu_profile_stat_label_{index}"),
-                        stat.label,
+                        compact_vital_label(index, language),
                         18.0,
                     )?,
                     upload_text(
@@ -2277,6 +2275,153 @@ fn draw_resource_marker(
     );
 }
 
+fn draw_header_text_group(
+    renderer: &mut dyn Renderer,
+    viewport: Vec2,
+    panel: Rect,
+    label: &TextSprite,
+    value: &TextSprite,
+    value_color: Color,
+    scale: f32,
+) {
+    let x = panel.origin.x + 24.0 * scale;
+    let text_gap = 1.0 * scale;
+    let group_height = label.size.y + text_gap + value.size.y;
+    let group_top = panel.origin.y + (panel.size.y - group_height) * 0.5 - 1.0 * scale;
+    draw_text(renderer, label, viewport, x, group_top, color::TEXT_MUTED);
+    draw_text_strong(
+        renderer,
+        value,
+        viewport,
+        x,
+        group_top + label.size.y + text_gap,
+        value_color,
+        scale,
+    );
+}
+
+fn draw_two_line_menu_text(
+    renderer: &mut dyn Renderer,
+    viewport: Vec2,
+    rect: Rect,
+    label: &TextSprite,
+    sublabel: &TextSprite,
+    label_color: Color,
+    sublabel_color: Color,
+    scale: f32,
+    y_offset: f32,
+    strong_shadow: bool,
+) {
+    let gap = 6.0 * scale;
+    let text_padding = 8.0;
+    let label_visual_height = (label.size.y - text_padding * 2.0).max(0.0);
+    let sublabel_visual_height = (sublabel.size.y - text_padding * 2.0).max(0.0);
+    let group_height = label_visual_height + gap + sublabel_visual_height;
+    let visual_top = rect.origin.y + (rect.size.y - group_height) * 0.5 + y_offset;
+    let label_y = visual_top - text_padding;
+    let sublabel_y = visual_top + label_visual_height + gap - text_padding;
+    let sublabel_x = rect.origin.x + 2.0 * scale;
+    if strong_shadow {
+        draw_text_strong(
+            renderer,
+            label,
+            viewport,
+            rect.origin.x,
+            label_y,
+            label_color,
+            scale,
+        );
+    } else {
+        draw_text(
+            renderer,
+            label,
+            viewport,
+            rect.origin.x,
+            label_y,
+            label_color,
+        );
+    }
+    draw_text(
+        renderer,
+        sublabel,
+        viewport,
+        sublabel_x,
+        sublabel_y,
+        sublabel_color,
+    );
+}
+
+fn draw_header_resources(
+    renderer: &mut dyn Renderer,
+    viewport: Vec2,
+    panel: Rect,
+    crystals: &TextSprite,
+    credits: &TextSprite,
+    scale: f32,
+) {
+    let icon_size = 30.0 * scale;
+    let icon_gap = 5.0 * scale;
+    let group_gap = 24.0 * scale;
+    let crystal_width = icon_size + icon_gap + crystals.size.x;
+    let credit_width = icon_size + icon_gap + credits.size.x;
+    let total_width = crystal_width + group_gap + credit_width;
+    let min_start_x = panel.origin.x + 22.0 * scale;
+    let start_x = (panel.origin.x + (panel.size.x - total_width) * 0.5).max(min_start_x);
+    let center_y = panel.origin.y + panel.size.y * 0.5;
+    let text_y = center_y - crystals.size.y * 0.5;
+
+    draw_header_resource_group(
+        renderer,
+        viewport,
+        Vec2::new(start_x, center_y),
+        icon::RESOURCE_CRYSTAL,
+        Color::rgba(0.24, 0.78, 1.0, 0.96),
+        crystals,
+        text_y,
+        scale,
+    );
+    draw_header_resource_group(
+        renderer,
+        viewport,
+        Vec2::new(start_x + crystal_width + group_gap, center_y),
+        icon::RESOURCE_COIN,
+        Color::rgba(0.95, 0.67, 0.22, 0.96),
+        credits,
+        text_y,
+        scale,
+    );
+}
+
+fn draw_header_resource_group(
+    renderer: &mut dyn Renderer,
+    viewport: Vec2,
+    origin: Vec2,
+    texture_id: &str,
+    icon_color: Color,
+    value: &TextSprite,
+    text_y: f32,
+    scale: f32,
+) {
+    let icon_size = 30.0 * scale;
+    let icon_gap = 5.0 * scale;
+    draw_resource_marker(
+        renderer,
+        viewport,
+        Vec2::new(origin.x + icon_size * 0.5, origin.y),
+        texture_id,
+        icon_color,
+        scale,
+    );
+    draw_text(
+        renderer,
+        value,
+        viewport,
+        origin.x + icon_size + icon_gap,
+        text_y,
+        Color::rgba(0.88, 1.0, 0.98, 1.0),
+    );
+}
+
 fn draw_attribute_icon(
     renderer: &mut dyn Renderer,
     viewport: Vec2,
@@ -2417,36 +2562,19 @@ fn draw_status_card(
     index: usize,
     scale: f32,
 ) {
-    let textured = draw_texture_nine_slice(
-        renderer,
-        viewport,
-        "menu.skin_card",
-        card,
-        42.0,
-        18.0 * scale,
-        Color::rgba(1.0, 1.0, 1.0, 0.88),
-    );
-    if !textured {
-        draw_screen_rect(
-            renderer,
-            viewport,
-            card,
-            Color::rgba(0.015, 0.048, 0.061, 0.84),
-        );
-        draw_border(
-            renderer,
-            viewport,
-            card,
-            1.0 * scale,
-            Color::rgba(0.10, 0.28, 0.36, 0.86),
-        );
-    }
+    let content = card;
+    let center_x = content.origin.x + content.size.x * 0.5;
+    let accent = vital_status_accent(index);
+    draw_soft_status_block(renderer, viewport, content, accent);
+
+    let icon_size = 54.0 * scale;
+    let group_top = content.origin.y + ((content.size.y - 138.0 * scale) * 0.5).max(0.0);
     draw_status_icon(
         renderer,
         viewport,
         Rect::new(
-            Vec2::new(card.origin.x + 22.0 * scale, card.origin.y + 12.0 * scale),
-            Vec2::new(24.0 * scale, 24.0 * scale),
+            Vec2::new(center_x - icon_size * 0.5, group_top + 12.0 * scale),
+            Vec2::new(icon_size, icon_size),
         ),
         index,
         scale,
@@ -2455,27 +2583,45 @@ fn draw_status_card(
         renderer,
         label,
         viewport,
-        card.origin.x + card.size.x * 0.5,
-        card.origin.y + 38.0 * scale,
+        center_x,
+        group_top + 78.0 * scale,
         Color::rgba(0.88, 1.0, 0.98, 1.0),
     );
     draw_text_centered(
         renderer,
         value,
         viewport,
-        card.origin.x + card.size.x * 0.5,
-        card.origin.y + 58.0 * scale,
+        center_x,
+        group_top + 101.0 * scale,
         Color::rgba(0.62, 0.86, 0.92, 0.96),
     );
     draw_bar(
         renderer,
         viewport,
         Rect::new(
-            Vec2::new(card.origin.x + 14.0 * scale, card.bottom() - 13.0 * scale),
-            Vec2::new(card.size.x - 28.0 * scale, 7.0 * scale),
+            Vec2::new(content.origin.x + 10.0 * scale, group_top + 129.0 * scale),
+            Vec2::new(content.size.x - 20.0 * scale, 7.0 * scale),
         ),
         ratio,
         scale,
+    );
+}
+
+fn vital_status_accent(index: usize) -> Color {
+    match index {
+        0 => Color::rgba(0.32, 0.90, 1.0, 1.0),
+        1 => Color::rgba(0.26, 0.66, 1.0, 1.0),
+        2 => Color::rgba(0.52, 0.96, 0.88, 1.0),
+        _ => Color::rgba(1.0, 0.70, 0.36, 1.0),
+    }
+}
+
+fn draw_soft_status_block(renderer: &mut dyn Renderer, viewport: Vec2, rect: Rect, accent: Color) {
+    draw_screen_rect(
+        renderer,
+        viewport,
+        rect,
+        Color::rgba(accent.r, accent.g, accent.b, 0.055),
     );
 }
 
@@ -2623,61 +2769,35 @@ fn draw_codex_discovery_card(
     ratio: f32,
     scale: f32,
 ) {
-    let textured = draw_texture_nine_slice(
-        renderer,
-        viewport,
-        "menu.skin_codex_card",
-        card,
-        42.0,
-        22.0 * scale,
-        Color::rgba(1.0, 1.0, 1.0, 0.94),
-    );
-    if !textured {
-        draw_screen_rect(
-            renderer,
-            viewport,
-            card,
-            Color::rgba(0.014, 0.038, 0.052, 0.88),
-        );
-        draw_border(
-            renderer,
-            viewport,
-            card,
-            1.0 * scale,
-            if index % 2 == 0 {
-                Color::rgba(0.18, 0.48, 0.60, 0.86)
-            } else {
-                Color::rgba(0.58, 0.42, 0.78, 0.78)
-            },
-        );
-    }
+    let content = inset_rect(card, 4.0 * scale);
     let image = Rect::new(
-        Vec2::new(card.origin.x + 8.0 * scale, card.origin.y + 8.0 * scale),
-        Vec2::new(card.size.x - 16.0 * scale, card.size.y - 78.0 * scale),
+        content.origin,
+        Vec2::new(content.size.x, content.size.y - 84.0 * scale),
     );
+    let info_top = image.bottom() + 2.0 * scale;
     draw_codex_glyph(renderer, viewport, image, index, scale);
     draw_text_centered(
         renderer,
         label,
         viewport,
-        card.origin.x + card.size.x * 0.5,
-        image.bottom() + 18.0 * scale,
+        content.origin.x + content.size.x * 0.5,
+        info_top,
         color::TEXT_PRIMARY,
     );
     draw_text_centered(
         renderer,
         value,
         viewport,
-        card.origin.x + card.size.x * 0.5,
-        image.bottom() + 48.0 * scale,
+        content.origin.x + content.size.x * 0.5,
+        info_top + 25.0 * scale,
         color::TEXT_SECONDARY,
     );
     draw_bar(
         renderer,
         viewport,
         Rect::new(
-            Vec2::new(card.origin.x + 18.0 * scale, card.bottom() - 18.0 * scale),
-            Vec2::new(card.size.x - 36.0 * scale, 7.0 * scale),
+            Vec2::new(content.origin.x + 10.0 * scale, info_top + 49.0 * scale),
+            Vec2::new(content.size.x - 20.0 * scale, 6.0 * scale),
         ),
         ratio,
         scale,
@@ -2987,35 +3107,37 @@ fn draw_return_icon(renderer: &mut dyn Renderer, viewport: Vec2, rect: Rect, sca
 fn draw_compact_stat_bar(
     renderer: &mut dyn Renderer,
     viewport: Vec2,
-    panel: Rect,
+    row: Rect,
     label: &TextSprite,
     value: &TextSprite,
     ratio: f32,
-    y: f32,
     scale: f32,
 ) {
+    let label_y = row.origin.y - 5.0 * scale;
+    let bar_height = 6.0 * scale;
+    let bar_y = row.bottom() - bar_height;
     draw_text(
         renderer,
         label,
         viewport,
-        panel.origin.x + 24.0 * scale,
-        y,
+        row.origin.x,
+        label_y,
         Color::rgba(0.68, 0.88, 0.92, 0.96),
     );
     draw_text(
         renderer,
         value,
         viewport,
-        panel.right() - value.size.x - 24.0 * scale,
-        y,
+        row.right() - value.size.x,
+        label_y,
         Color::rgba(0.90, 1.0, 0.96, 1.0),
     );
     draw_bar(
         renderer,
         viewport,
         Rect::new(
-            Vec2::new(panel.origin.x + 24.0 * scale, y + 19.0 * scale),
-            Vec2::new(panel.size.x - 48.0 * scale, 6.0 * scale),
+            Vec2::new(row.origin.x, bar_y),
+            Vec2::new(row.size.x, bar_height),
         ),
         ratio,
         scale,
