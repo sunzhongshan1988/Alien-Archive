@@ -80,9 +80,9 @@ impl MainMenuScene {
         }
     }
 
-    fn confirm_main_selection(&mut self) -> SceneCommand<SceneId> {
+    fn confirm_main_selection(&mut self, ctx: &GameContext) -> SceneCommand<SceneId> {
         match MENU_ITEMS[self.selected_index] {
-            MenuAction::StartGame => SceneCommand::Switch(SceneId::Overworld),
+            MenuAction::StartGame => SceneCommand::Switch(ctx.resume_scene_id()),
             MenuAction::Settings => {
                 self.page = MenuPage::Settings;
                 self.selected_index = 0;
@@ -110,6 +110,7 @@ impl MainMenuScene {
         ctx.language = language;
         self.language = language;
         self.text = MainMenuText::default();
+        ctx.request_save();
     }
 
     fn draw_main_menu(&self, ctx: &mut RenderContext<'_>) {
@@ -564,7 +565,7 @@ impl Scene for MainMenuScene {
             || mouse_confirmed_item
         {
             return Ok(match self.page {
-                MenuPage::Main => self.confirm_main_selection(),
+                MenuPage::Main => self.confirm_main_selection(ctx),
                 MenuPage::Settings => {
                     self.confirm_settings_selection(ctx);
                     SceneCommand::None

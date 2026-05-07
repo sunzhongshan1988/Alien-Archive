@@ -1,18 +1,19 @@
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
 
 use anyhow::Result;
+use content::CodexEntry;
 use runtime::{Button, Color, InputState, Rect, Renderer, SceneCommand, Vec2};
 use rusttype::Font;
 
+use crate::save::{InventorySave, PlayerProfileSave};
 use crate::ui::game_menu_content::{
-    BOTTOM_ACTIONS, CODEX_PREVIEWS, QUEST_PREVIEWS, category_label, close_hint,
-    codex_discoveries_title, codex_progress_label, compact_vital_label, empty_slot_body,
-    empty_slot_title, inventory_hint, language_option_label, language_setting_label, locked_label,
-    map_labels, menu_status, placeholder_text, profile_core_header, profile_level_label,
-    profile_research_header, quantity_label, rarity_label, research_label, return_label,
-    return_sublabel, settings_hint, stack_limit_label, stat_header, tab_index, tab_label,
-    tab_sublabel, tab_subtitle, tab_title, top_location_label, top_location_value,
-    top_status_label, top_status_value,
+    BOTTOM_ACTIONS, QUEST_PREVIEWS, category_label, close_hint, codex_discoveries_title,
+    compact_vital_label, empty_slot_body, empty_slot_title, inventory_hint, language_option_label,
+    language_setting_label, locked_label, map_labels, menu_status, placeholder_text,
+    profile_core_header, profile_level_label, profile_research_header, quantity_label,
+    rarity_label, research_label, return_label, return_sublabel, settings_hint, stack_limit_label,
+    stat_header, tab_index, tab_label, tab_sublabel, tab_subtitle, tab_title, top_location_label,
+    top_location_value, top_status_label, top_status_value,
 };
 use crate::ui::layout::{Align, Grid, Insets, Justify, Stack};
 use crate::ui::menu_style::{
@@ -31,6 +32,9 @@ use super::{inventory_scene, profile_scene};
 
 const EXPLORER_PORTRAIT_TEXTURE_ID: &str = "game_menu.explorer_portrait";
 const EXPLORER_PORTRAIT_PATH: &str = "assets/images/ui/profile/explorer_portrait.png";
+const CODEX_VISIBLE_ROWS: usize = 4;
+const CODEX_VISIBLE_COLUMNS: usize = 2;
+const CODEX_VISIBLE_COUNT: usize = CODEX_VISIBLE_ROWS * CODEX_VISIBLE_COLUMNS;
 
 #[derive(Default)]
 struct GameMenuText {
@@ -68,7 +72,8 @@ struct GameMenuText {
     inventory_empty_body: Option<TextSprite>,
     codex_discoveries_title: Option<TextSprite>,
     codex_capacity: Option<TextSprite>,
-    codex_cards: Vec<(TextSprite, TextSprite)>,
+    codex_cards: Vec<CodexSummaryText>,
+    codex_entries: Vec<CodexEntryCardText>,
     map_labels: Vec<TextSprite>,
     quest_rows: Vec<(TextSprite, TextSprite)>,
     settings_language: Option<TextSprite>,
@@ -91,19 +96,86 @@ struct InventoryDetailText {
     lock_state: Option<TextSprite>,
 }
 
+struct CodexSummaryText {
+    label: TextSprite,
+    value: TextSprite,
+    ratio: f32,
+}
+
+struct CodexEntryCardText {
+    title: TextSprite,
+    category: TextSprite,
+    status: TextSprite,
+    description_lines: Vec<TextSprite>,
+    unlocked: bool,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct CodexMenuSnapshot {
+    entries: Vec<CodexEntryView>,
+}
+
+impl CodexMenuSnapshot {
+    fn from_context(ctx: &GameContext) -> Self {
+        Self {
+            entries: ctx
+                .codex_database
+                .entries()
+                .iter()
+                .map(|entry| {
+                    CodexEntryView::from_entry(entry, ctx.scanned_codex_ids.contains(&entry.id))
+                })
+                .collect(),
+        }
+    }
+
+    fn unlocked_count(&self) -> usize {
+        self.entries.iter().filter(|entry| entry.unlocked).count()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CodexEntryView {
+    id: String,
+    title: String,
+    category: String,
+    description: String,
+    unlocked: bool,
+}
+
+impl CodexEntryView {
+    fn from_entry(entry: &CodexEntry, unlocked: bool) -> Self {
+        Self {
+            id: entry.id.clone(),
+            title: non_empty_or(&entry.title, &entry.id).to_owned(),
+            category: non_empty_or(&entry.category, "Unknown").to_owned(),
+            description: entry.description.clone(),
+            unlocked,
+        }
+    }
+}
+
 pub struct GameMenuScene {
     language: Language,
     active_tab: GameMenuTab,
     selected_inventory_slot: usize,
+    selected_codex_entry: usize,
+    codex_snapshot: CodexMenuSnapshot,
+    profile_snapshot: PlayerProfileSave,
+    inventory_snapshot: InventorySave,
     text: GameMenuText,
 }
 
 impl GameMenuScene {
-    pub fn new(language: Language, active_tab: GameMenuTab) -> Self {
+    pub fn new(ctx: &GameContext) -> Self {
         Self {
-            language,
-            active_tab,
+            language: ctx.language,
+            active_tab: ctx.game_menu_tab,
             selected_inventory_slot: 0,
+            selected_codex_entry: 0,
+            codex_snapshot: CodexMenuSnapshot::from_context(ctx),
+            profile_snapshot: ctx.save_data.profile.clone(),
+            inventory_snapshot: ctx.save_data.inventory.clone(),
             text: GameMenuText::default(),
         }
     }
@@ -120,6 +192,37 @@ impl GameMenuScene {
 
         ctx.language = language;
         self.language = language;
+        self.text = GameMenuText::default();
+        ctx.request_save();
+    }
+
+    fn sync_codex_snapshot(&mut self, ctx: &GameContext) {
+        let snapshot = CodexMenuSnapshot::from_context(ctx);
+        if snapshot == self.codex_snapshot {
+            return;
+        }
+
+        self.codex_snapshot = snapshot;
+        self.selected_codex_entry = self
+            .selected_codex_entry
+            .min(self.codex_snapshot.entries.len().saturating_sub(1));
+        self.text = GameMenuText::default();
+    }
+
+    fn sync_save_snapshot(&mut self, ctx: &GameContext) {
+        if self.profile_snapshot == ctx.save_data.profile
+            && self.inventory_snapshot == ctx.save_data.inventory
+        {
+            return;
+        }
+
+        self.profile_snapshot = ctx.save_data.profile.clone();
+        self.inventory_snapshot = ctx.save_data.inventory.clone();
+        self.selected_inventory_slot = self.selected_inventory_slot.min(
+            inventory_scene::inventory_slots(&self.inventory_snapshot)
+                .len()
+                .saturating_sub(1),
+        );
         self.text = GameMenuText::default();
     }
 
@@ -617,7 +720,7 @@ impl GameMenuScene {
     }
 
     fn draw_profile_page(&self, renderer: &mut dyn Renderer, viewport: Vec2, layout: &MenuLayout) {
-        let profile = profile_scene::profile_overview(self.language);
+        let profile = profile_scene::profile_overview(self.language, &self.profile_snapshot);
         let content = layout.dashboard_body();
         let gap = 12.0 * layout.scale;
         let portrait_panel = Rect::new(
@@ -755,7 +858,7 @@ impl GameMenuScene {
                 ),
                 Vec2::new(level_panel.size.x - 76.0 * layout.scale, 8.0 * layout.scale),
             ),
-            8650.0 / 15000.0,
+            xp_ratio(&self.profile_snapshot),
             layout.scale,
         );
 
@@ -970,16 +1073,16 @@ impl GameMenuScene {
         let card_slots = Stack::horizontal()
             .gap(8.0 * layout.scale)
             .even(card_row, self.text.codex_cards.len());
-        for (index, (label, value)) in self.text.codex_cards.iter().enumerate() {
+        for (index, card_text) in self.text.codex_cards.iter().enumerate() {
             let card = card_slots[index];
             draw_codex_discovery_card(
                 renderer,
                 viewport,
                 card,
                 index,
-                label,
-                value,
-                CODEX_PREVIEWS[index].progress as f32 / 100.0,
+                &card_text.label,
+                &card_text.value,
+                card_text.ratio,
                 layout.scale,
             );
         }
@@ -1004,7 +1107,7 @@ impl GameMenuScene {
         draw_inner_panel(renderer, viewport, grid_panel, layout.scale);
         draw_inner_panel(renderer, viewport, detail_panel, layout.scale);
 
-        let slots = inventory_scene::mvp_inventory_slots();
+        let slots = inventory_scene::inventory_slots(&self.inventory_snapshot);
         for index in 0..grid::INVENTORY_SLOTS {
             let slot = inventory_slot_rect(grid_panel, index, layout.scale);
             let item = slots.get(index).and_then(|slot| *slot);
@@ -1205,55 +1308,60 @@ impl GameMenuScene {
         self.selected_inventory_slot = move_inventory_slot(self.selected_inventory_slot, dx, dy);
     }
 
+    fn move_codex_selection(&mut self, dx: isize, dy: isize) {
+        let len = self.codex_snapshot.entries.len();
+        if len == 0 {
+            self.selected_codex_entry = 0;
+            return;
+        }
+
+        let col = self.selected_codex_entry % CODEX_VISIBLE_COLUMNS;
+        let row = self.selected_codex_entry / CODEX_VISIBLE_COLUMNS;
+        let next_col = (col as isize + dx).clamp(0, CODEX_VISIBLE_COLUMNS as isize - 1) as usize;
+        let max_row = (len - 1) / CODEX_VISIBLE_COLUMNS;
+        let next_row = (row as isize + dy).clamp(0, max_row as isize) as usize;
+        self.selected_codex_entry = (next_row * CODEX_VISIBLE_COLUMNS + next_col).min(len - 1);
+    }
+
     fn draw_codex_page(&self, renderer: &mut dyn Renderer, viewport: Vec2, layout: &MenuLayout) {
         let content = layout.content_body();
-        let grid = Rect::new(
-            content.origin,
-            Vec2::new(content.size.x, 310.0 * layout.scale),
-        );
-        let cards = Grid::new(2, 2)
-            .gap(16.0 * layout.scale, 22.0 * layout.scale)
+        if self.text.codex_entries.is_empty() {
+            draw_inner_panel(renderer, viewport, content, layout.scale);
+            if let Some(placeholder) = &self.text.placeholder {
+                draw_text(
+                    renderer,
+                    placeholder,
+                    viewport,
+                    content.origin.x + 24.0 * layout.scale,
+                    content.origin.y + 24.0 * layout.scale,
+                    color::TEXT_DIM,
+                );
+            }
+            return;
+        }
+
+        let grid = Rect::new(content.origin, Vec2::new(content.size.x, content.size.y));
+        let cards = Grid::new(CODEX_VISIBLE_COLUMNS, CODEX_VISIBLE_ROWS)
+            .gap(14.0 * layout.scale, 12.0 * layout.scale)
             .cells(grid);
-        for (index, (label, value)) in self.text.codex_cards.iter().enumerate() {
-            let card = cards[index];
-            draw_inner_panel(renderer, viewport, card, layout.scale);
-            let image_size = 104.0 * layout.scale;
-            let image_rect = Rect::new(
-                Vec2::new(
-                    card.right() - image_size - 22.0 * layout.scale,
-                    card.origin.y + (card.size.y - image_size) * 0.5,
-                ),
-                Vec2::new(image_size, image_size),
-            );
-            let text_x = card.origin.x + 26.0 * layout.scale;
-            let bar_width =
-                (image_rect.origin.x - text_x - 24.0 * layout.scale).max(80.0 * layout.scale);
-            draw_codex_glyph(renderer, viewport, image_rect, index, layout.scale);
-            draw_text_strong(
-                renderer,
-                label,
-                viewport,
-                text_x,
-                card.origin.y + 28.0 * layout.scale,
-                color::TEXT_PRIMARY,
-                layout.scale,
-            );
-            draw_text(
-                renderer,
-                value,
-                viewport,
-                text_x,
-                card.origin.y + 62.0 * layout.scale,
-                color::TEXT_SECONDARY,
-            );
-            draw_bar(
+        let page_start = (self.selected_codex_entry / CODEX_VISIBLE_COUNT) * CODEX_VISIBLE_COUNT;
+        for (slot, index) in (page_start
+            ..self
+                .text
+                .codex_entries
+                .len()
+                .min(page_start + CODEX_VISIBLE_COUNT))
+            .enumerate()
+        {
+            let card = cards[slot];
+            let selected = index == self.selected_codex_entry;
+            draw_codex_entry_card(
                 renderer,
                 viewport,
-                Rect::new(
-                    Vec2::new(text_x, card.origin.y + 100.0 * layout.scale),
-                    Vec2::new(bar_width, 10.0 * layout.scale),
-                ),
-                CODEX_PREVIEWS[index].progress as f32 / 100.0,
+                card,
+                &self.text.codex_entries[index],
+                selected,
+                index,
                 layout.scale,
             );
         }
@@ -1625,12 +1733,12 @@ impl GameMenuScene {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        let profile = profile_scene::profile_overview(language);
+        let profile = profile_scene::profile_overview(language, &self.profile_snapshot);
         self.text.profile_name = Some(upload_text(
             renderer,
             font,
             "game_menu_profile_name",
-            profile.callsign,
+            &profile.callsign,
             match language {
                 Language::Chinese => 27.0,
                 Language::English => 24.0,
@@ -1640,14 +1748,14 @@ impl GameMenuScene {
             renderer,
             font,
             "game_menu_profile_role",
-            profile.role,
+            &profile.role,
             18.0,
         )?);
         self.text.profile_id = Some(upload_text(
             renderer,
             font,
             "game_menu_profile_id",
-            profile.id_line,
+            &profile.id_line,
             17.0,
         )?);
         self.text.profile_level_label = Some(upload_text(
@@ -1661,14 +1769,17 @@ impl GameMenuScene {
             renderer,
             font,
             "game_menu_profile_level_value",
-            "28",
+            &self.profile_snapshot.level.to_string(),
             36.0,
         )?);
         self.text.profile_xp_value = Some(upload_text(
             renderer,
             font,
             "game_menu_profile_xp_value",
-            "8,650 / 15,000 XP",
+            &format!(
+                "{} / {} XP",
+                self.profile_snapshot.xp, self.profile_snapshot.xp_next
+            ),
             17.0,
         )?);
         self.text.profile_section_stats = Some(upload_text(
@@ -1732,7 +1843,7 @@ impl GameMenuScene {
                         renderer,
                         font,
                         &format!("game_menu_profile_core_value_{index}"),
-                        &format!("{}/10", stat.value),
+                        &format!("{}/{}", stat.value, stat.max),
                         15.0,
                     )?,
                 ))
@@ -1762,15 +1873,18 @@ impl GameMenuScene {
             })
             .collect::<Result<Vec<_>>>()?;
 
+        let inventory_slots = inventory_scene::inventory_slots(&self.inventory_snapshot);
+        let inventory_used = inventory_slots.iter().filter(|slot| slot.is_some()).count();
         self.text.inventory_capacity = Some(upload_text(
             renderer,
             font,
             "game_menu_inventory_capacity",
-            "8 / 24",
+            &format!("{inventory_used} / {}", inventory_slots.len()),
             17.0,
         )?);
-        self.text.inventory_slot_counts = inventory_scene::mvp_inventory_slots()
-            .into_iter()
+        self.text.inventory_slot_counts = inventory_slots
+            .iter()
+            .copied()
             .enumerate()
             .map(|(index, item)| match item {
                 Some(item) => Ok(Some(upload_text(
@@ -1783,7 +1897,8 @@ impl GameMenuScene {
                 None => Ok(None),
             })
             .collect::<Result<Vec<_>>>()?;
-        self.text.inventory_slot_details = upload_inventory_slot_details(renderer, font, language)?;
+        self.text.inventory_slot_details =
+            upload_inventory_slot_details(renderer, font, language, &self.inventory_snapshot)?;
         self.text.inventory_empty_title = Some(upload_text(
             renderer,
             font,
@@ -1817,31 +1932,38 @@ impl GameMenuScene {
             renderer,
             font,
             "game_menu_codex_capacity",
-            "56 / 128",
+            &format!(
+                "{} / {}",
+                self.codex_snapshot.unlocked_count(),
+                self.codex_snapshot.entries.len()
+            ),
             17.0,
         )?);
-        self.text.codex_cards = CODEX_PREVIEWS
+        self.text.codex_cards = codex_summary_views(&self.codex_snapshot, language)
             .iter()
             .enumerate()
-            .map(|(index, card)| {
-                Ok((
-                    upload_text(
+            .map(|(index, summary)| {
+                Ok(CodexSummaryText {
+                    label: upload_text(
                         renderer,
                         font,
                         &format!("game_menu_codex_label_{index}"),
-                        card.label.get(language),
+                        &summary.label,
                         22.0,
                     )?,
-                    upload_text(
+                    value: upload_text(
                         renderer,
                         font,
                         &format!("game_menu_codex_value_{index}"),
-                        codex_progress_label(index),
+                        &summary.value,
                         17.0,
                     )?,
-                ))
+                    ratio: summary.ratio,
+                })
             })
             .collect::<Result<Vec<_>>>()?;
+        self.text.codex_entries =
+            upload_codex_entry_cards(renderer, font, language, &self.codex_snapshot)?;
         self.text.map_labels = map_labels(language)
             .iter()
             .enumerate()
@@ -1988,6 +2110,9 @@ impl Scene for GameMenuScene {
         _dt: f32,
         input: &InputState,
     ) -> Result<SceneCommand<SceneId>> {
+        self.sync_codex_snapshot(ctx);
+        self.sync_save_snapshot(ctx);
+
         if self.language != ctx.language {
             self.language = ctx.language;
             self.text = GameMenuText::default();
@@ -2041,6 +2166,19 @@ impl Scene for GameMenuScene {
             }
             if input.just_pressed(Button::Down) {
                 self.move_inventory_selection(0, 1);
+            }
+        } else if self.active_tab == GameMenuTab::Codex {
+            if input.just_pressed(Button::Left) {
+                self.move_codex_selection(-1, 0);
+            }
+            if input.just_pressed(Button::Right) {
+                self.move_codex_selection(1, 0);
+            }
+            if input.just_pressed(Button::Up) {
+                self.move_codex_selection(0, -1);
+            }
+            if input.just_pressed(Button::Down) {
+                self.move_codex_selection(0, 1);
             }
         } else {
             if input.just_pressed(Button::Left) {
@@ -2136,13 +2274,22 @@ fn codex_thumbnail_texture_id(index: usize) -> &'static str {
     }
 }
 
+fn xp_ratio(profile: &PlayerProfileSave) -> f32 {
+    if profile.xp_next == 0 {
+        return 0.0;
+    }
+
+    profile.xp as f32 / profile.xp_next as f32
+}
+
 fn upload_inventory_slot_details(
     renderer: &mut dyn Renderer,
     font: &Font<'static>,
     language: Language,
+    inventory: &InventorySave,
 ) -> Result<Vec<Option<InventoryDetailText>>> {
     let mut details = Vec::with_capacity(grid::INVENTORY_SLOTS);
-    for (index, item) in inventory_scene::mvp_inventory_slots()
+    for (index, item) in inventory_scene::inventory_slots(inventory)
         .into_iter()
         .enumerate()
     {
@@ -2209,6 +2356,180 @@ fn upload_inventory_slot_details(
     }
 
     Ok(details)
+}
+
+#[derive(Clone, Debug)]
+struct CodexSummaryView {
+    label: String,
+    value: String,
+    ratio: f32,
+}
+
+fn codex_summary_views(snapshot: &CodexMenuSnapshot, language: Language) -> Vec<CodexSummaryView> {
+    let mut by_category = BTreeMap::<String, (usize, usize)>::new();
+    for entry in &snapshot.entries {
+        let counts = by_category.entry(entry.category.clone()).or_default();
+        counts.1 += 1;
+        if entry.unlocked {
+            counts.0 += 1;
+        }
+    }
+
+    let mut summaries = by_category
+        .into_iter()
+        .map(|(category, (unlocked, total))| CodexSummaryView {
+            label: category,
+            value: format!("{unlocked} / {total}"),
+            ratio: unlocked as f32 / total.max(1) as f32,
+        })
+        .collect::<Vec<_>>();
+    summaries.sort_by(|left, right| right.ratio.total_cmp(&left.ratio));
+    summaries.truncate(4);
+
+    if summaries.is_empty() {
+        summaries.push(CodexSummaryView {
+            label: match language {
+                Language::Chinese => "图鉴数据库".to_owned(),
+                Language::English => "Codex Database".to_owned(),
+            },
+            value: "0 / 0".to_owned(),
+            ratio: 0.0,
+        });
+    }
+
+    summaries
+}
+
+fn upload_codex_entry_cards(
+    renderer: &mut dyn Renderer,
+    font: &Font<'static>,
+    language: Language,
+    snapshot: &CodexMenuSnapshot,
+) -> Result<Vec<CodexEntryCardText>> {
+    snapshot
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            let title = if entry.unlocked {
+                entry.title.as_str()
+            } else {
+                locked_codex_title(language)
+            };
+            let description = if entry.unlocked {
+                non_empty_or(&entry.description, codex_empty_description(language))
+            } else {
+                locked_codex_description(language)
+            };
+            let description_lines = wrap_text(description, 54, 2);
+
+            Ok(CodexEntryCardText {
+                title: upload_text(
+                    renderer,
+                    font,
+                    &format!("game_menu_codex_entry_title_{index}"),
+                    title,
+                    19.0,
+                )?,
+                category: upload_text(
+                    renderer,
+                    font,
+                    &format!("game_menu_codex_entry_category_{index}"),
+                    &entry.category,
+                    14.0,
+                )?,
+                status: upload_text(
+                    renderer,
+                    font,
+                    &format!("game_menu_codex_entry_status_{index}"),
+                    codex_status_label(language, entry.unlocked),
+                    14.0,
+                )?,
+                description_lines: description_lines
+                    .iter()
+                    .enumerate()
+                    .map(|(line_index, line)| {
+                        upload_text(
+                            renderer,
+                            font,
+                            &format!("game_menu_codex_entry_desc_{index}_{line_index}"),
+                            line,
+                            13.0,
+                        )
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+                unlocked: entry.unlocked,
+            })
+        })
+        .collect()
+}
+
+fn locked_codex_title(language: Language) -> &'static str {
+    match language {
+        Language::Chinese => "未识别条目",
+        Language::English => "Undiscovered Entry",
+    }
+}
+
+fn codex_status_label(language: Language, unlocked: bool) -> &'static str {
+    match (language, unlocked) {
+        (Language::Chinese, true) => "已解锁",
+        (Language::Chinese, false) => "未扫描",
+        (Language::English, true) => "Unlocked",
+        (Language::English, false) => "Locked",
+    }
+}
+
+fn locked_codex_description(language: Language) -> &'static str {
+    match language {
+        Language::Chinese => "靠近目标并完成扫描后显示完整记录。",
+        Language::English => "Scan the target to unlock the full field record.",
+    }
+}
+
+fn codex_empty_description(language: Language) -> &'static str {
+    match language {
+        Language::Chinese => "该条目还没有正文记录。",
+        Language::English => "No field note has been written for this entry.",
+    }
+}
+
+fn wrap_text(text: &str, max_chars: usize, max_lines: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+
+    for word in text.split_whitespace() {
+        let next_len = if current.is_empty() {
+            word.len()
+        } else {
+            current.len() + 1 + word.len()
+        };
+        if next_len > max_chars && !current.is_empty() {
+            lines.push(current);
+            current = String::new();
+            if lines.len() == max_lines {
+                break;
+            }
+        }
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(word);
+    }
+
+    if !current.is_empty() && lines.len() < max_lines {
+        lines.push(current);
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+
+    lines
+}
+
+fn non_empty_or<'a>(value: &'a str, fallback: &'a str) -> &'a str {
+    let value = value.trim();
+    if value.is_empty() { fallback } else { value }
 }
 
 fn draw_crystal_glyph(renderer: &mut dyn Renderer, viewport: Vec2, rect: Rect, scale: f32) {
@@ -2699,6 +3020,96 @@ fn draw_inventory_slot(
                 Color::rgba(0.92, 1.0, 0.98, 1.0),
             );
         }
+    }
+}
+
+fn draw_codex_entry_card(
+    renderer: &mut dyn Renderer,
+    viewport: Vec2,
+    card: Rect,
+    entry: &CodexEntryCardText,
+    selected: bool,
+    index: usize,
+    scale: f32,
+) {
+    draw_inner_panel(renderer, viewport, card, scale);
+    if selected {
+        draw_border(
+            renderer,
+            viewport,
+            card,
+            2.0 * scale,
+            Color::rgba(0.58, 0.98, 1.0, 0.96),
+        );
+    }
+
+    let image_size = 58.0 * scale;
+    let image_rect = Rect::new(
+        Vec2::new(
+            card.right() - image_size - 16.0 * scale,
+            card.origin.y + 14.0 * scale,
+        ),
+        Vec2::new(image_size, image_size),
+    );
+    draw_codex_glyph(renderer, viewport, image_rect, index, scale);
+    if !entry.unlocked {
+        draw_screen_rect(
+            renderer,
+            viewport,
+            image_rect,
+            Color::rgba(0.0, 0.0, 0.0, 0.46),
+        );
+    }
+
+    let text_x = card.origin.x + 18.0 * scale;
+    let title_color = if entry.unlocked {
+        color::TEXT_PRIMARY
+    } else {
+        color::TEXT_MUTED
+    };
+    draw_text_strong(
+        renderer,
+        &entry.title,
+        viewport,
+        text_x,
+        card.origin.y + 10.0 * scale,
+        title_color,
+        scale,
+    );
+    draw_text(
+        renderer,
+        &entry.category,
+        viewport,
+        text_x,
+        card.origin.y + 34.0 * scale,
+        Color::rgba(0.46, 0.88, 0.96, 0.96),
+    );
+    draw_text(
+        renderer,
+        &entry.status,
+        viewport,
+        card.right() - image_size - 16.0 * scale,
+        image_rect.bottom() + 4.0 * scale,
+        if entry.unlocked {
+            color::TEXT_GREEN
+        } else {
+            color::TEXT_DIM
+        },
+    );
+
+    for (line_index, line) in entry.description_lines.iter().enumerate() {
+        draw_text(
+            renderer,
+            line,
+            viewport,
+            text_x,
+            card.origin.y + (56.0 + line_index as f32 * 17.0) * scale,
+            if entry.unlocked {
+                color::TEXT_SECONDARY
+            } else {
+                color::TEXT_DIM
+            },
+        );
     }
 }
 
@@ -3362,8 +3773,9 @@ mod tests {
 
     #[test]
     fn game_menu_reads_shared_profile_and_inventory_views() {
-        let profile = profile_scene::profile_overview(Language::Chinese);
-        let inventory_slots = inventory_scene::mvp_inventory_slots();
+        let save = crate::save::SaveData::default();
+        let profile = profile_scene::profile_overview(Language::Chinese, &save.profile);
+        let inventory_slots = inventory_scene::inventory_slots(&save.inventory);
 
         assert_eq!(profile.vital_stats.len(), 4);
         assert_eq!(profile.core_stats.len(), 5);
@@ -3418,5 +3830,43 @@ mod tests {
 
         assert!(first.right() < second.origin.x);
         assert!(first.bottom() <= panel.bottom());
+    }
+
+    #[test]
+    fn codex_snapshot_tracks_unlocked_entries() {
+        let mut database = content::CodexDatabase::new("Overworld");
+        database.entries.push(content::CodexEntry {
+            id: "codex.test.flora".to_owned(),
+            category: "Flora".to_owned(),
+            title: "Test Flora".to_owned(),
+            description: "A plant used by the menu tests.".to_owned(),
+            scan_time: Some(1.25),
+            unlock_tags: vec!["flora".to_owned()],
+            image: None,
+        });
+        database.entries.push(content::CodexEntry {
+            id: "codex.test.ruin".to_owned(),
+            category: "Ruins".to_owned(),
+            title: "Test Ruin".to_owned(),
+            description: "A ruin used by the menu tests.".to_owned(),
+            scan_time: Some(1.25),
+            unlock_tags: vec!["ruin".to_owned()],
+            image: None,
+        });
+        database.reindex();
+
+        let mut ctx = GameContext {
+            codex_database: database,
+            ..GameContext::default()
+        };
+        ctx.scanned_codex_ids.insert("codex.test.flora".to_owned());
+
+        let snapshot = CodexMenuSnapshot::from_context(&ctx);
+        let summaries = codex_summary_views(&snapshot, Language::English);
+
+        assert_eq!(snapshot.entries.len(), 2);
+        assert_eq!(snapshot.unlocked_count(), 1);
+        assert!(snapshot.entries[0].unlocked);
+        assert!(summaries.iter().any(|summary| summary.label == "Flora"));
     }
 }

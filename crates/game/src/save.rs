@@ -1,0 +1,461 @@
+use std::{
+    collections::{BTreeSet, HashSet},
+    fs,
+    path::Path,
+};
+
+use anyhow::{Context, Result};
+use runtime::Vec2;
+use serde::{Deserialize, Serialize};
+
+pub const DEFAULT_SAVE_PATH: &str = "saves/profile_01.ron";
+pub const SAVE_SCHEMA_VERSION: u32 = 1;
+const DEFAULT_INVENTORY_SLOTS: usize = 24;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SaveData {
+    pub version: u32,
+    pub profile: PlayerProfileSave,
+    pub inventory: InventorySave,
+    pub world: WorldSave,
+    pub codex: CodexSave,
+    pub settings: SettingsSave,
+}
+
+impl Default for SaveData {
+    fn default() -> Self {
+        Self {
+            version: SAVE_SCHEMA_VERSION,
+            profile: PlayerProfileSave::default(),
+            inventory: InventorySave::default(),
+            world: WorldSave::default(),
+            codex: CodexSave::default(),
+            settings: SettingsSave::default(),
+        }
+    }
+}
+
+impl SaveData {
+    pub fn load_or_default(path: &Path) -> Self {
+        Self::load(path).unwrap_or_default()
+    }
+
+    pub fn load(path: &Path) -> Result<Self> {
+        let source = fs::read_to_string(path)
+            .with_context(|| format!("failed to read save file {}", path.display()))?;
+        let mut data: Self = ron::from_str(&source)
+            .with_context(|| format!("failed to parse save file {}", path.display()))?;
+        data.version = SAVE_SCHEMA_VERSION;
+        data.normalize();
+        Ok(data)
+    }
+
+    pub fn save(&self, path: &Path) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create save directory {}", parent.display()))?;
+        }
+
+        let pretty = ron::ser::PrettyConfig::new();
+        let source =
+            ron::ser::to_string_pretty(self, pretty).context("failed to serialize save")?;
+        let temp_path = path.with_extension("ron.tmp");
+        fs::write(&temp_path, source)
+            .with_context(|| format!("failed to write temporary save {}", temp_path.display()))?;
+        if path.exists() {
+            fs::remove_file(path)
+                .with_context(|| format!("failed to remove old save {}", path.display()))?;
+        }
+        fs::rename(&temp_path, path)
+            .with_context(|| format!("failed to replace save file {}", path.display()))?;
+        Ok(())
+    }
+
+    pub fn normalize(&mut self) {
+        if self.profile.vitals.is_empty() {
+            self.profile.vitals = PlayerProfileSave::default().vitals;
+        }
+        if self.profile.attributes.is_empty() {
+            self.profile.attributes = PlayerProfileSave::default().attributes;
+        }
+        if self.profile.research.is_empty() {
+            self.profile.research = PlayerProfileSave::default().research;
+        }
+        if self.profile.resistances.is_empty() {
+            self.profile.resistances = PlayerProfileSave::default().resistances;
+        }
+        if self.inventory.slots.is_empty() {
+            self.inventory = InventorySave::default();
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PlayerProfileSave {
+    pub callsign: String,
+    pub role: String,
+    pub field_id: String,
+    pub level: u32,
+    pub xp: u32,
+    pub xp_next: u32,
+    pub vitals: Vec<MeterSave>,
+    pub attributes: Vec<ScoreSave>,
+    pub research: Vec<MeterSave>,
+    pub resistances: Vec<MeterSave>,
+}
+
+impl Default for PlayerProfileSave {
+    fn default() -> Self {
+        Self {
+            callsign: "Stardust Surveyor".to_owned(),
+            role: "Forward Explorer / Sample Analysis".to_owned(),
+            field_id: "AA-01".to_owned(),
+            level: 28,
+            xp: 8_650,
+            xp_next: 15_000,
+            vitals: vec![
+                MeterSave::new("health", 86, 100),
+                MeterSave::new("stamina", 72, 100),
+                MeterSave::new("suit", 91, 100),
+                MeterSave::new("load", 37, 60),
+            ],
+            attributes: vec![
+                ScoreSave::new("survival", 7, 10),
+                ScoreSave::new("mobility", 6, 10),
+                ScoreSave::new("scanning", 8, 10),
+                ScoreSave::new("harvesting", 6, 10),
+                ScoreSave::new("analysis", 7, 10),
+            ],
+            research: vec![
+                MeterSave::new("bio", 42, 100),
+                MeterSave::new("mineral", 55, 100),
+                MeterSave::new("ruin", 31, 100),
+                MeterSave::new("data", 68, 100),
+            ],
+            resistances: vec![
+                MeterSave::new("spores", 40, 100),
+                MeterSave::new("heat", 35, 100),
+                MeterSave::new("radiation", 28, 100),
+                MeterSave::new("oxygen", 62, 100),
+            ],
+        }
+    }
+}
+
+impl PlayerProfileSave {
+    pub fn meter(&self, id: &str) -> Option<&MeterSave> {
+        self.vitals
+            .iter()
+            .chain(self.research.iter())
+            .chain(self.resistances.iter())
+            .find(|stat| stat.id == id)
+    }
+
+    pub fn score(&self, id: &str) -> Option<&ScoreSave> {
+        self.attributes.iter().find(|stat| stat.id == id)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MeterSave {
+    pub id: String,
+    pub value: u32,
+    pub max: u32,
+}
+
+impl MeterSave {
+    pub fn new(id: impl Into<String>, value: u32, max: u32) -> Self {
+        Self {
+            id: id.into(),
+            value,
+            max,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ScoreSave {
+    pub id: String,
+    pub value: u32,
+    pub max: u32,
+}
+
+impl ScoreSave {
+    pub fn new(id: impl Into<String>, value: u32, max: u32) -> Self {
+        Self {
+            id: id.into(),
+            value,
+            max,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InventorySave {
+    pub slots: Vec<Option<ItemStackSave>>,
+    pub quickbar: Vec<Option<usize>>,
+    pub selected_slot: usize,
+    pub active_category: String,
+}
+
+impl InventorySave {
+    pub fn item_quantity(&self, item_id: &str) -> u32 {
+        self.slots
+            .iter()
+            .flatten()
+            .filter(|stack| stack.item_id == item_id)
+            .map(|stack| stack.quantity)
+            .sum()
+    }
+
+    pub fn has_item(&self, item_id: &str) -> bool {
+        self.item_quantity(item_id) > 0
+    }
+
+    pub fn add_item(
+        &mut self,
+        item_id: impl Into<String>,
+        quantity: u32,
+        max_stack: u32,
+        locked: bool,
+    ) -> u32 {
+        let item_id = item_id.into();
+        if item_id.trim().is_empty() || quantity == 0 {
+            return 0;
+        }
+
+        let max_stack = max_stack.max(1);
+        let mut remaining = quantity;
+        for stack in self.slots.iter_mut().flatten() {
+            if stack.item_id != item_id || stack.quantity >= max_stack {
+                continue;
+            }
+
+            let added = remaining.min(max_stack - stack.quantity);
+            stack.quantity += added;
+            remaining -= added;
+            if remaining == 0 {
+                return quantity;
+            }
+        }
+
+        for slot in &mut self.slots {
+            if slot.is_some() {
+                continue;
+            }
+
+            let added = remaining.min(max_stack);
+            *slot = Some(ItemStackSave {
+                item_id: item_id.clone(),
+                quantity: added,
+                locked,
+            });
+            remaining -= added;
+            if remaining == 0 {
+                return quantity;
+            }
+        }
+
+        quantity - remaining
+    }
+}
+
+impl Default for InventorySave {
+    fn default() -> Self {
+        let mut slots = vec![None; DEFAULT_INVENTORY_SLOTS];
+        for (index, stack) in [
+            ItemStackSave::new("alien_crystal_sample", 3, false),
+            ItemStackSave::new("bio_sample_vial", 2, false),
+            ItemStackSave::new("data_shard", 8, false),
+            ItemStackSave::new("energy_cell", 4, false),
+            ItemStackSave::new("scrap_part", 17, false),
+            ItemStackSave::new("ruin_key", 1, true),
+            ItemStackSave::new("scanner_tool", 1, true),
+            ItemStackSave::new("med_injector", 2, false),
+            ItemStackSave::new("coolant_canister", 1, false),
+            ItemStackSave::new("metal_fragment", 9, false),
+            ItemStackSave::new("glow_fungus_sample", 2, false),
+            ItemStackSave::new("artifact_core", 1, true),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            slots[index] = Some(stack);
+        }
+
+        Self {
+            slots,
+            quickbar: vec![Some(6), Some(7), Some(3), Some(2), Some(5), Some(11)],
+            selected_slot: 0,
+            active_category: "samples".to_owned(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ItemStackSave {
+    pub item_id: String,
+    pub quantity: u32,
+    pub locked: bool,
+}
+
+impl Default for ItemStackSave {
+    fn default() -> Self {
+        Self {
+            item_id: String::new(),
+            quantity: 1,
+            locked: false,
+        }
+    }
+}
+
+impl ItemStackSave {
+    pub fn new(item_id: impl Into<String>, quantity: u32, locked: bool) -> Self {
+        Self {
+            item_id: item_id.into(),
+            quantity,
+            locked,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WorldSave {
+    pub current_scene: String,
+    pub map_path: String,
+    pub spawn_id: Option<String>,
+    pub player_position: Option<SaveVec2>,
+    pub collected_entities: BTreeSet<String>,
+}
+
+impl Default for WorldSave {
+    fn default() -> Self {
+        Self {
+            current_scene: "Overworld".to_owned(),
+            map_path: "assets/data/maps/overworld_landing_site.ron".to_owned(),
+            spawn_id: Some("player_start".to_owned()),
+            player_position: None,
+            collected_entities: BTreeSet::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CodexSave {
+    pub scanned_ids: BTreeSet<String>,
+}
+
+impl CodexSave {
+    pub fn from_runtime(scanned_ids: &HashSet<String>) -> Self {
+        Self {
+            scanned_ids: scanned_ids.iter().cloned().collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SettingsSave {
+    pub language: String,
+}
+
+impl Default for SettingsSave {
+    fn default() -> Self {
+        Self {
+            language: "Chinese".to_owned(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SaveVec2 {
+    pub x: f32,
+    pub y: f32,
+}
+
+impl From<Vec2> for SaveVec2 {
+    fn from(value: Vec2) -> Self {
+        Self {
+            x: value.x,
+            y: value.y,
+        }
+    }
+}
+
+impl From<SaveVec2> for Vec2 {
+    fn from(value: SaveVec2) -> Self {
+        Vec2::new(value.x, value.y)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_save_contains_core_runtime_state() {
+        let save = SaveData::default();
+
+        assert_eq!(save.version, SAVE_SCHEMA_VERSION);
+        assert!(!save.profile.vitals.is_empty());
+        assert!(!save.inventory.slots.is_empty());
+        assert_eq!(save.world.current_scene, "Overworld");
+    }
+
+    #[test]
+    fn codex_save_sorts_runtime_ids() {
+        let scanned = HashSet::from(["codex.b".to_owned(), "codex.a".to_owned()]);
+        let save = CodexSave::from_runtime(&scanned);
+
+        assert_eq!(
+            save.scanned_ids.into_iter().collect::<Vec<_>>(),
+            vec!["codex.a".to_owned(), "codex.b".to_owned()]
+        );
+    }
+
+    #[test]
+    fn inventory_add_item_stacks_then_uses_empty_slots() {
+        let mut inventory = InventorySave {
+            slots: vec![Some(ItemStackSave::new("bio_sample_vial", 9, false)), None],
+            quickbar: Vec::new(),
+            selected_slot: 0,
+            active_category: "samples".to_owned(),
+        };
+
+        let added = inventory.add_item("bio_sample_vial", 3, 10, false);
+
+        assert_eq!(added, 3);
+        assert_eq!(
+            inventory.slots[0].as_ref().map(|stack| stack.quantity),
+            Some(10)
+        );
+        assert_eq!(
+            inventory.slots[1].as_ref().map(|stack| stack.quantity),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn save_file_can_be_written_more_than_once() {
+        let path = std::env::temp_dir().join(format!(
+            "alien_archive_save_test_{}.ron",
+            std::process::id()
+        ));
+        let mut save = SaveData::default();
+
+        save.save(&path).expect("first save should write");
+        save.profile.level += 1;
+        save.save(&path).expect("second save should replace");
+
+        let loaded = SaveData::load(&path).expect("save should load");
+        assert_eq!(loaded.profile.level, save.profile.level);
+
+        let _ = fs::remove_file(path);
+    }
+}

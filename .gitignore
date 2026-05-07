@@ -4,5 +4,6 @@
 *.tmp
 *.ron.bak
 /.editor/
+/saves/
 
 /assets

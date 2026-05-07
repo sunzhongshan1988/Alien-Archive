@@ -4,6 +4,7 @@ use anyhow::Result;
 use runtime::{Button, Color, InputState, Rect, Renderer, SceneCommand, Vec2};
 use rusttype::Font;
 
+use crate::save::PlayerProfileSave;
 use crate::ui::text::{TextSprite, draw_text, load_ui_font, upload_text};
 
 use super::{GameContext, Language, RenderContext, Scene, SceneId};
@@ -59,9 +60,9 @@ struct ScoreStat {
 
 #[derive(Clone)]
 pub(super) struct ProfileOverview {
-    pub(super) callsign: &'static str,
-    pub(super) role: &'static str,
-    pub(super) id_line: &'static str,
+    pub(super) callsign: String,
+    pub(super) role: String,
+    pub(super) id_line: String,
     pub(super) vital_stats: Vec<ProfilePercentView>,
     pub(super) core_stats: Vec<ProfileScoreView>,
     pub(super) research_stats: Vec<ProfilePercentView>,
@@ -78,6 +79,7 @@ pub(super) struct ProfilePercentView {
 pub(super) struct ProfileScoreView {
     pub(super) label: &'static str,
     pub(super) value: u32,
+    pub(super) max: u32,
 }
 
 const VITAL_STATS: &[PercentStat] = &[
@@ -212,13 +214,15 @@ struct ProfileText {
 
 pub struct ProfileScene {
     language: Language,
+    profile: PlayerProfileSave,
     text: ProfileText,
 }
 
 impl ProfileScene {
-    pub fn new(language: Language) -> Self {
+    pub fn new(ctx: &GameContext) -> Self {
         Self {
-            language,
+            language: ctx.language,
+            profile: ctx.save_data.profile.clone(),
             text: ProfileText::default(),
         }
     }
@@ -529,7 +533,7 @@ impl ProfileScene {
                 Vec2::new(origin.x, origin.y + 22.0 * scale),
                 Vec2::new(BAR_WIDTH * scale, BAR_HEIGHT * scale),
             ),
-            stat.value as f32 / stat.max as f32,
+            percent_stat_ratio(&self.profile, stat),
             Color::rgba(0.33, 0.86, 1.0, 0.95),
             scale,
         );
@@ -596,8 +600,10 @@ impl ProfileScene {
         }
 
         let pip_y = origin.y + 30.0 * scale;
+        let score = score_stat_value(&self.profile, stat);
+        let max = score_stat_max(&self.profile, stat).max(1).min(10);
         for pip in 0..10 {
-            let filled = pip < stat.value as usize;
+            let filled = pip < score.min(max) as usize;
             let rect = Rect::new(
                 Vec2::new(
                     origin.x + pip as f32 * (SCORE_PIP_SIZE + SCORE_PIP_GAP) * scale,
@@ -652,6 +658,7 @@ impl ProfileScene {
 
     fn upload_textures(&mut self, renderer: &mut dyn Renderer, font: &Font<'static>) -> Result<()> {
         let language = self.language;
+        let overview = profile_overview(language, &self.profile);
         self.text = ProfileText {
             language: Some(language),
             ..ProfileText::default()
@@ -671,7 +678,7 @@ impl ProfileScene {
             renderer,
             font,
             "profile_callsign",
-            callsign(language),
+            &overview.callsign,
             match language {
                 Language::Chinese => 30.0,
                 Language::English => 27.0,
@@ -681,14 +688,14 @@ impl ProfileScene {
             renderer,
             font,
             "profile_role",
-            role(language),
+            &overview.role,
             20.0,
         )?);
         self.text.id_line = Some(upload_text(
             renderer,
             font,
             "profile_id_line",
-            id_line(language),
+            &overview.id_line,
             18.0,
         )?);
         self.text.status_header = Some(upload_text(
@@ -747,7 +754,11 @@ impl ProfileScene {
                     renderer,
                     font,
                     &format!("profile_core_value_{}", stat.id),
-                    &format!("{}/10", stat.value),
+                    &format!(
+                        "{}/{}",
+                        score_stat_value(&self.profile, stat),
+                        score_stat_max(&self.profile, stat)
+                    ),
                     18.0,
                 )?,
             );
@@ -796,7 +807,7 @@ impl ProfileScene {
             renderer,
             font,
             &format!("{prefix}_value_{}", stat.id),
-            &format!("{}/{}", stat.value, stat.max),
+            &format_percent_stat(&self.profile, stat),
             16.0,
         )?;
 
@@ -857,6 +868,10 @@ impl Scene for ProfileScene {
     ) -> Result<SceneCommand<SceneId>> {
         if self.language != ctx.language {
             self.language = ctx.language;
+            self.text = ProfileText::default();
+        }
+        if self.profile != ctx.save_data.profile {
+            self.profile = ctx.save_data.profile.clone();
             self.text = ProfileText::default();
         }
 
@@ -1039,32 +1054,33 @@ fn contain_rect(frame: Rect, image_size: Vec2) -> Rect {
     )
 }
 
-pub(super) fn profile_overview(language: Language) -> ProfileOverview {
+pub(super) fn profile_overview(language: Language, profile: &PlayerProfileSave) -> ProfileOverview {
     ProfileOverview {
-        callsign: callsign(language),
-        role: role(language),
-        id_line: id_line(language),
+        callsign: callsign(language, profile),
+        role: role(language, profile),
+        id_line: id_line(language, profile),
         vital_stats: VITAL_STATS
             .iter()
             .map(|stat| ProfilePercentView {
                 label: stat.label.get(language),
-                value: stat.value,
-                max: stat.max,
+                value: percent_stat_value(profile, stat),
+                max: percent_stat_max(profile, stat),
             })
             .collect(),
         core_stats: CORE_STATS
             .iter()
             .map(|stat| ProfileScoreView {
                 label: stat.label.get(language),
-                value: stat.value,
+                value: score_stat_value(profile, stat),
+                max: score_stat_max(profile, stat),
             })
             .collect(),
         research_stats: RESEARCH_STATS
             .iter()
             .map(|stat| ProfilePercentView {
                 label: stat.label.get(language),
-                value: stat.value,
-                max: stat.max,
+                value: percent_stat_value(profile, stat),
+                max: percent_stat_max(profile, stat),
             })
             .collect(),
     }
@@ -1077,25 +1093,91 @@ fn profile_title(language: Language) -> &'static str {
     }
 }
 
-fn callsign(language: Language) -> &'static str {
+fn default_callsign(language: Language) -> &'static str {
     match language {
         Language::Chinese => "星尘调查员",
         Language::English => "Stardust Surveyor",
     }
 }
 
-fn role(language: Language) -> &'static str {
+fn default_role(language: Language) -> &'static str {
     match language {
         Language::Chinese => "先遣探索员 / 样本分析",
         Language::English => "Forward Explorer / Sample Analysis",
     }
 }
 
-fn id_line(language: Language) -> &'static str {
+fn callsign(language: Language, profile: &PlayerProfileSave) -> String {
+    saved_or_localized(
+        &profile.callsign,
+        default_callsign(Language::English),
+        default_callsign(language),
+    )
+}
+
+fn role(language: Language, profile: &PlayerProfileSave) -> String {
+    saved_or_localized(
+        &profile.role,
+        default_role(Language::English),
+        default_role(language),
+    )
+}
+
+fn id_line(language: Language, profile: &PlayerProfileSave) -> String {
+    let field_id = if profile.field_id.trim().is_empty() {
+        "AA-01"
+    } else {
+        profile.field_id.trim()
+    };
+
     match language {
-        Language::Chinese => "外勤编号: AA-01",
-        Language::English => "Field ID: AA-01",
+        Language::Chinese => format!("外勤编号: {field_id}"),
+        Language::English => format!("Field ID: {field_id}"),
     }
+}
+
+fn saved_or_localized(value: &str, english_default: &str, localized_default: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed == english_default {
+        localized_default.to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
+fn percent_stat_value(profile: &PlayerProfileSave, stat: &PercentStat) -> u32 {
+    profile
+        .meter(stat.id)
+        .map_or(stat.value, |meter| meter.value)
+}
+
+fn percent_stat_max(profile: &PlayerProfileSave, stat: &PercentStat) -> u32 {
+    profile
+        .meter(stat.id)
+        .map_or(stat.max, |meter| meter.max)
+        .max(1)
+}
+
+fn percent_stat_ratio(profile: &PlayerProfileSave, stat: &PercentStat) -> f32 {
+    percent_stat_value(profile, stat) as f32 / percent_stat_max(profile, stat) as f32
+}
+
+fn format_percent_stat(profile: &PlayerProfileSave, stat: &PercentStat) -> String {
+    format!(
+        "{}/{}",
+        percent_stat_value(profile, stat),
+        percent_stat_max(profile, stat)
+    )
+}
+
+fn score_stat_value(profile: &PlayerProfileSave, stat: &ScoreStat) -> u32 {
+    profile
+        .score(stat.id)
+        .map_or(stat.value, |score| score.value)
+}
+
+fn score_stat_max(profile: &PlayerProfileSave, stat: &ScoreStat) -> u32 {
+    profile.score(stat.id).map_or(10, |score| score.max).max(1)
 }
 
 fn status_header(language: Language) -> &'static str {
@@ -1169,9 +1251,9 @@ mod tests {
     fn profile_text_has_chinese_and_english_strings() {
         for language in Language::SUPPORTED {
             assert!(!profile_title(language).is_empty());
-            assert!(!callsign(language).is_empty());
-            assert!(!role(language).is_empty());
-            assert!(!id_line(language).is_empty());
+            assert!(!default_callsign(language).is_empty());
+            assert!(!default_role(language).is_empty());
+            assert!(!id_line(language, &PlayerProfileSave::default()).is_empty());
             assert!(!status_header(language).is_empty());
             assert!(!core_header(language).is_empty());
             assert!(!research_header(language).is_empty());
@@ -1205,5 +1287,21 @@ mod tests {
         assert!((contained.size.x / contained.size.y - 1024.0 / 1536.0).abs() < 0.001);
         assert!(contained.size.x <= frame.size.x);
         assert!(contained.size.y <= frame.size.y);
+    }
+
+    #[test]
+    fn profile_overview_uses_saved_profile_values() {
+        let mut profile = PlayerProfileSave::default();
+        profile.callsign = "Custom Scout".to_owned();
+        profile.field_id = "AA-77".to_owned();
+        profile.vitals[0].value = 44;
+        profile.attributes[0].value = 9;
+
+        let overview = profile_overview(Language::English, &profile);
+
+        assert_eq!(overview.callsign, "Custom Scout");
+        assert_eq!(overview.id_line, "Field ID: AA-77");
+        assert_eq!(overview.vital_stats[0].value, 44);
+        assert_eq!(overview.core_stats[0].value, 9);
     }
 }

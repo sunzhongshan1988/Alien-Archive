@@ -7,9 +7,10 @@ mod ui;
 mod util;
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{BTreeSet, HashMap, VecDeque},
     fs,
     path::PathBuf,
+    process::Command,
     time::{Duration, Instant},
 };
 
@@ -27,8 +28,9 @@ use assets::{
     load_thumbnail,
 };
 use content::{
-    AnchorKind, AssetDatabase, AssetKind, DEFAULT_ASSET_DB_PATH, DEFAULT_MAP_PATH, InstanceRect,
-    LayerKind, MapDocument, MapValidationIssue, MapValidationSeverity, SnapMode, validate_map,
+    AnchorKind, AssetDatabase, AssetKind, CodexDatabase, DEFAULT_ASSET_DB_PATH,
+    DEFAULT_CODEX_DB_PATH, DEFAULT_MAP_PATH, InstanceRect, LayerKind, MapDocument,
+    MapValidationIssue, MapValidationSeverity, SnapMode, UnlockRule, validate_map_with_codex,
 };
 use eframe::egui::{
     self, Color32, Context as EguiContext, Key, Modifiers, Pos2, Rect, Sense, Shape, Stroke,
@@ -44,6 +46,7 @@ use ui::toolbar::{
 };
 use util::{geometry::*, ids::*, sanitize::*};
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MenuCommand {
     NewMap,
@@ -52,6 +55,7 @@ enum MenuCommand {
     RefreshMaps,
     Save,
     SaveAs,
+    SaveAndRun,
     DeleteMap,
     RevertMap,
     Undo,
@@ -217,6 +221,23 @@ impl SelectedItem {
     }
 }
 
+#[derive(Clone, Debug)]
+struct OutlinerBadge {
+    label: &'static str,
+    color: Color32,
+}
+
+#[derive(Clone, Debug)]
+struct OutlinerEntry {
+    group: &'static str,
+    label: String,
+    detail: String,
+    search_text: String,
+    selection: Option<SelectedItem>,
+    focus_world: Vec2,
+    badges: Vec<OutlinerBadge>,
+}
+
 struct EditorApp {
     native_menu: native_menu::NativeMenu,
     project_root: PathBuf,
@@ -232,6 +253,8 @@ struct EditorApp {
     registry: AssetRegistry,
     asset_database: AssetDatabase,
     asset_db_dirty: bool,
+    codex_database: Option<CodexDatabase>,
+    codex_db_status: String,
     show_asset_dialog: bool,
     show_unregistered_assets: bool,
     asset_scan_root: PathBuf,
@@ -253,6 +276,7 @@ struct EditorApp {
     collision_brush_h: i32,
     rectangle_erase_mode: bool,
     asset_search: String,
+    outliner_search: String,
     asset_kind_filter: Option<AssetKind>,
     show_grid: bool,
     show_collision: bool,
@@ -276,6 +300,7 @@ struct EditorApp {
     show_zone_labels: bool,
     pan: Vec2,
     zoom: f32,
+    pending_focus_world: Option<Vec2>,
     mouse_tile: Option<[i32; 2]>,
     thumbnails: HashMap<String, TextureHandle>,
     status: String,
@@ -296,6 +321,7 @@ impl EditorApp {
                 AssetDatabase::new("Overworld")
             });
         let registry = AssetRegistry::from_database(&project_root, asset_database.clone());
+        let (codex_database, codex_db_status) = load_codex_database(&project_root);
         let document =
             MapDocument::load(&map_path).unwrap_or_else(|_| MapDocument::new_landing_site());
         let save_as_id = document.id.clone();
@@ -314,6 +340,8 @@ impl EditorApp {
             registry,
             asset_database,
             asset_db_dirty: false,
+            codex_database,
+            codex_db_status,
             show_asset_dialog: false,
             show_unregistered_assets: false,
             asset_scan_root: project_root.join("assets").join("sprites"),
@@ -335,6 +363,7 @@ impl EditorApp {
             collision_brush_h: 1,
             rectangle_erase_mode: false,
             asset_search: String::new(),
+            outliner_search: String::new(),
             asset_kind_filter: None,
             show_grid: true,
             show_collision: true,
@@ -358,6 +387,7 @@ impl EditorApp {
             show_zone_labels: true,
             pan: vec2(48.0, 48.0),
             zoom: 1.0,
+            pending_focus_world: None,
             mouse_tile: None,
             thumbnails: HashMap::new(),
             status: "Ready".to_owned(),
@@ -544,8 +574,11 @@ impl EditorApp {
             MenuCommand::OpenMapDialog => self.open_map_dialog(),
             MenuCommand::OpenSelectedMap => self.open_selected_map(),
             MenuCommand::RefreshMaps => self.refresh_map_entries(),
-            MenuCommand::Save => self.save_map(),
+            MenuCommand::Save => {
+                self.save_map();
+            }
             MenuCommand::SaveAs => self.save_map_as(),
+            MenuCommand::SaveAndRun => self.save_and_run_current_map(),
             MenuCommand::DeleteMap => {
                 self.delete_confirm_path = Some(self.selected_map_path.clone());
             }
@@ -593,7 +626,7 @@ impl EditorApp {
         }
     }
 
-    fn save_map(&mut self) {
+    fn save_map(&mut self) -> bool {
         self.validation_issues = self.validate_current_map();
         if self
             .validation_issues
@@ -602,7 +635,7 @@ impl EditorApp {
         {
             self.show_validation_panel = true;
             self.status = "保存失败：地图校验有错误".to_owned();
-            return;
+            return false;
         }
 
         match self.document.save(&self.map_path) {
@@ -616,9 +649,11 @@ impl EditorApp {
                     "Saved {}",
                     display_project_path(&self.project_root, &self.map_path)
                 );
+                true
             }
             Err(error) => {
                 self.status = format!("Save failed: {error:#}");
+                false
             }
         }
     }
@@ -635,6 +670,58 @@ impl EditorApp {
         self.map_path = maps_dir(&self.project_root).join(format!("{id}.ron"));
         self.selected_map_path = self.map_path.clone();
         self.save_map();
+    }
+
+    fn save_and_run_current_map(&mut self) {
+        if !self.save_map() {
+            return;
+        }
+
+        let map_arg = self.current_map_launch_path();
+        let spawn_id = self
+            .document
+            .spawns
+            .iter()
+            .map(|spawn| spawn.id.trim())
+            .find(|id| !id.is_empty())
+            .map(str::to_owned);
+        let scene_arg = launch_scene_for_mode(&self.document.mode);
+
+        let mut command = Command::new("cargo");
+        command
+            .current_dir(&self.project_root)
+            .arg("run")
+            .arg("-p")
+            .arg("alien_archive")
+            .arg("--")
+            .arg("--scene")
+            .arg(scene_arg)
+            .arg("--map")
+            .arg(&map_arg);
+        if let Some(spawn_id) = spawn_id.as_deref() {
+            command.arg("--spawn").arg(spawn_id);
+        }
+
+        match command.spawn() {
+            Ok(mut child) => {
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+                let spawn_note = spawn_id
+                    .as_deref()
+                    .map(|id| format!(" / spawn {id}"))
+                    .unwrap_or_default();
+                self.status = format!("已启动游戏预览：{map_arg}{spawn_note}");
+            }
+            Err(error) => {
+                self.status = format!("启动游戏失败：{error}");
+            }
+        }
+    }
+
+    fn current_map_launch_path(&self) -> String {
+        project_relative_path(&self.project_root, &self.map_path)
+            .unwrap_or_else(|| self.map_path.to_string_lossy().replace('\\', "/"))
     }
 
     fn open_map_dialog(&mut self) {
@@ -747,11 +834,26 @@ impl EditorApp {
     }
 
     fn validate_current_map(&self) -> Vec<MapValidationIssue> {
-        validate_map(&self.document, &self.asset_database)
+        validate_map_with_codex(
+            &self.document,
+            &self.asset_database,
+            self.codex_database.as_ref(),
+        )
     }
 
     fn asset_db_path(&self) -> PathBuf {
         self.project_root.join(DEFAULT_ASSET_DB_PATH)
+    }
+
+    fn codex_db_path(&self) -> PathBuf {
+        self.project_root.join(DEFAULT_CODEX_DB_PATH)
+    }
+
+    fn reload_codex_database(&mut self) {
+        let (database, status) = load_codex_database(&self.project_root);
+        self.codex_database = database;
+        self.codex_db_status = status.clone();
+        self.status = status;
     }
 
     fn reload_asset_database(&mut self, ctx: &EguiContext) {
@@ -1348,6 +1450,73 @@ impl EditorApp {
             .and_then(|id| self.registry.get(id))
     }
 
+    fn entity_type_options(&self) -> Vec<String> {
+        let mut values = DEFAULT_ENTITY_TYPES
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect::<BTreeSet<_>>();
+
+        for asset in self.registry.assets() {
+            if let Some(entity_type) = &asset.entity_type {
+                if !entity_type.trim().is_empty() {
+                    values.insert(entity_type.clone());
+                }
+            }
+        }
+        for entity in &self.document.layers.entities {
+            if !entity.entity_type.trim().is_empty() {
+                values.insert(entity.entity_type.clone());
+            }
+        }
+
+        values.into_iter().collect()
+    }
+
+    fn codex_id_options(&self) -> Vec<String> {
+        let mut values = BTreeSet::new();
+        if let Some(database) = &self.codex_database {
+            for id in database.ids() {
+                values.insert(id.to_owned());
+            }
+        }
+        for asset in self.registry.assets() {
+            if let Some(codex_id) = &asset.codex_id {
+                if !codex_id.trim().is_empty() {
+                    values.insert(codex_id.clone());
+                }
+            }
+        }
+        values.into_iter().collect()
+    }
+
+    fn item_id_options(&self) -> Vec<String> {
+        let mut values = DEFAULT_UNLOCK_ITEM_IDS
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect::<BTreeSet<_>>();
+
+        for entity in &self.document.layers.entities {
+            if let Some(unlock) = &entity.unlock {
+                if let Some(item_id) = &unlock.requires_item_id {
+                    if !item_id.trim().is_empty() {
+                        values.insert(item_id.clone());
+                    }
+                }
+            }
+        }
+        for zone in &self.document.layers.zones {
+            if let Some(unlock) = &zone.unlock {
+                if let Some(item_id) = &unlock.requires_item_id {
+                    if !item_id.trim().is_empty() {
+                        values.insert(item_id.clone());
+                    }
+                }
+            }
+        }
+
+        values.into_iter().collect()
+    }
+
     fn draw_top_bar(&mut self, ui: &mut egui::Ui) {
         if !native_menu::NATIVE_MENU_ENABLED {
             self.draw_menu_bar(ui);
@@ -1400,6 +1569,10 @@ impl EditorApp {
                 });
                 if ui.button("保存").clicked() {
                     self.save_map();
+                    ui.close();
+                }
+                if ui.button("保存并运行当前地图").clicked() {
+                    self.save_and_run_current_map();
                     ui.close();
                 }
                 if ui.button("另存为").clicked() {
@@ -1477,6 +1650,14 @@ impl EditorApp {
                     self.validation_issues = self.validate_current_map();
                     self.show_validation_panel = true;
                     self.status = validation_summary(&self.validation_issues);
+                    ui.close();
+                }
+                if ui.button("保存并运行当前地图").clicked() {
+                    self.save_and_run_current_map();
+                    ui.close();
+                }
+                if ui.button("重新加载 Codex").clicked() {
+                    self.reload_codex_database();
                     ui.close();
                 }
                 ui.label(format!(
@@ -1653,6 +1834,13 @@ impl EditorApp {
                 });
             }
 
+            ui.separator();
+            if toolbar_command_button(ui, "运行地图", 68.0)
+                .on_hover_text("保存当前地图并启动游戏到第一个出生点")
+                .clicked()
+            {
+                self.save_and_run_current_map();
+            }
             ui.separator();
             if toolbar_command_button(ui, "水平翻转", 72.0).clicked() {
                 self.flip_selected_item();
@@ -1852,6 +2040,9 @@ impl EditorApp {
                     ui.painter().rect_filled(rect, 2.0, THEME_PANEL_BG_SOFT);
                 }
 
+                if let Some((label, color)) = scan_badge(asset) {
+                    ui.colored_label(color, label);
+                }
                 ui.selectable_label(selected, &asset.id)
             })
             .inner;
@@ -1890,6 +2081,424 @@ impl EditorApp {
                 ui.checkbox(&mut state.locked, "锁");
             });
         }
+    }
+
+    fn draw_outliner_panel(&mut self, ui: &mut egui::Ui) {
+        ui.separator();
+        ui.heading("Outliner");
+        ui.add(
+            egui::TextEdit::singleline(&mut self.outliner_search)
+                .hint_text("搜索 id / asset / type / codex / tag")
+                .desired_width(f32::INFINITY),
+        );
+
+        let search = self.outliner_search.trim().to_ascii_lowercase();
+        let entries = self.outliner_entries();
+        let visible_entries = entries
+            .into_iter()
+            .filter(|entry| outliner_matches(entry, &search))
+            .collect::<Vec<_>>();
+
+        let scan_count = visible_entries
+            .iter()
+            .filter(|entry| entry.badges.iter().any(|badge| badge.label == "scan"))
+            .count();
+        ui.small(format!(
+            "{} 个对象，{} 个扫描候选",
+            visible_entries.len(),
+            scan_count
+        ));
+
+        for group in OUTLINER_GROUPS {
+            let group_entries = visible_entries
+                .iter()
+                .filter(|entry| entry.group == *group)
+                .cloned()
+                .collect::<Vec<_>>();
+            if group_entries.is_empty() {
+                continue;
+            }
+
+            egui::CollapsingHeader::new(format!("{group} ({})", group_entries.len()))
+                .default_open(matches!(*group, "Entities" | "Objects" | "Zones"))
+                .show(ui, |ui| {
+                    for entry in group_entries {
+                        self.draw_outliner_row(ui, entry);
+                    }
+                });
+        }
+    }
+
+    fn draw_outliner_row(&mut self, ui: &mut egui::Ui, entry: OutlinerEntry) {
+        let selected = entry.selection.as_ref().is_some_and(|selection| {
+            self.current_selection_list()
+                .iter()
+                .any(|current| current == selection)
+        });
+        let response = ui
+            .horizontal_wrapped(|ui| {
+                let _ = ui.selectable_label(selected, &entry.label);
+                for badge in &entry.badges {
+                    ui.colored_label(badge.color, badge.label);
+                }
+                if !entry.detail.is_empty() {
+                    ui.small(&entry.detail);
+                }
+            })
+            .response;
+
+        if response.clicked() {
+            self.focus_outliner_entry(&entry);
+        }
+        response.on_hover_text(&entry.search_text);
+    }
+
+    fn focus_outliner_entry(&mut self, entry: &OutlinerEntry) {
+        if let Some(selection) = entry.selection.clone() {
+            self.active_layer = selection.layer;
+            self.selected_asset = None;
+            self.set_single_selection(Some(selection.clone()));
+            self.status = format!("已定位 {}", selection.label());
+        } else {
+            self.clear_selection();
+            self.status = format!("已定位 {}", entry.label);
+        }
+        self.pending_focus_world = Some(entry.focus_world);
+    }
+
+    fn outliner_entries(&self) -> Vec<OutlinerEntry> {
+        let mut entries = Vec::new();
+        let tile_size = self.document.tile_size as f32;
+        let solid_cells = self
+            .document
+            .layers
+            .collision
+            .iter()
+            .filter(|cell| cell.solid)
+            .map(|cell| (cell.x, cell.y))
+            .collect::<BTreeSet<_>>();
+        let codex_counts = self.entity_codex_counts();
+
+        for spawn in &self.document.spawns {
+            let cell = (spawn.x.floor() as i32, spawn.y.floor() as i32);
+            let mut badges = Vec::new();
+            if solid_cells.contains(&cell) {
+                badges.push(OutlinerBadge {
+                    label: "solid",
+                    color: THEME_ERROR,
+                });
+            }
+            entries.push(outliner_entry(
+                "Spawns",
+                format!("spawn {}", spawn.id),
+                format!("{:.1}, {:.1}", spawn.x, spawn.y),
+                None,
+                vec2(spawn.x * tile_size, spawn.y * tile_size),
+                badges,
+                [spawn.id.as_str(), "spawn"].join(" "),
+            ));
+        }
+
+        for entity in &self.document.layers.entities {
+            let asset = self.registry.get(&entity.asset);
+            let mut badges = Vec::new();
+            let codex_id = asset.and_then(|asset| asset.codex_id.as_deref());
+            if codex_id.is_some() {
+                badges.push(OutlinerBadge {
+                    label: "scan",
+                    color: THEME_ACCENT_STRONG,
+                });
+                if entity.interaction_rect.is_none() {
+                    badges.push(OutlinerBadge {
+                        label: "missing rect",
+                        color: THEME_WARNING,
+                    });
+                }
+            }
+            if let Some(codex_id) = codex_id {
+                badges.extend(self.codex_status_badges(codex_id));
+                if codex_counts.get(codex_id).copied().unwrap_or(0) > 1 {
+                    badges.push(OutlinerBadge {
+                        label: "dup codex",
+                        color: THEME_WARNING,
+                    });
+                }
+            }
+            if entity
+                .unlock
+                .as_ref()
+                .is_some_and(|unlock| !unlock.is_empty())
+            {
+                badges.push(OutlinerBadge {
+                    label: "unlock",
+                    color: THEME_WARNING,
+                });
+            }
+            if entity.entity_type.trim().is_empty() {
+                badges.push(OutlinerBadge {
+                    label: "no type",
+                    color: THEME_ERROR,
+                });
+            }
+            if asset.is_none() {
+                badges.push(OutlinerBadge {
+                    label: "missing asset",
+                    color: THEME_ERROR,
+                });
+            }
+
+            let focus_world = asset
+                .map(|asset| anchor_grid_to_world(tile_size, entity.x, entity.y, asset.anchor))
+                .unwrap_or_else(|| vec2(entity.x * tile_size, entity.y * tile_size));
+            let tags = asset.map(|asset| asset.tags.join(" ")).unwrap_or_default();
+            let codex_search = codex_id
+                .map(|codex_id| self.codex_search_text(codex_id))
+                .unwrap_or_default();
+            let unlock_search = unlock_search_text(entity.unlock.as_ref());
+            entries.push(outliner_entry(
+                "Entities",
+                entity.id.clone(),
+                format!("{} | {}", entity.asset, entity.entity_type),
+                Some(SelectedItem {
+                    layer: LayerKind::Entities,
+                    id: entity.id.clone(),
+                }),
+                focus_world,
+                badges,
+                [
+                    entity.id.as_str(),
+                    entity.asset.as_str(),
+                    entity.entity_type.as_str(),
+                    codex_id.unwrap_or_default(),
+                    tags.as_str(),
+                    codex_search.as_str(),
+                    unlock_search.as_str(),
+                ]
+                .join(" "),
+            ));
+        }
+
+        for object in &self.document.layers.objects {
+            let asset = self.registry.get(&object.asset);
+            let mut badges = Vec::new();
+            let codex_id = asset.and_then(|asset| asset.codex_id.as_deref());
+            if codex_id.is_some() {
+                badges.push(OutlinerBadge {
+                    label: "codex only",
+                    color: THEME_WARNING,
+                });
+                if let Some(codex_id) = codex_id {
+                    badges.extend(self.codex_status_badges(codex_id));
+                }
+            }
+            if asset.is_none() {
+                badges.push(OutlinerBadge {
+                    label: "missing asset",
+                    color: THEME_ERROR,
+                });
+            }
+            entries.push(self.object_outliner_entry(
+                "Objects",
+                LayerKind::Objects,
+                object,
+                asset,
+                codex_id,
+                badges,
+            ));
+        }
+
+        for decal in &self.document.layers.decals {
+            let asset = self.registry.get(&decal.asset);
+            let mut badges = Vec::new();
+            let codex_id = asset.and_then(|asset| asset.codex_id.as_deref());
+            if let Some(codex_id) = codex_id {
+                badges.push(OutlinerBadge {
+                    label: "codex only",
+                    color: THEME_WARNING,
+                });
+                badges.extend(self.codex_status_badges(codex_id));
+            }
+            if asset.is_none() {
+                badges.push(OutlinerBadge {
+                    label: "missing asset",
+                    color: THEME_ERROR,
+                });
+            }
+            entries.push(self.object_outliner_entry(
+                "Decals",
+                LayerKind::Decals,
+                decal,
+                asset,
+                codex_id,
+                badges,
+            ));
+        }
+
+        for zone in &self.document.layers.zones {
+            let mut badges = Vec::new();
+            if zone.zone_type.trim().is_empty() {
+                badges.push(OutlinerBadge {
+                    label: "no type",
+                    color: THEME_ERROR,
+                });
+            } else if !EDITOR_KNOWN_ZONE_TYPES.contains(&zone.zone_type.as_str()) {
+                badges.push(OutlinerBadge {
+                    label: "unknown",
+                    color: THEME_WARNING,
+                });
+            }
+            if zone.points.len() < 3 {
+                badges.push(OutlinerBadge {
+                    label: "few points",
+                    color: THEME_WARNING,
+                });
+            }
+            if zone
+                .unlock
+                .as_ref()
+                .is_some_and(|unlock| !unlock.is_empty())
+            {
+                badges.push(OutlinerBadge {
+                    label: "unlock",
+                    color: THEME_WARNING,
+                });
+            }
+            let unlock_search = unlock_search_text(zone.unlock.as_ref());
+            entries.push(outliner_entry(
+                "Zones",
+                zone.id.clone(),
+                format!("{} | {} points", zone.zone_type, zone.points.len()),
+                Some(SelectedItem {
+                    layer: LayerKind::Zones,
+                    id: zone.id.clone(),
+                }),
+                zone_focus_world(zone, tile_size),
+                badges,
+                [
+                    zone.id.as_str(),
+                    zone.zone_type.as_str(),
+                    unlock_search.as_str(),
+                ]
+                .join(" "),
+            ));
+        }
+
+        for tile in &self.document.layers.ground {
+            entries.push(outliner_entry(
+                "Ground",
+                ground_selection_id(tile.x, tile.y),
+                format!("{} | {}x{}", tile.asset, tile.w.max(1), tile.h.max(1)),
+                Some(SelectedItem {
+                    layer: LayerKind::Ground,
+                    id: ground_selection_id(tile.x, tile.y),
+                }),
+                vec2(
+                    (tile.x as f32 + tile.w.max(1) as f32 * 0.5) * tile_size,
+                    (tile.y as f32 + tile.h.max(1) as f32 * 0.5) * tile_size,
+                ),
+                Vec::new(),
+                [tile.asset.as_str(), &ground_selection_id(tile.x, tile.y)].join(" "),
+            ));
+        }
+
+        entries
+    }
+
+    fn object_outliner_entry(
+        &self,
+        group: &'static str,
+        layer: LayerKind,
+        instance: &content::ObjectInstance,
+        asset: Option<&AssetEntry>,
+        codex_id: Option<&str>,
+        badges: Vec<OutlinerBadge>,
+    ) -> OutlinerEntry {
+        let tile_size = self.document.tile_size as f32;
+        let focus_world = asset
+            .map(|asset| anchor_grid_to_world(tile_size, instance.x, instance.y, asset.anchor))
+            .unwrap_or_else(|| vec2(instance.x * tile_size, instance.y * tile_size));
+        let tags = asset.map(|asset| asset.tags.join(" ")).unwrap_or_default();
+        let codex_search = codex_id
+            .map(|codex_id| self.codex_search_text(codex_id))
+            .unwrap_or_default();
+        outliner_entry(
+            group,
+            instance.id.clone(),
+            instance.asset.clone(),
+            Some(SelectedItem {
+                layer,
+                id: instance.id.clone(),
+            }),
+            focus_world,
+            badges,
+            [
+                instance.id.as_str(),
+                instance.asset.as_str(),
+                codex_id.unwrap_or_default(),
+                tags.as_str(),
+                codex_search.as_str(),
+            ]
+            .join(" "),
+        )
+    }
+
+    fn codex_status_badges(&self, codex_id: &str) -> Vec<OutlinerBadge> {
+        let Some(database) = &self.codex_database else {
+            return vec![OutlinerBadge {
+                label: "no codex db",
+                color: THEME_WARNING,
+            }];
+        };
+        let Some(entry) = database.get(codex_id) else {
+            return vec![OutlinerBadge {
+                label: "missing codex",
+                color: THEME_ERROR,
+            }];
+        };
+
+        let mut badges = Vec::new();
+        if entry.title.trim().is_empty() {
+            badges.push(OutlinerBadge {
+                label: "no title",
+                color: THEME_WARNING,
+            });
+        }
+        if entry.category.trim().is_empty() {
+            badges.push(OutlinerBadge {
+                label: "no category",
+                color: THEME_WARNING,
+            });
+        }
+        if entry.description.trim().is_empty() {
+            badges.push(OutlinerBadge {
+                label: "no text",
+                color: THEME_WARNING,
+            });
+        }
+        badges
+    }
+
+    fn codex_search_text(&self, codex_id: &str) -> String {
+        self.codex_database
+            .as_ref()
+            .and_then(|database| database.get(codex_id))
+            .map(|entry| format!("{} {} {}", entry.title, entry.category, entry.description))
+            .unwrap_or_default()
+    }
+
+    fn entity_codex_counts(&self) -> HashMap<String, usize> {
+        let mut counts = HashMap::new();
+        for entity in &self.document.layers.entities {
+            let Some(codex_id) = self
+                .registry
+                .get(&entity.asset)
+                .and_then(|asset| asset.codex_id.as_ref())
+            else {
+                continue;
+            };
+            *counts.entry(codex_id.clone()).or_insert(0) += 1;
+        }
+        counts
     }
 
     fn layer_item_count(&self, layer: LayerKind) -> usize {
@@ -1988,8 +2597,8 @@ impl EditorApp {
         ui.label("地图属性");
         let mut next = self.document.clone();
         let mut changed = false;
-        changed |= ui.text_edit_singleline(&mut next.id).changed();
-        changed |= ui.text_edit_singleline(&mut next.mode).changed();
+        changed |= labeled_text_edit(ui, "地图 ID", &mut next.id);
+        changed |= labeled_text_edit(ui, "模式", &mut next.mode);
         changed |= ui
             .add(
                 egui::DragValue::new(&mut next.width)
@@ -2013,10 +2622,28 @@ impl EditorApp {
             .changed();
 
         ui.separator();
+        ui.label("Codex 数据");
+        ui.small(display_project_path(
+            &self.project_root,
+            &self.codex_db_path(),
+        ));
+        match &self.codex_database {
+            Some(database) => {
+                ui.label(format!("{} 个图鉴条目", database.entries().len()));
+            }
+            None => {
+                ui.colored_label(THEME_WARNING, &self.codex_db_status);
+            }
+        }
+        if ui.button("重新加载 Codex").clicked() {
+            self.reload_codex_database();
+        }
+
+        ui.separator();
         ui.label("出生点");
         for spawn in &mut next.spawns {
+            changed |= labeled_text_edit(ui, "出生点 ID", &mut spawn.id);
             ui.horizontal(|ui| {
-                changed |= ui.text_edit_singleline(&mut spawn.id).changed();
                 changed |= ui
                     .add(egui::DragValue::new(&mut spawn.x).speed(0.1).prefix("x "))
                     .changed();
@@ -2060,6 +2687,7 @@ impl EditorApp {
             ui.label(format!("Tags：{}", asset.tags.join(", ")));
         }
         ui.small(&asset.relative_path);
+        draw_asset_scan_status(ui, asset, self.codex_database.as_ref());
         ui.separator();
         ui.horizontal(|ui| {
             if ui.button("编辑素材").clicked() {
@@ -2084,6 +2712,9 @@ impl EditorApp {
             ui.colored_label(THEME_WARNING, "当前图层已锁定");
         }
 
+        let entity_type_options = self.entity_type_options();
+        let codex_id_options = self.codex_id_options();
+        let item_id_options = self.item_id_options();
         let mut next = self.document.clone();
         let mut changed = false;
         let mut next_selection = selection.clone();
@@ -2097,7 +2728,7 @@ impl EditorApp {
                         .iter_mut()
                         .find(|tile| tile.x == x && tile.y == y)
                     {
-                        changed |= ui.text_edit_singleline(&mut tile.asset).changed();
+                        changed |= labeled_text_edit(ui, "素材 ID", &mut tile.asset);
                         changed |= ui
                             .add(egui::DragValue::new(&mut tile.x).prefix("x "))
                             .changed();
@@ -2133,15 +2764,20 @@ impl EditorApp {
                     .iter_mut()
                     .find(|instance| instance.id == selection.id)
                 {
-                    let default_size = self
-                        .registry
-                        .get(&instance.asset)
-                        .map(|asset| asset.default_size);
+                    let asset = self.registry.get(&instance.asset).cloned();
+                    let default_size = asset.as_ref().map(|asset| asset.default_size);
                     changed |= object_instance_editor(
                         ui,
                         instance,
                         default_size,
                         &mut self.lock_aspect_ratio,
+                    );
+                    draw_object_layer_scan_status(
+                        ui,
+                        selection.layer,
+                        instance,
+                        asset.as_ref(),
+                        self.codex_database.as_ref(),
                     );
                     next_selection.id = instance.id.clone();
                 }
@@ -2153,15 +2789,20 @@ impl EditorApp {
                     .iter_mut()
                     .find(|instance| instance.id == selection.id)
                 {
-                    let default_size = self
-                        .registry
-                        .get(&instance.asset)
-                        .map(|asset| asset.default_size);
+                    let asset = self.registry.get(&instance.asset).cloned();
+                    let default_size = asset.as_ref().map(|asset| asset.default_size);
                     changed |= object_instance_editor(
                         ui,
                         instance,
                         default_size,
                         &mut self.lock_aspect_ratio,
+                    );
+                    draw_object_layer_scan_status(
+                        ui,
+                        selection.layer,
+                        instance,
+                        asset.as_ref(),
+                        self.codex_database.as_ref(),
                     );
                     next_selection.id = instance.id.clone();
                 }
@@ -2173,9 +2814,33 @@ impl EditorApp {
                     .iter_mut()
                     .find(|instance| instance.id == selection.id)
                 {
-                    changed |= ui.text_edit_singleline(&mut instance.id).changed();
-                    changed |= ui.text_edit_singleline(&mut instance.asset).changed();
-                    changed |= ui.text_edit_singleline(&mut instance.entity_type).changed();
+                    let asset = self.registry.get(&instance.asset).cloned();
+                    changed |= labeled_text_edit(ui, "实例 ID", &mut instance.id);
+                    changed |= labeled_text_edit(ui, "素材 ID", &mut instance.asset);
+                    changed |= labeled_text_edit_with_options(
+                        ui,
+                        "实体类型",
+                        format!("entity_type_{}", instance.id),
+                        &mut instance.entity_type,
+                        &entity_type_options,
+                    );
+                    draw_entity_scan_status(
+                        ui,
+                        instance,
+                        asset.as_ref(),
+                        self.codex_database.as_ref(),
+                    );
+                    let unlock_id = format!("entity_unlock_{}", instance.id);
+                    draw_unlock_rule_editor(
+                        ui,
+                        "解锁条件",
+                        &unlock_id,
+                        &mut instance.unlock,
+                        &codex_id_options,
+                        &item_id_options,
+                        self.codex_database.as_ref(),
+                        &mut changed,
+                    );
                     changed |= ui
                         .add(
                             egui::DragValue::new(&mut instance.x)
@@ -2190,10 +2855,7 @@ impl EditorApp {
                                 .prefix("y "),
                         )
                         .changed();
-                    let default_size = self
-                        .registry
-                        .get(&instance.asset)
-                        .map(|asset| asset.default_size);
+                    let default_size = asset.as_ref().map(|asset| asset.default_size);
                     changed |= instance_size_editor(
                         ui,
                         &mut instance.scale_x,
@@ -2225,8 +2887,19 @@ impl EditorApp {
                     .iter_mut()
                     .find(|zone| zone.id == selection.id)
                 {
-                    changed |= ui.text_edit_singleline(&mut zone.id).changed();
-                    changed |= ui.text_edit_singleline(&mut zone.zone_type).changed();
+                    changed |= labeled_text_edit(ui, "区域 ID", &mut zone.id);
+                    changed |= labeled_text_edit(ui, "区域类型", &mut zone.zone_type);
+                    let unlock_id = format!("zone_unlock_{}", zone.id);
+                    draw_unlock_rule_editor(
+                        ui,
+                        "解锁条件",
+                        &unlock_id,
+                        &mut zone.unlock,
+                        &codex_id_options,
+                        &item_id_options,
+                        self.codex_database.as_ref(),
+                        &mut changed,
+                    );
                     next_selection.id = zone.id.clone();
                     ui.label(format!("点数：{}", zone.points.len()));
                     for (index, point) in zone.points.iter_mut().enumerate() {
@@ -2276,8 +2949,8 @@ impl EditorApp {
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
-                    ui.text_edit_singleline(&mut self.new_map_draft.id);
-                    ui.text_edit_singleline(&mut self.new_map_draft.mode);
+                    labeled_text_edit(ui, "地图 ID", &mut self.new_map_draft.id);
+                    labeled_text_edit(ui, "模式", &mut self.new_map_draft.mode);
                     ui.add(
                         egui::DragValue::new(&mut self.new_map_draft.width)
                             .range(1..=512)
@@ -2295,7 +2968,7 @@ impl EditorApp {
                     );
                     ui.separator();
                     ui.label("出生点");
-                    ui.text_edit_singleline(&mut self.new_map_draft.spawn_id);
+                    labeled_text_edit(ui, "出生点 ID", &mut self.new_map_draft.spawn_id);
                     ui.add(
                         egui::DragValue::new(&mut self.new_map_draft.spawn_x)
                             .speed(0.1)
@@ -2449,9 +3122,12 @@ impl EditorApp {
     }
 
     fn draw_asset_draft_editor(&mut self, ui: &mut egui::Ui, ctx: &EguiContext) {
+        let entity_type_options = self.entity_type_options();
+        let codex_id_options = self.codex_id_options();
+
         ui.label("素材 id / 路径");
-        ui.text_edit_singleline(&mut self.asset_draft.id);
-        ui.text_edit_singleline(&mut self.asset_draft.path);
+        labeled_text_edit(ui, "素材 ID", &mut self.asset_draft.id);
+        labeled_text_edit(ui, "图片路径", &mut self.asset_draft.path);
         ui.horizontal(|ui| {
             if ui.button("选择 PNG 文件").clicked() {
                 self.pick_asset_file_into_draft(ctx);
@@ -2490,7 +3166,7 @@ impl EditorApp {
 
         ui.separator();
         ui.label("分类 / 类型");
-        ui.text_edit_singleline(&mut self.asset_draft.category);
+        labeled_text_edit(ui, "分类", &mut self.asset_draft.category);
         egui::ComboBox::from_id_salt("asset_draft_kind")
             .selected_text(self.asset_draft.kind.zh_label())
             .show_ui(ui, |ui| {
@@ -2581,9 +3257,22 @@ impl EditorApp {
 
         ui.separator();
         ui.label("Tags / 额外属性");
-        ui.text_edit_singleline(&mut self.asset_draft.tags);
-        ui.text_edit_singleline(&mut self.asset_draft.entity_type);
-        ui.text_edit_singleline(&mut self.asset_draft.codex_id);
+        labeled_text_edit(ui, "Tags", &mut self.asset_draft.tags);
+        labeled_text_edit_with_options(
+            ui,
+            "实体类型",
+            "asset_draft_entity_type",
+            &mut self.asset_draft.entity_type,
+            &entity_type_options,
+        );
+        labeled_text_edit_with_options(
+            ui,
+            "Codex ID",
+            "asset_draft_codex_id",
+            &mut self.asset_draft.codex_id,
+            &codex_id_options,
+        );
+        draw_asset_draft_scan_status(ui, &self.asset_draft, self.codex_database.as_ref());
 
         ui.separator();
         ui.horizontal(|ui| {
@@ -2637,6 +3326,10 @@ impl EditorApp {
         let desired_size = ui.available_size_before_wrap();
         let (response, painter) = ui.allocate_painter(desired_size, Sense::click_and_drag());
         let rect = response.rect;
+
+        if let Some(focus_world) = self.pending_focus_world.take() {
+            self.pan = (rect.center() - rect.min) - focus_world * self.zoom;
+        }
 
         painter.rect_filled(rect, 0.0, THEME_CANVAS_BG);
         self.apply_canvas_input(&response, ctx);
@@ -3276,6 +3969,7 @@ impl EditorApp {
             id: id.clone(),
             zone_type: "Trigger".to_owned(),
             points: self.zone_draft_points.clone(),
+            unlock: None,
         });
         self.zone_draft_points.clear();
         self.set_single_selection(Some(SelectedItem {
@@ -5028,8 +5722,11 @@ impl eframe::App for EditorApp {
                 });
             egui::Panel::left("layer_panel")
                 .resizable(true)
-                .default_size(180.0)
-                .show_inside(ui, |ui| self.draw_layer_panel(ui));
+                .default_size(260.0)
+                .show_inside(ui, |ui| {
+                    self.draw_layer_panel(ui);
+                    egui::ScrollArea::vertical().show(ui, |ui| self.draw_outliner_panel(ui));
+                });
         } else {
             egui::Panel::left("left_sidebar_collapsed")
                 .resizable(false)
@@ -5189,6 +5886,281 @@ fn snap_label(snap: SnapMode) -> &'static str {
     }
 }
 
+fn load_codex_database(project_root: &std::path::Path) -> (Option<CodexDatabase>, String) {
+    let path = project_root.join(DEFAULT_CODEX_DB_PATH);
+    match CodexDatabase::load(&path) {
+        Ok(database) => {
+            let count = database.entries().len();
+            (Some(database), format!("Codex 数据已加载：{count} 个条目"))
+        }
+        Err(error) => {
+            eprintln!("codex database load failed: {error:?}");
+            (
+                None,
+                format!(
+                    "Codex 数据读取失败 {}：{error:#}",
+                    display_project_path(project_root, &path)
+                ),
+            )
+        }
+    }
+}
+
+fn launch_scene_for_mode(mode: &str) -> &'static str {
+    if mode.eq_ignore_ascii_case("facility") {
+        "facility"
+    } else {
+        "overworld"
+    }
+}
+
+const DEFAULT_ENTITY_TYPES: &[&str] = &[
+    "Decoration",
+    "ScanTarget",
+    "FacilityEntrance",
+    "FacilityExit",
+    "Door",
+];
+
+const DEFAULT_UNLOCK_ITEM_IDS: &[&str] = &[
+    "ruin_key",
+    "scanner_tool",
+    "artifact_core",
+    "data_shard",
+    "energy_cell",
+    "alien_crystal_sample",
+    "bio_sample_vial",
+    "scrap_part",
+    "metal_fragment",
+    "glow_fungus_sample",
+];
+
+const OUTLINER_GROUPS: &[&str] = &["Spawns", "Entities", "Objects", "Decals", "Zones", "Ground"];
+const EDITOR_KNOWN_ZONE_TYPES: &[&str] = &["ScanArea", "MapTransition", "NoSpawn", "CameraBounds"];
+
+fn outliner_entry(
+    group: &'static str,
+    label: String,
+    detail: String,
+    selection: Option<SelectedItem>,
+    focus_world: Vec2,
+    badges: Vec<OutlinerBadge>,
+    search_text: String,
+) -> OutlinerEntry {
+    let badge_text = badges
+        .iter()
+        .map(|badge| badge.label)
+        .collect::<Vec<_>>()
+        .join(" ");
+    OutlinerEntry {
+        group,
+        label: label.clone(),
+        detail: detail.clone(),
+        search_text: [label, detail, search_text, badge_text]
+            .join(" ")
+            .to_ascii_lowercase(),
+        selection,
+        focus_world,
+        badges,
+    }
+}
+
+fn outliner_matches(entry: &OutlinerEntry, search: &str) -> bool {
+    search
+        .split_whitespace()
+        .all(|term| entry.search_text.contains(term))
+}
+
+fn unlock_search_text(unlock: Option<&UnlockRule>) -> String {
+    let Some(unlock) = unlock else {
+        return String::new();
+    };
+
+    [
+        unlock.requires_codex_id.as_deref().unwrap_or_default(),
+        unlock.requires_item_id.as_deref().unwrap_or_default(),
+        unlock.locked_message.as_deref().unwrap_or_default(),
+    ]
+    .join(" ")
+}
+
+fn zone_focus_world(zone: &content::ZoneInstance, tile_size: f32) -> Vec2 {
+    if zone.points.is_empty() {
+        return vec2(0.0, 0.0);
+    }
+    let mut min = vec2(f32::INFINITY, f32::INFINITY);
+    let mut max = vec2(f32::NEG_INFINITY, f32::NEG_INFINITY);
+    for point in &zone.points {
+        min.x = min.x.min(point[0]);
+        min.y = min.y.min(point[1]);
+        max.x = max.x.max(point[0]);
+        max.y = max.y.max(point[1]);
+    }
+    vec2(
+        (min.x + max.x) * 0.5 * tile_size,
+        (min.y + max.y) * 0.5 * tile_size,
+    )
+}
+
+fn scan_badge(asset: &AssetEntry) -> Option<(&'static str, Color32)> {
+    asset.codex_id.as_ref()?;
+    if asset.kind == AssetKind::Entity {
+        Some(("scan", THEME_ACCENT_STRONG))
+    } else {
+        Some(("codex", THEME_WARNING))
+    }
+}
+
+fn empty_fallback(value: &str) -> &str {
+    if value.trim().is_empty() {
+        "未填写"
+    } else {
+        value
+    }
+}
+
+fn draw_asset_scan_status(
+    ui: &mut egui::Ui,
+    asset: &AssetEntry,
+    codex_database: Option<&CodexDatabase>,
+) {
+    ui.separator();
+    ui.label("扫描 / 图鉴");
+    let Some(codex_id) = &asset.codex_id else {
+        ui.colored_label(THEME_MUTED_TEXT, "未设置 Codex ID，不会进入扫描候选。");
+        return;
+    };
+
+    ui.label(format!("Codex ID：{codex_id}"));
+    draw_codex_entry_preview(ui, codex_id, codex_database);
+    if asset.kind == AssetKind::Entity {
+        ui.colored_label(
+            THEME_ACCENT_STRONG,
+            "可扫描：是。该素材放到实体层后，运行时会把它加入扫描候选。",
+        );
+        if asset.entity_type.as_deref().map_or(true, str::is_empty) {
+            ui.colored_label(THEME_WARNING, "缺少默认实体类型，放置后需要手动补。");
+        }
+    } else {
+        ui.colored_label(
+            THEME_WARNING,
+            "可扫描：否。当前运行时只扫描实体层，Object/Decal/Tile 的 Codex ID 只是素材 metadata。",
+        );
+    }
+}
+
+fn draw_asset_draft_scan_status(
+    ui: &mut egui::Ui,
+    draft: &AssetDraft,
+    codex_database: Option<&CodexDatabase>,
+) {
+    ui.separator();
+    ui.label("扫描 / 图鉴预览");
+    if draft.codex_id.trim().is_empty() {
+        ui.colored_label(THEME_MUTED_TEXT, "未设置 Codex ID，不会进入扫描候选。");
+        return;
+    }
+
+    draw_codex_entry_preview(ui, draft.codex_id.trim(), codex_database);
+    if draft.kind == AssetKind::Entity {
+        ui.colored_label(
+            THEME_ACCENT_STRONG,
+            "可扫描素材：放到实体层后，运行时会读取这个 Codex ID。",
+        );
+        if draft.entity_type.trim().is_empty() {
+            ui.colored_label(THEME_WARNING, "实体类型为空，保存地图时会被校验拦住。");
+        }
+    } else {
+        ui.colored_label(
+            THEME_WARNING,
+            "当前运行时只扫描实体层；如果这个素材要被扫描，请把类型改成实体。",
+        );
+    }
+}
+
+fn draw_codex_entry_preview(
+    ui: &mut egui::Ui,
+    codex_id: &str,
+    codex_database: Option<&CodexDatabase>,
+) {
+    let Some(database) = codex_database else {
+        ui.colored_label(THEME_WARNING, "Codex 数据库未加载，无法确认图鉴内容。");
+        return;
+    };
+    let Some(entry) = database.get(codex_id) else {
+        ui.colored_label(THEME_ERROR, "Codex 数据库中没有这个条目。");
+        return;
+    };
+
+    ui.label(format!("标题：{}", empty_fallback(&entry.title)));
+    ui.label(format!("分类：{}", empty_fallback(&entry.category)));
+    ui.label(format!(
+        "正文：{}",
+        if entry.description.trim().is_empty() {
+            "未填写"
+        } else {
+            "已填写"
+        }
+    ));
+    if let Some(scan_time) = entry.scan_time {
+        ui.label(format!("扫描时间：{scan_time:.2}s"));
+    }
+}
+
+fn draw_entity_scan_status(
+    ui: &mut egui::Ui,
+    instance: &content::EntityInstance,
+    asset: Option<&AssetEntry>,
+    codex_database: Option<&CodexDatabase>,
+) {
+    ui.separator();
+    ui.label("Gameplay / 扫描");
+    let Some(asset) = asset else {
+        ui.colored_label(THEME_ERROR, "找不到素材 metadata，无法判断扫描状态。");
+        return;
+    };
+    let Some(codex_id) = &asset.codex_id else {
+        ui.colored_label(THEME_MUTED_TEXT, "该实体素材没有 Codex ID，不会被扫描。");
+        return;
+    };
+
+    ui.label(format!("Codex ID：{codex_id}"));
+    draw_codex_entry_preview(ui, codex_id, codex_database);
+    ui.colored_label(THEME_ACCENT_STRONG, "运行时扫描候选：是。");
+    if instance.interaction_rect.is_none() {
+        ui.colored_label(
+            THEME_WARNING,
+            "未设置交互范围，运行时会用 1x1 默认扫描区域。",
+        );
+    }
+}
+
+fn draw_object_layer_scan_status(
+    ui: &mut egui::Ui,
+    layer: LayerKind,
+    instance: &content::ObjectInstance,
+    asset: Option<&AssetEntry>,
+    codex_database: Option<&CodexDatabase>,
+) {
+    let Some(asset) = asset else {
+        return;
+    };
+    if let Some(codex_id) = &asset.codex_id {
+        ui.separator();
+        ui.label("Gameplay / 扫描");
+        ui.label(format!("Codex ID：{codex_id}"));
+        draw_codex_entry_preview(ui, codex_id, codex_database);
+        ui.colored_label(
+            THEME_WARNING,
+            format!(
+                "{} 层不会进入当前扫描系统；要扫描 {}，请改为实体素材/实体层。",
+                layer.zh_label(),
+                instance.id
+            ),
+        );
+    }
+}
+
 fn layer_shortcut(layer: LayerKind) -> &'static str {
     match layer {
         LayerKind::Ground => "1",
@@ -5242,8 +6214,8 @@ fn object_instance_editor(
     lock_aspect_ratio: &mut bool,
 ) -> bool {
     let mut changed = false;
-    changed |= ui.text_edit_singleline(&mut instance.id).changed();
-    changed |= ui.text_edit_singleline(&mut instance.asset).changed();
+    changed |= labeled_text_edit(ui, "实例 ID", &mut instance.id);
+    changed |= labeled_text_edit(ui, "素材 ID", &mut instance.asset);
     changed |= ui
         .add(
             egui::DragValue::new(&mut instance.x)
@@ -5273,6 +6245,133 @@ fn object_instance_editor(
         .add(egui::DragValue::new(&mut instance.rotation).prefix("旋转 "))
         .changed();
     changed
+}
+
+fn draw_unlock_rule_editor(
+    ui: &mut egui::Ui,
+    label: &str,
+    id_prefix: &str,
+    unlock: &mut Option<UnlockRule>,
+    codex_id_options: &[String],
+    item_id_options: &[String],
+    codex_database: Option<&CodexDatabase>,
+    changed: &mut bool,
+) {
+    ui.separator();
+    ui.horizontal(|ui| {
+        ui.label(label);
+        let mut enabled = unlock.is_some();
+        if ui.checkbox(&mut enabled, "启用").changed() {
+            if enabled {
+                *unlock = Some(UnlockRule::default());
+            } else {
+                *unlock = None;
+            }
+            *changed = true;
+        }
+    });
+
+    let Some(rule) = unlock.as_mut() else {
+        ui.colored_label(THEME_MUTED_TEXT, "无解锁条件；玩家可直接通过/触发。");
+        return;
+    };
+
+    let mut codex_id = rule.requires_codex_id.clone().unwrap_or_default();
+    if labeled_text_edit_with_options(
+        ui,
+        "扫描需求",
+        format!("{id_prefix}_codex"),
+        &mut codex_id,
+        codex_id_options,
+    ) {
+        set_optional_string(&mut rule.requires_codex_id, codex_id);
+        *changed = true;
+    }
+    if let Some(codex_id) = rule.requires_codex_id.as_deref() {
+        draw_codex_entry_preview(ui, codex_id, codex_database);
+    }
+
+    let mut item_id = rule.requires_item_id.clone().unwrap_or_default();
+    if labeled_text_edit_with_options(
+        ui,
+        "物品需求",
+        format!("{id_prefix}_item"),
+        &mut item_id,
+        item_id_options,
+    ) {
+        set_optional_string(&mut rule.requires_item_id, item_id);
+        *changed = true;
+    }
+
+    let mut locked_message = rule.locked_message.clone().unwrap_or_default();
+    if labeled_text_edit(ui, "锁定提示", &mut locked_message) {
+        set_optional_string(&mut rule.locked_message, locked_message);
+        *changed = true;
+    }
+
+    if rule.requires_codex_id.is_none() && rule.requires_item_id.is_none() {
+        ui.colored_label(THEME_WARNING, "已启用但没有条件；运行时会视为未上锁。");
+    } else {
+        ui.colored_label(THEME_ACCENT_STRONG, "运行时会保存并检查这些解锁条件。");
+    }
+}
+
+fn labeled_text_edit(ui: &mut egui::Ui, label: &str, value: &mut String) -> bool {
+    const LABEL_WIDTH: f32 = 82.0;
+
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.add_sized(
+            [LABEL_WIDTH, ui.spacing().interact_size.y],
+            egui::Label::new(label),
+        );
+        changed = ui
+            .add(egui::TextEdit::singleline(value).desired_width(ui.available_width()))
+            .changed();
+    });
+    changed
+}
+
+fn labeled_text_edit_with_options(
+    ui: &mut egui::Ui,
+    label: &str,
+    id_salt: impl std::hash::Hash,
+    value: &mut String,
+    options: &[String],
+) -> bool {
+    let mut changed = labeled_text_edit(ui, label, value);
+    if options.is_empty() {
+        return changed;
+    }
+
+    ui.horizontal(|ui| {
+        ui.add_sized(
+            [82.0, ui.spacing().interact_size.y],
+            egui::Label::new("常用"),
+        );
+        egui::ComboBox::from_id_salt(id_salt)
+            .selected_text("选择常用值")
+            .width(ui.available_width())
+            .show_ui(ui, |ui| {
+                for option in options {
+                    if ui
+                        .selectable_label(value == option, option.as_str())
+                        .clicked()
+                    {
+                        *value = option.clone();
+                        changed = true;
+                        ui.close();
+                    }
+                }
+            });
+    });
+
+    changed
+}
+
+fn set_optional_string(target: &mut Option<String>, value: String) {
+    let value = value.trim().to_owned();
+    *target = (!value.is_empty()).then_some(value);
 }
 
 fn instance_size_editor(

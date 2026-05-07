@@ -3,7 +3,7 @@ mod map;
 use anyhow::Result;
 use runtime::{Rect, Renderer, Vec2};
 
-pub use map::{MapEntity, MapEntityKind};
+pub use map::{MapEntity, MapEntityKind, MapUnlockRule};
 
 use map::Map;
 
@@ -40,11 +40,16 @@ impl World {
         self.map.load_assets(renderer)
     }
 
+    #[allow(dead_code)]
     pub fn first_entity(&self, kind: MapEntityKind) -> Option<&MapEntity> {
         self.map
             .entities()
             .iter()
             .find(|entity| entity.kind == kind)
+    }
+
+    pub fn all_entities(&self) -> impl Iterator<Item = &MapEntity> + '_ {
+        self.map.entities().iter()
     }
 
     pub fn entities(&self, kind: MapEntityKind) -> impl Iterator<Item = &MapEntity> + '_ {
@@ -64,6 +69,10 @@ impl World {
     #[allow(dead_code)]
     pub fn solid_rects(&self) -> impl Iterator<Item = Rect> + '_ {
         self.map.solid_rects()
+    }
+
+    pub fn remove_entities_by_id(&mut self, ids: &std::collections::BTreeSet<String>) {
+        self.map.remove_entities_by_id(ids);
     }
 }
 
@@ -97,6 +106,16 @@ mod tests {
             world
                 .first_entity(MapEntityKind::FacilityEntrance)
                 .is_some()
+        );
+        let entrance = world
+            .first_entity(MapEntityKind::FacilityEntrance)
+            .expect("legacy entrance should load");
+        assert_eq!(
+            entrance
+                .unlock
+                .as_ref()
+                .and_then(|unlock| unlock.requires_codex_id.as_deref()),
+            Some("ruin.entrance_01")
         );
     }
 

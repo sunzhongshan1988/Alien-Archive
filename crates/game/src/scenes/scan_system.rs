@@ -1,11 +1,16 @@
+use anyhow::Result;
 use runtime::{Camera2d, Color, Rect, Renderer, Vec2, collision::rects_overlap};
+use rusttype::Font;
 
 use crate::{
-    ui::menu_widgets::{draw_border, draw_screen_rect},
+    ui::{
+        menu_widgets::{draw_border, draw_screen_rect},
+        text::{TextSprite, draw_text, load_ui_font, upload_text},
+    },
     world::{MapEntity, World},
 };
 
-use super::GameContext;
+use super::{GameContext, Language};
 
 const SCAN_RANGE_PADDING: f32 = 40.0;
 const SCAN_DURATION: f32 = 1.25;
@@ -15,8 +20,19 @@ const SCAN_NOTICE_TIME: f32 = 1.15;
 pub struct ScanState {
     active_entity_id: Option<String>,
     active_codex_id: Option<String>,
+    display_title: String,
+    display_subtitle: String,
     progress: f32,
     notice_timer: f32,
+    font: Option<Font<'static>>,
+    text_key: Option<String>,
+    title_text: Option<TextSprite>,
+    subtitle_text: Option<TextSprite>,
+}
+
+#[derive(Default)]
+pub struct ScanUpdate {
+    pub completed_codex_id: Option<String>,
 }
 
 impl ScanState {
@@ -26,23 +42,24 @@ impl ScanState {
         dt: f32,
         scan_held: bool,
         target: Option<&MapEntity>,
-    ) {
+    ) -> ScanUpdate {
         self.notice_timer = (self.notice_timer - dt).max(0.0);
 
         let Some(target) = target else {
             self.clear_active();
-            return;
+            return ScanUpdate::default();
         };
         let Some(codex_id) = target.codex_id.as_deref() else {
             self.clear_active();
-            return;
+            return ScanUpdate::default();
         };
 
         if ctx.scanned_codex_ids.contains(codex_id) {
             self.active_entity_id = Some(target.id.clone());
             self.active_codex_id = Some(codex_id.to_owned());
             self.progress = 1.0;
-            return;
+            self.set_display_text(ctx, codex_id, true);
+            return ScanUpdate::default();
         }
 
         if self.active_entity_id.as_deref() != Some(target.id.as_str()) {
@@ -53,35 +70,52 @@ impl ScanState {
 
         if !scan_held {
             self.progress = 0.0;
-            return;
+            return ScanUpdate::default();
         }
 
-        self.progress = (self.progress + dt / SCAN_DURATION).min(1.0);
+        self.set_display_text(ctx, codex_id, false);
+        let scan_duration = ctx
+            .codex_database
+            .get(codex_id)
+            .and_then(|entry| entry.scan_time)
+            .unwrap_or(SCAN_DURATION)
+            .max(0.1);
+
+        self.progress = (self.progress + dt / scan_duration).min(1.0);
         if self.progress >= 1.0 {
-            ctx.scanned_codex_ids.insert(codex_id.to_owned());
+            let first_scan = ctx.complete_codex_scan(codex_id);
             self.notice_timer = SCAN_NOTICE_TIME;
+            self.set_display_text(ctx, codex_id, true);
+            if first_scan {
+                return ScanUpdate {
+                    completed_codex_id: Some(codex_id.to_owned()),
+                };
+            }
         }
+
+        ScanUpdate::default()
     }
 
     pub fn should_capture_scan_button(&self) -> bool {
         self.active_codex_id.is_some() && self.progress < 1.0
     }
 
-    pub fn draw(&self, renderer: &mut dyn Renderer) {
+    pub fn draw(&mut self, renderer: &mut dyn Renderer) -> Result<()> {
         if self.active_codex_id.is_none() && self.notice_timer <= 0.0 {
-            return;
+            return Ok(());
         }
+        self.upload_textures_if_needed(renderer)?;
 
         let viewport = renderer.screen_size();
         renderer.set_camera(Camera2d::default());
 
         let panel = Rect::new(
-            Vec2::new(viewport.x * 0.5 - 150.0, viewport.y - 104.0),
-            Vec2::new(300.0, 30.0),
+            Vec2::new(viewport.x * 0.5 - 210.0, viewport.y - 126.0),
+            Vec2::new(420.0, 64.0),
         );
         let rail = Rect::new(
-            Vec2::new(panel.origin.x + 12.0, panel.origin.y + 11.0),
-            Vec2::new(panel.size.x - 24.0, 8.0),
+            Vec2::new(panel.origin.x + 18.0, panel.origin.y + 46.0),
+            Vec2::new(panel.size.x - 36.0, 8.0),
         );
         let fill = Rect::new(
             rail.origin,
@@ -120,12 +154,93 @@ impl ScanState {
             Color::rgba(0.58, 0.96, 1.0, 0.46),
         );
         draw_screen_rect(renderer, viewport, fill, glow);
+        if let Some(title) = &self.title_text {
+            draw_text(
+                renderer,
+                title,
+                viewport,
+                panel.origin.x + 18.0,
+                panel.origin.y + 8.0,
+                Color::rgba(0.86, 1.0, 0.98, 1.0),
+            );
+        }
+        if let Some(subtitle) = &self.subtitle_text {
+            draw_text(
+                renderer,
+                subtitle,
+                viewport,
+                panel.origin.x + 18.0,
+                panel.origin.y + 28.0,
+                Color::rgba(0.56, 0.86, 0.92, 0.96),
+            );
+        }
+
+        Ok(())
     }
 
     fn clear_active(&mut self) {
         self.active_entity_id = None;
         self.active_codex_id = None;
         self.progress = 0.0;
+    }
+
+    fn set_display_text(&mut self, ctx: &GameContext, codex_id: &str, completed: bool) {
+        let entry = ctx.codex_database.get(codex_id);
+        let title = entry
+            .map(|entry| entry.title.trim())
+            .filter(|title| !title.is_empty())
+            .unwrap_or(codex_id);
+        let category = entry
+            .map(|entry| entry.category.trim())
+            .filter(|category| !category.is_empty())
+            .unwrap_or("Unknown");
+        let subtitle = format!(
+            "{} · {}",
+            category,
+            scan_status_label(ctx.language, completed)
+        );
+
+        if self.display_title != title || self.display_subtitle != subtitle {
+            self.display_title = title.to_owned();
+            self.display_subtitle = subtitle;
+            self.text_key = None;
+        }
+    }
+
+    fn upload_textures_if_needed(&mut self, renderer: &mut dyn Renderer) -> Result<()> {
+        let key = format!("{}|{}", self.display_title, self.display_subtitle);
+        if self.text_key.as_deref() == Some(key.as_str()) {
+            return Ok(());
+        }
+        if self.font.is_none() {
+            self.font = Some(load_ui_font()?);
+        }
+        let font = self.font.as_ref().expect("scan UI font should be loaded");
+        self.title_text = Some(upload_text(
+            renderer,
+            font,
+            "scan_overlay_title",
+            &self.display_title,
+            18.0,
+        )?);
+        self.subtitle_text = Some(upload_text(
+            renderer,
+            font,
+            "scan_overlay_subtitle",
+            &self.display_subtitle,
+            14.0,
+        )?);
+        self.text_key = Some(key);
+        Ok(())
+    }
+}
+
+fn scan_status_label(language: Language, completed: bool) -> &'static str {
+    match (language, completed) {
+        (Language::Chinese, true) => "已记录",
+        (Language::Chinese, false) => "按住 Space 扫描",
+        (Language::English, true) => "Recorded",
+        (Language::English, false) => "Hold Space to scan",
     }
 }
 

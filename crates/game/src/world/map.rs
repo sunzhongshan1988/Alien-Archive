@@ -7,7 +7,7 @@ use std::{
 use anyhow::{Context, Result, bail};
 use content::{
     AnchorKind, AssetDatabase, DEFAULT_ASSET_DB_PATH, InstanceRect, MapDocument as EditorMapFile,
-    ObjectInstance as EditorObjectInstance,
+    ObjectInstance as EditorObjectInstance, UnlockRule,
 };
 use runtime::{Color, Rect, Renderer, Vec2};
 use serde::Deserialize;
@@ -34,6 +34,10 @@ impl Map {
 
     pub fn entities(&self) -> &[MapEntity] {
         &self.entities
+    }
+
+    pub fn remove_entities_by_id(&mut self, ids: &std::collections::BTreeSet<String>) {
+        self.entities.retain(|entity| !ids.contains(&entity.id));
     }
 
     pub fn entity_by_id(&self, id: &str) -> Option<&MapEntity> {
@@ -178,6 +182,9 @@ impl Map {
                     file.tile_size * entity.size[1] as f32,
                 );
 
+                let codex_id = entity.codex_id;
+                let unlock = legacy_unlock_for_kind(entity.kind, codex_id.as_deref());
+
                 MapEntity {
                     id: entity.id,
                     kind: entity.kind,
@@ -187,7 +194,9 @@ impl Map {
                     color: color_from(entity.color),
                     solid: entity.solid,
                     z_index: 0,
-                    codex_id: entity.codex_id,
+                    asset_id: None,
+                    codex_id,
+                    unlock,
                     texture_id: None,
                     flip_x: false,
                     rotation: 0,
@@ -282,7 +291,9 @@ impl Map {
                 color: Color::rgba(0.0, 0.0, 0.0, 0.0),
                 solid: false,
                 z_index: 0,
+                asset_id: None,
                 codex_id: None,
+                unlock: None,
                 texture_id: None,
                 flip_x: false,
                 rotation: 0,
@@ -306,17 +317,23 @@ impl Map {
             let collision_rect = entity
                 .collision_rect
                 .map(|rect| instance_rect_to_world(origin, tile_size, entity.x, entity.y, rect));
+            let kind = map_entity_kind(&entity.entity_type);
+            let codex_id = asset.codex_id.clone();
+            let unlock = MapUnlockRule::from_content(entity.unlock.clone())
+                .or_else(|| legacy_unlock_for_kind(kind, codex_id.as_deref()));
 
             entities.push(MapEntity {
                 id: entity.id,
-                kind: map_entity_kind(&entity.entity_type),
+                kind,
                 rect: hit_rect,
                 collision_rect,
                 sprite_rect,
                 color: Color::rgba(0.65, 0.35, 1.0, 0.75),
                 solid: false,
                 z_index: entity.z_index,
-                codex_id: asset.codex_id.clone(),
+                asset_id: Some(asset.id.clone()),
+                codex_id,
+                unlock,
                 texture_id: Some(asset.id.clone()),
                 flip_x: entity.flip_x,
                 rotation: entity.rotation,
@@ -381,10 +398,37 @@ pub struct MapEntity {
     pub color: Color,
     pub solid: bool,
     z_index: i32,
+    pub asset_id: Option<String>,
     pub codex_id: Option<String>,
+    pub unlock: Option<MapUnlockRule>,
     texture_id: Option<String>,
     flip_x: bool,
     rotation: i32,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct MapUnlockRule {
+    pub requires_codex_id: Option<String>,
+    pub requires_item_id: Option<String>,
+    pub locked_message: Option<String>,
+}
+
+impl MapUnlockRule {
+    fn from_content(rule: Option<UnlockRule>) -> Option<Self> {
+        let rule = rule?;
+        let unlock = Self {
+            requires_codex_id: clean_optional_string(rule.requires_codex_id),
+            requires_item_id: clean_optional_string(rule.requires_item_id),
+            locked_message: clean_optional_string(rule.locked_message),
+        };
+        (!unlock.is_empty()).then_some(unlock)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.requires_codex_id.is_none()
+            && self.requires_item_id.is_none()
+            && self.locked_message.is_none()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -548,6 +592,23 @@ fn map_entity_kind(value: &str) -> MapEntityKind {
         "Door" => MapEntityKind::Door,
         _ => MapEntityKind::Decoration,
     }
+}
+
+fn legacy_unlock_for_kind(kind: MapEntityKind, codex_id: Option<&str>) -> Option<MapUnlockRule> {
+    if !matches!(kind, MapEntityKind::FacilityEntrance | MapEntityKind::Door) {
+        return None;
+    }
+
+    clean_optional_string(codex_id.map(str::to_owned)).map(|requires_codex_id| MapUnlockRule {
+        requires_codex_id: Some(requires_codex_id),
+        ..MapUnlockRule::default()
+    })
+}
+
+fn clean_optional_string(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 fn scan_overworld_assets() -> Result<HashMap<String, OverworldAsset>> {

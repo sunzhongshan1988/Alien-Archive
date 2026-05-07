@@ -20,12 +20,6 @@ impl LocalizedText {
 }
 
 #[derive(Clone, Copy)]
-pub struct CodexPreview {
-    pub label: LocalizedText,
-    pub progress: u32,
-}
-
-#[derive(Clone, Copy)]
 pub struct QuestPreview {
     pub label: LocalizedText,
     pub status: LocalizedText,
@@ -37,25 +31,6 @@ pub struct BottomAction {
     pub label: LocalizedText,
     pub sublabel: LocalizedText,
 }
-
-pub const CODEX_PREVIEWS: &[CodexPreview] = &[
-    CodexPreview {
-        label: LocalizedText::new("Biology", "异星生物"),
-        progress: 42,
-    },
-    CodexPreview {
-        label: LocalizedText::new("Minerals", "矿物图谱"),
-        progress: 55,
-    },
-    CodexPreview {
-        label: LocalizedText::new("Ruins", "遗迹科技"),
-        progress: 31,
-    },
-    CodexPreview {
-        label: LocalizedText::new("Field Notes", "外勤笔记"),
-        progress: 68,
-    },
-];
 
 pub const QUEST_PREVIEWS: &[QuestPreview] = &[
     QuestPreview {
@@ -284,15 +259,6 @@ pub fn codex_discoveries_title(language: Language) -> &'static str {
     match language {
         Language::Chinese => "图鉴发现",
         Language::English => "Codex Discoveries",
-    }
-}
-
-pub fn codex_progress_label(index: usize) -> &'static str {
-    match index {
-        0 => "18 / 36",
-        1 => "14 / 32",
-        2 => "12 / 28",
-        _ => "12 / 32",
     }
 }
 

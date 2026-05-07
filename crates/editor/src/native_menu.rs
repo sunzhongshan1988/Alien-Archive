@@ -1,4 +1,6 @@
-use crate::{LayerKind, MenuCommand, ToolKind};
+use crate::MenuCommand;
+#[cfg(target_os = "macos")]
+use crate::{LayerKind, ToolKind};
 
 #[cfg(target_os = "macos")]
 pub const NATIVE_MENU_ENABLED: bool = true;
@@ -92,6 +94,7 @@ fn build_menu() -> muda::Result<muda::Menu> {
             &menu_item("file.refresh_maps", "刷新地图列表", None),
             &PredefinedMenuItem::separator(),
             &menu_item("file.save", "保存", Some("CmdOrCtrl+s")),
+            &menu_item("file.save_run", "保存并运行当前地图", None),
             &menu_item("file.save_as", "另存为", Some("CmdOrCtrl+Shift+s")),
             &PredefinedMenuItem::separator(),
             &menu_item("file.delete_map", "删除地图", None),
@@ -214,6 +217,7 @@ fn command_for_id(id: &str) -> Option<MenuCommand> {
         "file.open_selected" => MenuCommand::OpenSelectedMap,
         "file.refresh_maps" => MenuCommand::RefreshMaps,
         "file.save" => MenuCommand::Save,
+        "file.save_run" => MenuCommand::SaveAndRun,
         "file.save_as" => MenuCommand::SaveAs,
         "file.delete_map" => MenuCommand::DeleteMap,
         "file.revert" => MenuCommand::RevertMap,

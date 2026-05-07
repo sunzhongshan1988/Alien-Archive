@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::{AssetDatabase, AssetKind, LayerKind, MapDocument};
+use crate::{AssetDatabase, AssetKind, CodexDatabase, LayerKind, MapDocument, UnlockRule};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MapValidationSeverity {
@@ -31,7 +31,22 @@ impl MapValidationIssue {
 }
 
 pub fn validate_map(document: &MapDocument, assets: &AssetDatabase) -> Vec<MapValidationIssue> {
+    validate_map_with_codex(document, assets, None)
+}
+
+pub fn validate_map_with_codex(
+    document: &MapDocument,
+    assets: &AssetDatabase,
+    codex: Option<&CodexDatabase>,
+) -> Vec<MapValidationIssue> {
     let mut issues = Vec::new();
+    let solid_collision_cells = document
+        .layers
+        .collision
+        .iter()
+        .filter(|cell| cell.solid)
+        .map(|cell| (cell.x, cell.y))
+        .collect::<HashSet<_>>();
 
     if document.id.trim().is_empty() {
         issues.push(MapValidationIssue::error("map id is empty"));
@@ -54,6 +69,13 @@ pub fn validate_map(document: &MapDocument, assets: &AssetDatabase) -> Vec<MapVa
     for spawn in &document.spawns {
         validate_id("spawn", &spawn.id, &mut ids, &mut issues);
         validate_point("spawn", &spawn.id, spawn.x, spawn.y, document, &mut issues);
+        let spawn_cell = (spawn.x.floor() as i32, spawn.y.floor() as i32);
+        if solid_collision_cells.contains(&spawn_cell) {
+            issues.push(MapValidationIssue::error(format!(
+                "spawn {} overlaps solid collision cell {},{}",
+                spawn.id, spawn_cell.0, spawn_cell.1
+            )));
+        }
     }
 
     for tile in &document.layers.ground {
@@ -118,6 +140,7 @@ pub fn validate_map(document: &MapDocument, assets: &AssetDatabase) -> Vec<MapVa
     }
 
     for object in &document.layers.objects {
+        let asset = assets.get(&object.asset);
         validate_id("object", &object.id, &mut ids, &mut issues);
         validate_asset(
             "object",
@@ -142,9 +165,20 @@ pub fn validate_map(document: &MapDocument, assets: &AssetDatabase) -> Vec<MapVa
             document,
             &mut issues,
         );
+        if asset.and_then(|asset| asset.codex_id.as_deref()).is_some() {
+            issues.push(MapValidationIssue::warning(format!(
+                "object {} uses codex asset {}, but the current runtime only scans entities",
+                object.id, object.asset
+            )));
+        }
+        if let Some(codex_id) = asset.and_then(|asset| asset.codex_id.as_deref()) {
+            validate_codex_reference(codex_id, codex, &mut issues);
+        }
     }
 
+    let mut seen_codex_ids = HashSet::new();
     for entity in &document.layers.entities {
+        let asset = assets.get(&entity.asset);
         validate_id("entity", &entity.id, &mut ids, &mut issues);
         validate_asset(
             "entity",
@@ -175,6 +209,30 @@ pub fn validate_map(document: &MapDocument, assets: &AssetDatabase) -> Vec<MapVa
             document,
             &mut issues,
         );
+        if let Some(codex_id) = asset.and_then(|asset| asset.codex_id.as_deref()) {
+            validate_codex_reference(codex_id, codex, &mut issues);
+            if !seen_codex_ids.insert(codex_id.to_owned()) {
+                issues.push(MapValidationIssue::warning(format!(
+                    "codex_id {codex_id} appears on multiple entities in this map"
+                )));
+            }
+            if entity.interaction_rect.is_none() {
+                issues.push(MapValidationIssue::warning(format!(
+                    "entity {} uses codex_id {codex_id} but has no interaction_rect; runtime will use a 1x1 default scan area",
+                    entity.id
+                )));
+            }
+        }
+        if let Some(unlock) = &entity.unlock {
+            validate_unlock_rule("entity", &entity.id, unlock, codex, &mut issues);
+        } else if entity_uses_implicit_legacy_unlock(&entity.entity_type)
+            && asset.and_then(|asset| asset.codex_id.as_deref()).is_some()
+        {
+            issues.push(MapValidationIssue::warning(format!(
+                "entity {} relies on asset codex_id for legacy door unlock; set unlock.requires_codex_id explicitly",
+                entity.id
+            )));
+        }
     }
 
     for cell in &document.layers.collision {
@@ -192,15 +250,114 @@ pub fn validate_map(document: &MapDocument, assets: &AssetDatabase) -> Vec<MapVa
 
     for zone in &document.layers.zones {
         validate_id("zone", &zone.id, &mut ids, &mut issues);
+        if zone.zone_type.trim().is_empty() {
+            issues.push(MapValidationIssue::error(format!(
+                "zone {} has empty zone_type",
+                zone.id
+            )));
+        } else if !KNOWN_ZONE_TYPES.contains(&zone.zone_type.as_str()) {
+            issues.push(MapValidationIssue::warning(format!(
+                "zone {} uses unknown zone_type {}",
+                zone.id, zone.zone_type
+            )));
+        }
         if zone.points.len() < 3 {
             issues.push(MapValidationIssue::warning(format!(
                 "zone {} has fewer than three points",
                 zone.id
             )));
         }
+        if let Some(unlock) = &zone.unlock {
+            validate_unlock_rule("zone", &zone.id, unlock, codex, &mut issues);
+        }
     }
 
     issues
+}
+
+const KNOWN_ZONE_TYPES: &[&str] = &["ScanArea", "MapTransition", "NoSpawn", "CameraBounds"];
+
+fn validate_unlock_rule(
+    owner: &str,
+    id: &str,
+    unlock: &UnlockRule,
+    codex: Option<&CodexDatabase>,
+    issues: &mut Vec<MapValidationIssue>,
+) {
+    let codex_id = unlock
+        .requires_codex_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let item_id = unlock
+        .requires_item_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    if codex_id.is_none() && item_id.is_none() {
+        issues.push(MapValidationIssue::warning(format!(
+            "{owner} {id} has unlock data but no requires_codex_id or requires_item_id"
+        )));
+    }
+
+    if let Some(codex_id) = codex_id {
+        validate_codex_reference(codex_id, codex, issues);
+    }
+
+    if let Some(item_id) = item_id {
+        if item_id.chars().any(char::is_whitespace) {
+            issues.push(MapValidationIssue::warning(format!(
+                "{owner} {id} unlock requires_item_id {item_id} contains whitespace"
+            )));
+        }
+    }
+
+    if unlock
+        .locked_message
+        .as_deref()
+        .is_some_and(|message| message.trim().is_empty())
+    {
+        issues.push(MapValidationIssue::warning(format!(
+            "{owner} {id} unlock locked_message is empty"
+        )));
+    }
+}
+
+fn entity_uses_implicit_legacy_unlock(entity_type: &str) -> bool {
+    matches!(entity_type, "FacilityEntrance" | "Entrance" | "Door")
+}
+
+fn validate_codex_reference(
+    codex_id: &str,
+    codex: Option<&CodexDatabase>,
+    issues: &mut Vec<MapValidationIssue>,
+) {
+    let Some(codex) = codex else {
+        return;
+    };
+    let Some(entry) = codex.get(codex_id) else {
+        issues.push(MapValidationIssue::warning(format!(
+            "codex_id {codex_id} is not defined in codex database"
+        )));
+        return;
+    };
+
+    if entry.title.trim().is_empty() {
+        issues.push(MapValidationIssue::warning(format!(
+            "codex entry {codex_id} has empty title"
+        )));
+    }
+    if entry.category.trim().is_empty() {
+        issues.push(MapValidationIssue::warning(format!(
+            "codex entry {codex_id} has empty category"
+        )));
+    }
+    if entry.description.trim().is_empty() {
+        issues.push(MapValidationIssue::warning(format!(
+            "codex entry {codex_id} has empty description"
+        )));
+    }
 }
 
 fn validate_id(
@@ -286,7 +443,10 @@ fn validate_scale(
 
 #[cfg(test)]
 mod tests {
-    use crate::{AnchorKind, AssetDatabase, AssetDefinition, LayerKind, MapDocument, SnapMode};
+    use crate::{
+        AnchorKind, AssetDatabase, AssetDefinition, AssetKind, CodexDatabase, CodexEntry,
+        CollisionCell, LayerKind, MapDocument, SnapMode, UnlockRule,
+    };
 
     use super::*;
 
@@ -312,25 +472,13 @@ mod tests {
     fn validates_known_ground_asset() {
         let mut document = MapDocument::new_landing_site();
         document.place_tile("ow_tile_sand_ground", 0, 0);
-        let mut database = AssetDatabase {
-            mode: "Overworld".to_owned(),
-            assets: vec![AssetDefinition {
-                id: "ow_tile_sand_ground".to_owned(),
-                category: "tiles".to_owned(),
-                path: "assets/sprites/tiles/overworld/ow_tile_sand_ground.png".into(),
-                kind: AssetKind::Tile,
-                default_layer: LayerKind::Ground,
-                default_size: [32.0, 32.0],
-                footprint: Some([1, 1]),
-                anchor: AnchorKind::TopLeft,
-                snap: SnapMode::Grid,
-                tags: Vec::new(),
-                entity_type: None,
-                codex_id: None,
-            }],
-            by_id: Default::default(),
-        };
-        database.reindex();
+        let database = test_database(vec![test_asset(
+            "ow_tile_sand_ground",
+            AssetKind::Tile,
+            LayerKind::Ground,
+            None,
+            None,
+        )]);
 
         let issues = validate_map(&document, &database);
 
@@ -339,5 +487,218 @@ mod tests {
                 .iter()
                 .all(|issue| issue.severity != MapValidationSeverity::Error)
         );
+    }
+
+    #[test]
+    fn warns_when_scannable_entity_has_no_interaction_rect() {
+        let mut document = MapDocument::new_landing_site();
+        document.place_entity("ow_scan_terminal", "ScanTarget", 2.0, 2.0);
+        let database = test_database(vec![test_asset(
+            "ow_scan_terminal",
+            AssetKind::Entity,
+            LayerKind::Entities,
+            Some("ScanTarget"),
+            Some("codex.ruin.terminal"),
+        )]);
+
+        let issues = validate_map(&document, &database);
+
+        assert!(issues.iter().any(|issue| {
+            issue.severity == MapValidationSeverity::Warning
+                && issue.message.contains("has no interaction_rect")
+        }));
+    }
+
+    #[test]
+    fn warns_when_codex_asset_is_placed_as_object() {
+        let mut document = MapDocument::new_landing_site();
+        document.place_object("ow_flora_glowfungus", 3.0, 4.0);
+        let database = test_database(vec![test_asset(
+            "ow_flora_glowfungus",
+            AssetKind::Object,
+            LayerKind::Objects,
+            None,
+            Some("codex.flora.glowfungus"),
+        )]);
+
+        let issues = validate_map(&document, &database);
+
+        assert!(issues.iter().any(|issue| {
+            issue.severity == MapValidationSeverity::Warning
+                && issue
+                    .message
+                    .contains("current runtime only scans entities")
+        }));
+    }
+
+    #[test]
+    fn errors_when_spawn_overlaps_solid_collision() {
+        let mut document = MapDocument::new_landing_site();
+        document.layers.collision.push(CollisionCell {
+            x: 8,
+            y: 12,
+            solid: true,
+        });
+        let database = test_database(Vec::new());
+
+        let issues = validate_map(&document, &database);
+
+        assert!(issues.iter().any(|issue| {
+            issue.severity == MapValidationSeverity::Error
+                && issue.message.contains("overlaps solid collision")
+        }));
+    }
+
+    #[test]
+    fn warns_when_codex_reference_is_missing_from_database() {
+        let mut document = MapDocument::new_landing_site();
+        document.place_entity("ow_scan_terminal", "ScanTarget", 2.0, 2.0);
+        let database = test_database(vec![test_asset(
+            "ow_scan_terminal",
+            AssetKind::Entity,
+            LayerKind::Entities,
+            Some("ScanTarget"),
+            Some("codex.ruin.terminal"),
+        )]);
+        let codex = test_codex(Vec::new());
+
+        let issues = validate_map_with_codex(&document, &database, Some(&codex));
+
+        assert!(issues.iter().any(|issue| {
+            issue.severity == MapValidationSeverity::Warning
+                && issue.message.contains("not defined in codex database")
+        }));
+    }
+
+    #[test]
+    fn warns_when_codex_entry_has_empty_content_fields() {
+        let mut document = MapDocument::new_landing_site();
+        document.place_entity("ow_scan_terminal", "ScanTarget", 2.0, 2.0);
+        let database = test_database(vec![test_asset(
+            "ow_scan_terminal",
+            AssetKind::Entity,
+            LayerKind::Entities,
+            Some("ScanTarget"),
+            Some("codex.ruin.terminal"),
+        )]);
+        let codex = test_codex(vec![CodexEntry {
+            id: "codex.ruin.terminal".to_owned(),
+            category: String::new(),
+            title: String::new(),
+            description: String::new(),
+            scan_time: None,
+            unlock_tags: Vec::new(),
+            image: None,
+        }]);
+
+        let issues = validate_map_with_codex(&document, &database, Some(&codex));
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.message.contains("empty title"))
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.message.contains("empty category"))
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.message.contains("empty description"))
+        );
+    }
+
+    #[test]
+    fn validates_explicit_unlock_codex_reference() {
+        let mut document = MapDocument::new_landing_site();
+        document.place_entity("ow_ruin_door", "Door", 2.0, 2.0);
+        document.layers.entities[0].unlock = Some(UnlockRule {
+            requires_codex_id: Some("codex.ruin.door".to_owned()),
+            ..UnlockRule::default()
+        });
+        let database = test_database(vec![test_asset(
+            "ow_ruin_door",
+            AssetKind::Entity,
+            LayerKind::Entities,
+            Some("Door"),
+            None,
+        )]);
+        let codex = test_codex(Vec::new());
+
+        let issues = validate_map_with_codex(&document, &database, Some(&codex));
+
+        assert!(issues.iter().any(|issue| {
+            issue.severity == MapValidationSeverity::Warning
+                && issue.message.contains("not defined in codex database")
+        }));
+    }
+
+    #[test]
+    fn warns_when_unlock_has_no_requirement() {
+        let mut document = MapDocument::new_landing_site();
+        document.place_entity("ow_ruin_door", "Door", 2.0, 2.0);
+        document.layers.entities[0].unlock = Some(UnlockRule {
+            locked_message: Some("Locked".to_owned()),
+            ..UnlockRule::default()
+        });
+        let database = test_database(vec![test_asset(
+            "ow_ruin_door",
+            AssetKind::Entity,
+            LayerKind::Entities,
+            Some("Door"),
+            None,
+        )]);
+
+        let issues = validate_map(&document, &database);
+
+        assert!(issues.iter().any(|issue| {
+            issue.severity == MapValidationSeverity::Warning
+                && issue.message.contains("unlock data but no requires")
+        }));
+    }
+
+    fn test_database(assets: Vec<AssetDefinition>) -> AssetDatabase {
+        let mut database = AssetDatabase {
+            mode: "Overworld".to_owned(),
+            assets,
+            by_id: Default::default(),
+        };
+        database.reindex();
+        database
+    }
+
+    fn test_codex(entries: Vec<CodexEntry>) -> CodexDatabase {
+        let mut database = CodexDatabase {
+            mode: "Overworld".to_owned(),
+            entries,
+            ..CodexDatabase::new("Overworld")
+        };
+        database.reindex();
+        database
+    }
+
+    fn test_asset(
+        id: &str,
+        kind: AssetKind,
+        default_layer: LayerKind,
+        entity_type: Option<&str>,
+        codex_id: Option<&str>,
+    ) -> AssetDefinition {
+        AssetDefinition {
+            id: id.to_owned(),
+            category: "test".to_owned(),
+            path: format!("assets/sprites/test/{id}.png").into(),
+            kind,
+            default_layer,
+            default_size: [32.0, 32.0],
+            footprint: (kind == AssetKind::Tile).then_some([1, 1]),
+            anchor: AnchorKind::TopLeft,
+            snap: SnapMode::Grid,
+            tags: Vec::new(),
+            entity_type: entity_type.map(str::to_owned),
+            codex_id: codex_id.map(str::to_owned),
+        }
     }
 }

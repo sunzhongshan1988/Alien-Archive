@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use runtime::{Button, Color, InputState, Rect, Renderer, SceneCommand, Vec2};
 use rusttype::Font;
 
+use crate::save::{InventorySave, ItemStackSave};
 use crate::ui::text::{TextSprite, draw_text, draw_text_centered, load_ui_font, upload_text};
 
 use super::{GameContext, Language, RenderContext, Scene, SceneId};
@@ -282,6 +283,13 @@ impl ItemCategory {
         }
     }
 
+    fn from_key(value: &str) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|category| category.key() == value)
+    }
+
     fn label(self, language: Language) -> &'static str {
         match language {
             Language::Chinese => match self {
@@ -436,10 +444,10 @@ pub struct InventoryScene {
 }
 
 impl InventoryScene {
-    pub fn new(language: Language) -> Self {
+    pub fn new(ctx: &GameContext) -> Self {
         Self {
-            language,
-            state: InventoryState::new_mvp(),
+            language: ctx.language,
+            state: InventoryState::from_save(&ctx.save_data.inventory),
             text: InventoryText::default(),
         }
     }
@@ -1144,6 +1152,61 @@ impl InventoryState {
             active_category: ItemCategory::Samples,
         }
     }
+
+    fn from_save(save: &InventorySave) -> Self {
+        let mut state = Self::new_mvp();
+        state.slots = vec![None; BACKPACK_SLOTS];
+        for (index, saved_stack) in save.slots.iter().take(BACKPACK_SLOTS).enumerate() {
+            let Some(saved_stack) = saved_stack else {
+                continue;
+            };
+            let Some(definition) = item_definition(&saved_stack.item_id) else {
+                continue;
+            };
+
+            state.slots[index] = Some(ItemStack::new(
+                definition.id,
+                saved_stack.quantity.clamp(1, definition.max_stack.max(1)),
+                saved_stack.locked,
+            ));
+        }
+
+        state.quickbar = [None; QUICKBAR_SLOTS];
+        for (index, slot_index) in save.quickbar.iter().take(QUICKBAR_SLOTS).enumerate() {
+            state.quickbar[index] =
+                (*slot_index).and_then(|slot| (slot < BACKPACK_SLOTS).then_some(slot));
+        }
+
+        state.selected_slot = save.selected_slot.min(BACKPACK_SLOTS - 1);
+        state.active_category =
+            ItemCategory::from_key(&save.active_category).unwrap_or_else(|| {
+                state
+                    .slots
+                    .get(state.selected_slot)
+                    .and_then(Option::as_ref)
+                    .and_then(|stack| item_definition(stack.item_id))
+                    .map_or(ItemCategory::Samples, |definition| definition.category)
+            });
+
+        state
+    }
+
+    fn to_save(&self) -> InventorySave {
+        InventorySave {
+            slots: self
+                .slots
+                .iter()
+                .map(|slot| {
+                    slot.as_ref().map(|stack| {
+                        ItemStackSave::new(stack.item_id, stack.quantity, stack.locked)
+                    })
+                })
+                .collect(),
+            quickbar: self.quickbar.to_vec(),
+            selected_slot: self.selected_slot,
+            active_category: self.active_category.key().to_owned(),
+        }
+    }
 }
 
 impl ItemStack {
@@ -1193,6 +1256,8 @@ impl Scene for InventoryScene {
             return Ok(SceneCommand::Pop);
         }
 
+        let before = self.state.to_save();
+
         self.handle_mouse(input);
 
         if input.just_pressed(Button::Left) {
@@ -1206,6 +1271,12 @@ impl Scene for InventoryScene {
         }
         if input.just_pressed(Button::Down) {
             self.move_selection(0, 1);
+        }
+
+        let after = self.state.to_save();
+        if after != before {
+            ctx.save_data.inventory = after;
+            ctx.request_save();
         }
 
         Ok(SceneCommand::None)
@@ -1445,12 +1516,22 @@ pub(super) fn load_inventory_item_icons(renderer: &mut dyn Renderer) -> Result<(
     Ok(())
 }
 
-pub(super) fn mvp_inventory_slots() -> Vec<Option<InventoryItemView>> {
-    InventoryState::new_mvp()
+pub(super) fn inventory_slots(save: &InventorySave) -> Vec<Option<InventoryItemView>> {
+    InventoryState::from_save(save)
         .slots
         .iter()
         .map(|slot| slot.as_ref().and_then(inventory_item_view))
         .collect()
+}
+
+pub(super) fn inventory_item_max_stack(item_id: &str) -> Option<u32> {
+    item_definition(item_id).map(|definition| definition.max_stack)
+}
+
+pub(super) fn inventory_item_name(item_id: &str, language: Language) -> String {
+    item_definition(item_id)
+        .map(|definition| definition.name.get(language).to_owned())
+        .unwrap_or_else(|| item_id.to_owned())
 }
 
 fn inventory_item_view(stack: &ItemStack) -> Option<InventoryItemView> {
@@ -1599,6 +1680,26 @@ mod tests {
                 stack.item_id
             );
         }
+    }
+
+    #[test]
+    fn inventory_state_round_trips_save_selection_and_items() {
+        let mut save = InventorySave::default();
+        save.selected_slot = 3;
+        save.active_category = "components".to_owned();
+        save.slots[3] = Some(ItemStackSave::new("energy_cell", 99, false));
+
+        let state = InventoryState::from_save(&save);
+        let saved_again = state.to_save();
+
+        assert_eq!(state.selected_slot, 3);
+        assert_eq!(state.active_category, ItemCategory::Components);
+        assert_eq!(saved_again.selected_slot, 3);
+        assert_eq!(saved_again.active_category, "components");
+        assert_eq!(
+            saved_again.slots[3].as_ref().map(|stack| stack.quantity),
+            Some(20)
+        );
     }
 
     #[test]

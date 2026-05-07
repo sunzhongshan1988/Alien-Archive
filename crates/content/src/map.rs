@@ -179,6 +179,7 @@ impl MapDocument {
             z_index: 0,
             collision_rect: None,
             interaction_rect: None,
+            unlock: None,
             flip_x: false,
             rotation: 0,
         });
@@ -282,10 +283,38 @@ pub struct EntityInstance {
     pub collision_rect: Option<InstanceRect>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interaction_rect: Option<InstanceRect>,
+    #[serde(default, skip_serializing_if = "option_unlock_rule_is_none_or_empty")]
+    pub unlock: Option<UnlockRule>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub flip_x: bool,
     #[serde(default, skip_serializing_if = "is_zero_i32")]
     pub rotation: i32,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct UnlockRule {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requires_codex_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requires_item_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locked_message: Option<String>,
+}
+
+impl UnlockRule {
+    pub fn is_empty(&self) -> bool {
+        self.requires_codex_id
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+            && self
+                .requires_item_id
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+            && self
+                .locked_message
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -299,6 +328,8 @@ pub struct ZoneInstance {
     pub id: String,
     pub zone_type: String,
     pub points: Vec<[f32; 2]>,
+    #[serde(default, skip_serializing_if = "option_unlock_rule_is_none_or_empty")]
+    pub unlock: Option<UnlockRule>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -387,6 +418,10 @@ fn zone_contains_cell(zone: &ZoneInstance, x: i32, y: i32) -> bool {
 
 fn is_false(value: &bool) -> bool {
     !*value
+}
+
+fn option_unlock_rule_is_none_or_empty(value: &Option<UnlockRule>) -> bool {
+    value.as_ref().is_none_or(UnlockRule::is_empty)
 }
 
 fn is_zero_i32(value: &i32) -> bool {
