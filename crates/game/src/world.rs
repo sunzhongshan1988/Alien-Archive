@@ -54,6 +54,13 @@ impl World {
             .filter(move |entity| entity.kind == kind)
     }
 
+    pub fn codex_entities(&self) -> impl Iterator<Item = &MapEntity> + '_ {
+        self.map
+            .entities()
+            .iter()
+            .filter(|entity| entity.codex_id.is_some())
+    }
+
     #[allow(dead_code)]
     pub fn solid_rects(&self) -> impl Iterator<Item = Rect> + '_ {
         self.map.solid_rects()

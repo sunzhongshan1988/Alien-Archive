@@ -2,7 +2,7 @@ use runtime::{Camera2d, Color, Rect, Renderer, Vec2, collision::rects_overlap};
 
 use crate::{
     ui::menu_widgets::{draw_border, draw_screen_rect},
-    world::{MapEntity, MapEntityKind, World},
+    world::{MapEntity, World},
 };
 
 use super::GameContext;
@@ -131,8 +131,7 @@ impl ScanState {
 
 pub fn nearby_scan_target<'a>(world: &'a World, player_rect: Rect) -> Option<&'a MapEntity> {
     world
-        .entities(MapEntityKind::ScanTarget)
-        .filter(|entity| entity.codex_id.is_some())
+        .codex_entities()
         .find(|entity| rects_overlap(player_rect, expanded_rect(entity.rect, SCAN_RANGE_PADDING)))
 }
 
@@ -146,10 +145,19 @@ fn expanded_rect(rect: Rect, padding: f32) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::MapEntityKind;
 
     fn facility_scan_target() -> World {
         World::load("assets/data/maps/facility_ruin_01.ron", Some("entry"))
             .expect("facility map should load")
+    }
+
+    fn overworld() -> World {
+        World::load(
+            "assets/data/maps/overworld_landing_site.ron",
+            Some("player_start"),
+        )
+        .expect("overworld map should load")
     }
 
     #[test]
@@ -193,5 +201,19 @@ mod tests {
 
         assert_eq!(scan.progress, 0.0);
         assert!(!ctx.scanned_codex_ids.contains(codex_id));
+    }
+
+    #[test]
+    fn decorations_with_codex_ids_are_scan_candidates() {
+        let world = overworld();
+        let decoration = world
+            .codex_entities()
+            .find(|entity| entity.kind == MapEntityKind::Decoration)
+            .expect("overworld should have codex-backed decoration");
+        let player_rect = expanded_rect(decoration.rect, 1.0);
+
+        let target = nearby_scan_target(&world, player_rect).expect("decoration should scan");
+
+        assert_eq!(target.id, decoration.id);
     }
 }
