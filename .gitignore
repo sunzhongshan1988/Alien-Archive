@@ -5,10 +5,4 @@
 *.ron.bak
 /.editor/
 
-/assets/*
-!/assets/data/
-!/assets/data/assets/
-!/assets/data/assets/*.ron
-!/assets/data/maps/
-!/assets/data/maps/*.ron
-/assets/data/maps/.autosave/
+/assets
