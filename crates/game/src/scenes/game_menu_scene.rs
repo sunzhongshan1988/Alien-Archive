@@ -421,7 +421,7 @@ impl GameMenuScene {
                     },
                     layout.scale,
                     0.0,
-                    true,
+                    false,
                 );
             }
         }
@@ -656,13 +656,13 @@ impl GameMenuScene {
 
         let portrait_frame = Rect::new(
             Vec2::new(
-                portrait_panel.origin.x + 10.0 * layout.scale,
-                portrait_panel.origin.y + 52.0 * layout.scale,
+                portrait_panel.origin.x + 24.0 * layout.scale,
+                portrait_panel.origin.y + 60.0 * layout.scale,
             ),
             Vec2::new(
-                portrait_panel.size.x - 20.0 * layout.scale,
-                (portrait_panel.size.y - 182.0 * layout.scale)
-                    .clamp(360.0 * layout.scale, 500.0 * layout.scale),
+                portrait_panel.size.x - 48.0 * layout.scale,
+                (portrait_panel.size.y - 220.0 * layout.scale)
+                    .clamp(300.0 * layout.scale, 430.0 * layout.scale),
             ),
         );
         if let Some(image_size) = renderer.texture_size(EXPLORER_PORTRAIT_TEXTURE_ID) {
@@ -1046,37 +1046,26 @@ impl GameMenuScene {
             ),
             Vec2::new(112.0 * layout.scale, 112.0 * layout.scale),
         );
-        let preview_textured = draw_texture_nine_slice(
+        draw_screen_rect(
             renderer,
             viewport,
-            "menu.skin_slot_selected",
             preview,
-            40.0,
-            16.0 * layout.scale,
-            Color::rgba(1.0, 1.0, 1.0, 0.94),
+            Color::rgba(0.020, 0.055, 0.068, 0.52),
         );
-        if !preview_textured {
-            draw_screen_rect(
-                renderer,
-                viewport,
-                preview,
-                Color::rgba(0.020, 0.055, 0.068, 0.90),
-            );
-            draw_border(
-                renderer,
-                viewport,
-                preview,
-                1.0 * layout.scale,
-                selected_item.map_or(Color::rgba(0.12, 0.27, 0.35, 0.86), |item| {
-                    Color::rgba(
-                        item.rarity_color.r,
-                        item.rarity_color.g,
-                        item.rarity_color.b,
-                        0.94,
-                    )
-                }),
-            );
-        }
+        draw_border(
+            renderer,
+            viewport,
+            preview,
+            1.0 * layout.scale,
+            selected_item.map_or(Color::rgba(0.12, 0.27, 0.35, 0.58), |item| {
+                Color::rgba(
+                    item.rarity_color.r,
+                    item.rarity_color.g,
+                    item.rarity_color.b,
+                    0.66,
+                )
+            }),
+        );
 
         if let Some(item) = selected_item {
             renderer.draw_image(
@@ -1228,12 +1217,23 @@ impl GameMenuScene {
         for (index, (label, value)) in self.text.codex_cards.iter().enumerate() {
             let card = cards[index];
             draw_inner_panel(renderer, viewport, card, layout.scale);
-            draw_codex_glyph(renderer, viewport, card, index, layout.scale);
+            let image_size = 104.0 * layout.scale;
+            let image_rect = Rect::new(
+                Vec2::new(
+                    card.right() - image_size - 22.0 * layout.scale,
+                    card.origin.y + (card.size.y - image_size) * 0.5,
+                ),
+                Vec2::new(image_size, image_size),
+            );
+            let text_x = card.origin.x + 26.0 * layout.scale;
+            let bar_width =
+                (image_rect.origin.x - text_x - 24.0 * layout.scale).max(80.0 * layout.scale);
+            draw_codex_glyph(renderer, viewport, image_rect, index, layout.scale);
             draw_text_strong(
                 renderer,
                 label,
                 viewport,
-                card.origin.x + 96.0 * layout.scale,
+                text_x,
                 card.origin.y + 28.0 * layout.scale,
                 color::TEXT_PRIMARY,
                 layout.scale,
@@ -1242,7 +1242,7 @@ impl GameMenuScene {
                 renderer,
                 value,
                 viewport,
-                card.origin.x + 96.0 * layout.scale,
+                text_x,
                 card.origin.y + 62.0 * layout.scale,
                 color::TEXT_SECONDARY,
             );
@@ -1250,11 +1250,8 @@ impl GameMenuScene {
                 renderer,
                 viewport,
                 Rect::new(
-                    Vec2::new(
-                        card.origin.x + 96.0 * layout.scale,
-                        card.origin.y + 100.0 * layout.scale,
-                    ),
-                    Vec2::new(card.size.x - 128.0 * layout.scale, 10.0 * layout.scale),
+                    Vec2::new(text_x, card.origin.y + 100.0 * layout.scale),
+                    Vec2::new(bar_width, 10.0 * layout.scale),
                 ),
                 CODEX_PREVIEWS[index].progress as f32 / 100.0,
                 layout.scale,
@@ -1410,12 +1407,13 @@ impl GameMenuScene {
         );
         draw_inner_panel(renderer, viewport, language_row, layout.scale);
         if let Some(label) = &self.text.settings_language {
+            let label_y = centered_text_y(language_row, label, 0.0);
             draw_text_strong(
                 renderer,
                 label,
                 viewport,
                 language_row.origin.x + 24.0 * layout.scale,
-                language_row.origin.y + 24.0 * layout.scale,
+                label_y,
                 color::TEXT_PRIMARY,
                 layout.scale,
             );
@@ -1466,7 +1464,7 @@ impl GameMenuScene {
                     value,
                     viewport,
                     choice.origin.x + choice.size.x * 0.5,
-                    choice.origin.y + 16.0 * layout.scale,
+                    centered_text_y(choice, value, 0.0),
                     if active {
                         Color::rgba(0.94, 1.0, 0.98, 1.0)
                     } else {
@@ -2351,6 +2349,12 @@ fn draw_two_line_menu_text(
     );
 }
 
+fn centered_text_y(rect: Rect, text: &TextSprite, y_offset: f32) -> f32 {
+    let text_padding = 8.0;
+    let visual_height = (text.size.y - text_padding * 2.0).max(0.0);
+    rect.origin.y + (rect.size.y - visual_height) * 0.5 + y_offset - text_padding
+}
+
 fn draw_header_resources(
     renderer: &mut dyn Renderer,
     viewport: Vec2,
@@ -2654,105 +2658,44 @@ fn draw_inventory_slot(
     selected: bool,
     scale: f32,
 ) {
-    let slot_skin = if selected || item.is_some() {
-        "menu.skin_slot_selected"
-    } else {
-        "menu.skin_slot_empty"
-    };
-    let textured = draw_texture_nine_slice(
+    draw_screen_rect(
         renderer,
         viewport,
-        slot_skin,
         slot,
-        40.0,
-        10.0 * scale,
-        Color::rgba(1.0, 1.0, 1.0, if selected { 1.0 } else { 0.86 }),
+        if selected {
+            Color::rgba(0.050, 0.18, 0.22, 0.68)
+        } else if item.is_some() {
+            Color::rgba(0.020, 0.060, 0.074, 0.46)
+        } else {
+            Color::rgba(0.012, 0.026, 0.034, 0.34)
+        },
     );
-    if !textured {
-        draw_screen_rect(
-            renderer,
-            viewport,
-            slot,
-            if selected {
-                Color::rgba(0.055, 0.19, 0.24, 0.96)
-            } else if item.is_some() {
-                Color::rgba(0.025, 0.070, 0.086, 0.88)
-            } else {
-                Color::rgba(0.012, 0.025, 0.032, 0.82)
-            },
-        );
-        draw_border(
-            renderer,
-            viewport,
-            slot,
-            1.0 * scale,
-            if selected {
-                Color::rgba(0.58, 0.96, 1.0, 0.96)
-            } else {
-                Color::rgba(0.12, 0.27, 0.35, 0.86)
-            },
-        );
-        draw_border(
-            renderer,
-            viewport,
-            inset_rect(slot, 5.0 * scale),
-            1.0 * scale,
-            Color::rgba(0.06, 0.15, 0.20, 0.86),
-        );
-    }
+    draw_border(
+        renderer,
+        viewport,
+        slot,
+        1.0 * scale,
+        if selected {
+            Color::rgba(0.54, 0.94, 1.0, 0.76)
+        } else if item.is_some() {
+            Color::rgba(0.17, 0.44, 0.52, 0.54)
+        } else {
+            Color::rgba(0.10, 0.23, 0.29, 0.40)
+        },
+    );
     if let Some(item) = item {
-        draw_border(
-            renderer,
-            viewport,
-            inset_rect(slot, 7.0 * scale),
-            1.0 * scale,
-            Color::rgba(
-                item.rarity_color.r,
-                item.rarity_color.g,
-                item.rarity_color.b,
-                if textured { 0.52 } else { 0.82 },
-            ),
-        );
         renderer.draw_image(
             item.texture_id,
-            screen_rect(viewport, inset_rect(slot, 13.0 * scale)),
+            screen_rect(viewport, inset_rect(slot, 9.0 * scale)),
             Color::rgba(1.0, 1.0, 1.0, if item.locked { 0.72 } else { 1.0 }),
         );
-        if item.locked {
-            draw_screen_rect(
-                renderer,
-                viewport,
-                Rect::new(
-                    Vec2::new(slot.right() - 18.0 * scale, slot.origin.y + 6.0 * scale),
-                    Vec2::new(10.0 * scale, 14.0 * scale),
-                ),
-                Color::rgba(0.90, 0.68, 0.34, 0.92),
-            );
-        }
         if let Some(count) = count {
-            let badge = Rect::new(
-                Vec2::new(slot.right() - 24.0 * scale, slot.bottom() - 22.0 * scale),
-                Vec2::new(20.0 * scale, 18.0 * scale),
-            );
-            draw_screen_rect(
-                renderer,
-                viewport,
-                badge,
-                Color::rgba(0.020, 0.036, 0.046, 0.92),
-            );
-            draw_border(
-                renderer,
-                viewport,
-                badge,
-                1.0 * scale,
-                Color::rgba(0.56, 0.86, 0.95, 0.86),
-            );
-            draw_text_centered(
+            draw_text(
                 renderer,
                 count,
                 viewport,
-                badge.origin.x + badge.size.x * 0.5,
-                badge.origin.y + 1.0 * scale,
+                slot.right() - count.size.x - 5.0 * scale,
+                slot.bottom() - count.size.y + 4.0 * scale,
                 Color::rgba(0.92, 1.0, 0.98, 1.0),
             );
         }

@@ -32,15 +32,16 @@ pub mod space {
     pub const LANGUAGE_CHOICE_RIGHT: f32 = 300.0;
     pub const LANGUAGE_CHOICE_GAP: f32 = 140.0;
     pub const LANGUAGE_CHOICE_TOP: f32 = 21.0;
-    pub const INVENTORY_SLOT_SIZE: f32 = 66.0;
     pub const INVENTORY_SLOT_GAP: f32 = 10.0;
     pub const INVENTORY_SLOT_LEFT: f32 = 24.0;
     pub const INVENTORY_SLOT_TOP: f32 = 28.0;
+    pub const INVENTORY_SLOT_RIGHT: f32 = 24.0;
+    pub const INVENTORY_SLOT_BOTTOM: f32 = 28.0;
 }
 
 pub mod grid {
     pub const INVENTORY_COLUMNS: usize = 6;
-    pub const INVENTORY_ROWS: usize = 4;
+    pub const INVENTORY_ROWS: usize = 5;
     pub const INVENTORY_SLOTS: usize = INVENTORY_COLUMNS * INVENTORY_ROWS;
 }
 
@@ -53,8 +54,6 @@ pub mod skin {
     pub const NAV_IDLE: &str = "menu.skin_nav_idle";
     pub const BOTTOM_BUTTON: &str = "menu.skin_bottom_button";
     pub const RETURN_BUTTON: &str = "menu.skin_return_button";
-    pub const SLOT_SELECTED: &str = "menu.skin_slot_selected";
-    pub const SLOT_EMPTY: &str = "menu.skin_slot_empty";
     pub const LANGUAGE_TOGGLE: &str = "menu.skin_language_toggle";
 }
 
@@ -103,14 +102,6 @@ pub const TEXTURES: &[TextureAsset] = &[
     TextureAsset {
         texture_id: skin::RETURN_BUTTON,
         path: "assets/images/ui/menu/skin_return_button_ai.png",
-    },
-    TextureAsset {
-        texture_id: skin::SLOT_SELECTED,
-        path: "assets/images/ui/menu/skin_slot_selected_ai.png",
-    },
-    TextureAsset {
-        texture_id: skin::SLOT_EMPTY,
-        path: "assets/images/ui/menu/skin_slot_empty_ai.png",
     },
     TextureAsset {
         texture_id: skin::LANGUAGE_TOGGLE,
@@ -429,15 +420,27 @@ impl MenuLayout {
 }
 
 pub fn inventory_slot_rect(panel: Rect, index: usize, scale: f32) -> Rect {
-    let slot_size = space::INVENTORY_SLOT_SIZE * scale;
     let gap = space::INVENTORY_SLOT_GAP * scale;
     let col = index % grid::INVENTORY_COLUMNS;
     let row = index / grid::INVENTORY_COLUMNS;
+    let inner_w = panel.size.x - (space::INVENTORY_SLOT_LEFT + space::INVENTORY_SLOT_RIGHT) * scale;
+    let inner_h = panel.size.y - (space::INVENTORY_SLOT_TOP + space::INVENTORY_SLOT_BOTTOM) * scale;
+    let col_count = grid::INVENTORY_COLUMNS as f32;
+    let row_count = grid::INVENTORY_ROWS as f32;
+    let slot_w = (inner_w - gap * (col_count - 1.0)) / col_count;
+    let slot_h = (inner_h - gap * (row_count - 1.0)) / row_count;
+    let slot_size = slot_w.min(slot_h).max(0.0);
+    let grid_w = slot_size * col_count + gap * (col_count - 1.0);
+    let grid_h = slot_size * row_count + gap * (row_count - 1.0);
+    let start_x =
+        panel.origin.x + space::INVENTORY_SLOT_LEFT * scale + ((inner_w - grid_w) * 0.5).max(0.0);
+    let start_y =
+        panel.origin.y + space::INVENTORY_SLOT_TOP * scale + ((inner_h - grid_h) * 0.5).max(0.0);
 
     Rect::new(
         Vec2::new(
-            panel.origin.x + space::INVENTORY_SLOT_LEFT * scale + col as f32 * (slot_size + gap),
-            panel.origin.y + space::INVENTORY_SLOT_TOP * scale + row as f32 * (slot_size + gap),
+            start_x + col as f32 * (slot_size + gap),
+            start_y + row as f32 * (slot_size + gap),
         ),
         Vec2::new(slot_size, slot_size),
     )

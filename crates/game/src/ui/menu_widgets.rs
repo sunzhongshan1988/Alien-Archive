@@ -114,15 +114,15 @@ pub fn draw_text_strong(
     color: Color,
     scale: f32,
 ) {
-    draw_text(renderer, text, viewport, x, y, color);
     draw_text(
         renderer,
         text,
         viewport,
-        x + 1.0_f32.max(scale),
-        y,
-        Color::rgba(color.r, color.g, color.b, color.a * 0.72),
+        x + scale.max(1.0),
+        y + scale.max(1.0),
+        Color::rgba(0.0, 0.0, 0.0, color.a * 0.36),
     );
+    draw_text(renderer, text, viewport, x, y, color);
 }
 
 pub fn draw_inner_panel(renderer: &mut dyn Renderer, viewport: Vec2, rect: Rect, scale: f32) {
