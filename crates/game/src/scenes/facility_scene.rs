@@ -7,13 +7,15 @@ use crate::{
 };
 
 use super::{
-    GameContext, GameMenuTab, RenderContext, Scene, SceneId,
+    FieldActivity, FieldEnvironment, GameContext, GameMenuTab, RenderContext, Scene,
+    SceneDebugSnapshot, SceneId,
     notice_system::NoticeState,
     rewards,
     scan_system::{ScanState, nearby_scan_target},
 };
 
 const FACILITY_MAP: &str = "assets/data/maps/facility_ruin_01.ron";
+const OVERWORLD_MAP: &str = "assets/data/maps/overworld_landing_site.ron";
 const OVERWORLD_RETURN_SPAWN: &str = "facility_return";
 const RUN_SPEED: f32 = 260.0;
 const GRAVITY: f32 = 980.0;
@@ -86,6 +88,7 @@ impl FacilityScene {
         let added = ctx.add_inventory_item(reward.item_id, reward.quantity, reward.locked);
         if added == 0 {
             self.notice.push_inventory_full(ctx.language);
+            ctx.log_inventory_full();
             return true;
         }
 
@@ -96,19 +99,22 @@ impl FacilityScene {
         true
     }
 
-    fn update_sideview_player(&mut self, dt: f32, input: &InputState, scan_jump_blocked: bool) {
+    fn update_sideview_player(
+        &mut self,
+        dt: f32,
+        input: &InputState,
+        jump_started: bool,
+        speed_multiplier: f32,
+    ) {
         let horizontal = match (input.is_down(Button::Left), input.is_down(Button::Right)) {
             (true, false) => -1.0,
             (false, true) => 1.0,
             _ => 0.0,
         };
 
-        self.velocity.x = horizontal * RUN_SPEED;
+        self.velocity.x = horizontal * RUN_SPEED * speed_multiplier.clamp(0.35, 1.25);
 
-        if self.grounded
-            && (input.just_pressed(Button::Up)
-                || (input.just_pressed(Button::Scan) && !scan_jump_blocked))
-        {
+        if jump_started {
             self.velocity.y = -JUMP_SPEED;
             self.grounded = false;
         }
@@ -168,11 +174,17 @@ impl Scene for FacilityScene {
                         unlock.as_ref(),
                         &ctx.codex_database,
                     );
+                    ctx.log_locked_unlock_rule(unlock.as_ref());
                     return Ok(SceneCommand::None);
                 }
 
                 ctx.overworld_spawn_id = Some(OVERWORLD_RETURN_SPAWN.to_owned());
                 ctx.overworld_player_position = None;
+                let target_map = ctx
+                    .overworld_map_path
+                    .clone()
+                    .unwrap_or_else(|| OVERWORLD_MAP.to_owned());
+                ctx.log_scene_transition(SceneId::Overworld, &target_map);
                 ctx.request_save();
                 return Ok(SceneCommand::Switch(SceneId::Overworld));
             }
@@ -187,7 +199,24 @@ impl Scene for FacilityScene {
                 .push_scan_complete(ctx.language, &codex_id, &ctx.codex_database);
         }
 
-        self.update_sideview_player(dt, input, self.scan.should_capture_scan_button());
+        let jump_requested = input.just_pressed(Button::Up)
+            || (input.just_pressed(Button::Scan) && !self.scan.should_capture_scan_button());
+        let jump_started = self.grounded && jump_requested && ctx.can_start_jump();
+        if self.grounded && jump_requested && !jump_started {
+            self.notice.push_stamina_low(ctx.language);
+            ctx.log_stamina_low();
+        }
+        let horizontal_movement = input.is_down(Button::Left) || input.is_down(Button::Right);
+        let status = ctx.update_field_status(
+            dt,
+            FieldActivity {
+                moving: horizontal_movement,
+                scanning: input.is_down(Button::Scan),
+                jumped: jump_started,
+                environment: FieldEnvironment::Facility,
+            },
+        );
+        self.update_sideview_player(dt, input, jump_started, status.movement_speed_multiplier);
         self.camera.position = self.player.position;
         ctx.record_world_location(SceneId::Facility, &self.map_path, self.player.position);
 
@@ -205,4 +234,21 @@ impl Scene for FacilityScene {
     fn camera(&self) -> Camera2d {
         self.camera
     }
+
+    fn debug_snapshot(&self, _ctx: &GameContext) -> SceneDebugSnapshot {
+        SceneDebugSnapshot::new(self.id(), self.name()).with_field_state(
+            &self.map_path,
+            self.player.position,
+            self.world.solid_rects().count(),
+            nearby_scan_target(&self.world, self.player.rect()).map(debug_scan_target_label),
+        )
+    }
+}
+
+fn debug_scan_target_label(entity: &MapEntity) -> String {
+    entity
+        .codex_id
+        .as_deref()
+        .map(|codex_id| format!("{codex_id} [{}]", entity.id))
+        .unwrap_or_else(|| entity.id.clone())
 }

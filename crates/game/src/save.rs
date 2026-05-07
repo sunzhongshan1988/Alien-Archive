@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeSet, HashSet},
     fs,
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use anyhow::{Context, Result};
@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_SAVE_PATH: &str = "saves/profile_01.ron";
 pub const SAVE_SCHEMA_VERSION: u32 = 1;
+pub const SAVE_SLOT_COUNT: usize = 3;
+pub const ACTIVITY_LOG_LIMIT: usize = 32;
 const DEFAULT_INVENTORY_SLOTS: usize = 24;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -20,6 +22,7 @@ pub struct SaveData {
     pub inventory: InventorySave,
     pub world: WorldSave,
     pub codex: CodexSave,
+    pub activity_log: ActivityLogSave,
     pub settings: SettingsSave,
 }
 
@@ -31,6 +34,7 @@ impl Default for SaveData {
             inventory: InventorySave::default(),
             world: WorldSave::default(),
             codex: CodexSave::default(),
+            activity_log: ActivityLogSave::default(),
             settings: SettingsSave::default(),
         }
     }
@@ -88,6 +92,11 @@ impl SaveData {
         if self.inventory.slots.is_empty() {
             self.inventory = InventorySave::default();
         }
+        self.world.field_time_minutes %= 24 * 60;
+        if self.world.weather.trim().is_empty() {
+            self.world.weather = "clear".to_owned();
+        }
+        self.activity_log.normalize();
     }
 }
 
@@ -151,6 +160,43 @@ impl PlayerProfileSave {
             .chain(self.research.iter())
             .chain(self.resistances.iter())
             .find(|stat| stat.id == id)
+    }
+
+    pub fn meter_mut(&mut self, id: &str) -> Option<&mut MeterSave> {
+        self.vitals
+            .iter_mut()
+            .chain(self.research.iter_mut())
+            .chain(self.resistances.iter_mut())
+            .find(|stat| stat.id == id)
+    }
+
+    pub fn set_meter_value(&mut self, id: &str, value: u32) -> bool {
+        let Some(meter) = self.meter_mut(id) else {
+            return false;
+        };
+        let next_value = value.min(meter.max);
+        if meter.value == next_value {
+            return false;
+        }
+
+        meter.value = next_value;
+        true
+    }
+
+    pub fn add_meter_delta(&mut self, id: &str, delta: i32) -> bool {
+        let Some(meter) = self.meter_mut(id) else {
+            return false;
+        };
+
+        let current = meter.value as i32;
+        let max = meter.max as i32;
+        let next_value = (current + delta).clamp(0, max) as u32;
+        if meter.value == next_value {
+            return false;
+        }
+
+        meter.value = next_value;
+        true
     }
 
     pub fn score(&self, id: &str) -> Option<&ScoreSave> {
@@ -331,6 +377,8 @@ pub struct WorldSave {
     pub spawn_id: Option<String>,
     pub player_position: Option<SaveVec2>,
     pub collected_entities: BTreeSet<String>,
+    pub field_time_minutes: u32,
+    pub weather: String,
 }
 
 impl Default for WorldSave {
@@ -341,6 +389,8 @@ impl Default for WorldSave {
             spawn_id: Some("player_start".to_owned()),
             player_position: None,
             collected_entities: BTreeSet::new(),
+            field_time_minutes: 8 * 60,
+            weather: "clear".to_owned(),
         }
     }
 }
@@ -357,6 +407,74 @@ impl CodexSave {
             scanned_ids: scanned_ids.iter().cloned().collect(),
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ActivityLogSave {
+    pub entries: Vec<ActivityLogEntrySave>,
+    pub next_sequence: u64,
+}
+
+impl Default for ActivityLogSave {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+            next_sequence: 1,
+        }
+    }
+}
+
+impl ActivityLogSave {
+    pub fn push(
+        &mut self,
+        category: impl Into<String>,
+        title: impl Into<String>,
+        detail: impl Into<String>,
+        scene: impl Into<String>,
+        map_path: impl Into<String>,
+    ) {
+        let sequence = self.next_sequence.max(1);
+        self.next_sequence = sequence + 1;
+        self.entries.push(ActivityLogEntrySave {
+            sequence,
+            category: category.into(),
+            title: title.into(),
+            detail: detail.into(),
+            scene: scene.into(),
+            map_path: map_path.into(),
+        });
+        self.trim_to_limit();
+    }
+
+    pub fn normalize(&mut self) {
+        let max_sequence = self
+            .entries
+            .iter()
+            .map(|entry| entry.sequence)
+            .max()
+            .unwrap_or(0);
+        self.next_sequence = self.next_sequence.max(max_sequence + 1).max(1);
+        self.trim_to_limit();
+    }
+
+    fn trim_to_limit(&mut self) {
+        let overflow = self.entries.len().saturating_sub(ACTIVITY_LOG_LIMIT);
+        if overflow > 0 {
+            self.entries.drain(0..overflow);
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ActivityLogEntrySave {
+    pub sequence: u64,
+    pub category: String,
+    pub title: String,
+    pub detail: String,
+    pub scene: String,
+    pub map_path: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -394,6 +512,18 @@ impl From<SaveVec2> for Vec2 {
     }
 }
 
+pub fn save_slot_path(slot_index: usize) -> PathBuf {
+    PathBuf::from(format!("saves/profile_{:02}.ron", slot_index + 1))
+}
+
+pub fn delete_save_file(path: &Path) -> Result<()> {
+    if path.exists() {
+        fs::remove_file(path)
+            .with_context(|| format!("failed to delete save file {}", path.display()))?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -406,6 +536,15 @@ mod tests {
         assert!(!save.profile.vitals.is_empty());
         assert!(!save.inventory.slots.is_empty());
         assert_eq!(save.world.current_scene, "Overworld");
+        assert_eq!(save.world.field_time_minutes, 8 * 60);
+        assert_eq!(save.world.weather, "clear");
+        assert!(save.activity_log.entries.is_empty());
+    }
+
+    #[test]
+    fn save_slot_paths_are_stable() {
+        assert_eq!(save_slot_path(0), PathBuf::from("saves/profile_01.ron"));
+        assert_eq!(save_slot_path(2), PathBuf::from("saves/profile_03.ron"));
     }
 
     #[test]
@@ -438,6 +577,48 @@ mod tests {
         assert_eq!(
             inventory.slots[1].as_ref().map(|stack| stack.quantity),
             Some(2)
+        );
+    }
+
+    #[test]
+    fn profile_meters_clamp_runtime_changes() {
+        let mut profile = PlayerProfileSave::default();
+
+        assert!(profile.add_meter_delta("stamina", -999));
+        assert_eq!(profile.meter("stamina").map(|meter| meter.value), Some(0));
+        assert!(profile.add_meter_delta("stamina", 999));
+        assert_eq!(
+            profile
+                .meter("stamina")
+                .map(|meter| (meter.value, meter.max)),
+            Some((100, 100))
+        );
+        assert!(profile.set_meter_value("load", 999));
+        assert_eq!(
+            profile.meter("load").map(|meter| (meter.value, meter.max)),
+            Some((60, 60))
+        );
+    }
+
+    #[test]
+    fn activity_log_keeps_recent_entries_only() {
+        let mut log = ActivityLogSave::default();
+
+        for index in 0..(ACTIVITY_LOG_LIMIT + 4) {
+            log.push(
+                "status",
+                format!("event {index}"),
+                "detail",
+                "Overworld",
+                "assets/data/maps/overworld_landing_site.ron",
+            );
+        }
+
+        assert_eq!(log.entries.len(), ACTIVITY_LOG_LIMIT);
+        assert_eq!(log.entries.first().map(|entry| entry.sequence), Some(5));
+        assert_eq!(
+            log.entries.last().map(|entry| entry.sequence),
+            Some((ACTIVITY_LOG_LIMIT + 4) as u64)
         );
     }
 

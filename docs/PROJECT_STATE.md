@@ -1,6 +1,6 @@
 # Alien Archive 项目状态
 
-最后更新：2026-05-07
+最后更新：2026-05-08
 
 ## 项目目标
 
@@ -29,14 +29,16 @@
 - 自定义 RON 地图加载
 - 玩家移动、摄像机跟随、基础碰撞
 - 游戏内菜单
+- 外勤 HUD、快捷栏、时间和天气状态
 - 简单扫描状态机
 - 本地 RON 存档和自动保存
+- 全局 Debug Overlay
 
 还没有完成的核心循环部分：
 
 - 多地图入口/出口目标字段和区域脚本执行
-- 更完整的交互面板和日志历史
-- 存档选择/新建/删除界面
+- 更完整的日志筛选、分页和真实任务数据
+- 更完整的危险环境、受伤来源、恢复/消耗品使用和对应素材
 
 ## 今天更新重点
 
@@ -46,7 +48,7 @@
 
 - 新增/重构 `GameMenuScene`，作为覆盖层压在当前游戏场景上，而不是完全切走底层场景。
 - `SceneStack` 支持 overlay scene 渲染：底层场景先按自己的 camera 渲染，菜单再用 UI camera 叠上去。
-- 菜单分为 `Profile` / `Inventory` / `Codex` / `Map` / `Quests` / `Settings` 六个页签。
+- 菜单分为 `Profile` / `Inventory` / `Codex` / `Map` / `Log` / `Settings` 六个页签。
 - `Esc` 打开/关闭游戏内菜单，`I` / `Tab` 直达背包页，`C` 直达属性页。
 - 菜单支持鼠标点击左侧页签、返回按钮、设置里的语言切换。
 - 非背包页可以用方向键切换页签；背包页方向键移动选中格子。
@@ -73,12 +75,16 @@
 3. 本地存档
 
 - 新增 `crates/game/src/save.rs`，默认存档路径是 `saves/profile_01.ron`。
-- 存档使用 RON，包含 schema version、人物档案、背包槽位、快捷栏、当前地图/场景/出生点/玩家位置、已扫描 Codex ID、已收集实体、语言设置。
+- 存档使用 RON，包含 schema version、人物档案、背包槽位、快捷栏、当前地图/场景/出生点/玩家位置、已扫描 Codex ID、已收集实体、交互历史日志、语言设置。
 - `GameContext` 启动时读取存档；不存在或读取失败时使用默认存档。
-- 主菜单“开始游戏”会从存档里的当前场景继续，而不是固定进 Overworld。
+- 主菜单“继续游戏”会从当前存档里的场景继续，而不是固定进 Overworld。
+- 主菜单支持 3 个固定存档槽：`saves/profile_01.ron`、`saves/profile_02.ron`、`saves/profile_03.ron`。
+- `新建存档` / `读取存档` / `删除存档` 会打开槽位列表，显示空槽、损坏槽、等级、当前场景和已扫描数量。
+- 读取空槽或损坏槽会重建为新游戏；删除存档需要二次确认，避免误删。
 - Overworld / Facility 会持续记录玩家位置和当前地图，移动后按 5 秒间隔自动保存；退出时若有未保存状态会补写一次。
 - 扫描完成、语言切换、背包选择/分类状态变化会立即请求保存。
 - Profile 页和游戏内 Profile 面板读取 `SaveData.profile`；背包页和游戏内 Inventory 面板读取 `SaveData.inventory`。
+- `SaveData.profile` 里的生命、体力、外骨骼、负重、氧气/辐射/孢子抗性现在会被运行时系统更新，并随自动保存写回。
 
 4. 拾取和奖励
 
@@ -92,10 +98,22 @@
 - 新增 `scenes::notice_system`，用于在游戏画面上方显示轻量提示。
 - 拾取成功会显示“获得物品 x 数量”。
 - 背包无空位时会显示背包已满。
+- Facility 里体力不足时尝试跳跃会提示“体力不足，无法跳跃”。
 - 被 `unlock` 锁住的入口/出口会根据条件显示扫描目标、所需物品或自定义锁定提示。
 - 首次扫描完成会显示扫描完成提示，提示研究和奖励已经记录。
 
-6. 显式解锁规则
+6. 人物状态运行时
+
+- 新增 `FieldActivity` / `FieldEnvironment` 驱动的状态更新逻辑。
+- Overworld / Facility 每帧会把移动、扫描、跳跃和环境暴露转换成 `SaveData.profile` 的 meter 变化。
+- 移动和扫描会消耗体力，不移动时体力会恢复。
+- Facility 跳跃会消耗体力；体力不足时不能跳跃。
+- Facility 环境会缓慢消耗外骨骼完整度、氧气、辐射和孢子抗性；Overworld 会缓慢恢复这些环境状态。
+- 背包物品按 item weight 计算负重，负重写入 `profile.vitals["load"]`。
+- 低体力和高负重会降低移动速度；背包变化会同步刷新负重并请求保存。
+- 如果外骨骼或氧气耗尽，生命值会开始下降。
+
+7. 显式解锁规则
 
 - `content::MapDocument` 的 `EntityInstance` 和 `ZoneInstance` 增加 `unlock` 字段。
 - `unlock` 当前支持 `requires_codex_id`、`requires_item_id`、`locked_message`。
@@ -103,6 +121,33 @@
 - 编辑器 Inspector 已能给实体/区域启用并编辑解锁条件，字段前有明确标签，并提供 Codex ID / 常用 item id 选择。
 - Outliner 会给带解锁规则的实体/区域显示 `unlock` badge，并可通过解锁字段搜索对象。
 - `validate_map_with_codex` 会检查显式 unlock 的 Codex 引用、空条件和可疑 item id；旧的“入口/门素材 codex_id 隐式锁门”会提示改成显式字段。
+
+8. Debug Overlay
+
+- 新增全局 `F3` 调试面板，不依赖具体场景 UI。
+- 面板从 `SceneStack` 统一渲染，在 Overworld、Facility 和覆盖层菜单打开时都能显示。
+- Overworld / Facility 暴露调试快照：当前 scene、玩家坐标、地图路径、碰撞矩形数量、附近可扫描目标。
+- 面板同时显示存档路径、dirty/requested/timer、存档世界状态、已收集实体数量、人物等级/XP、生命/体力/外骨骼/负重/氧气/辐射/孢子 meter 和已扫描 Codex 数量。
+- 打开游戏内菜单时，Debug Overlay 会显示底层场景并追加当前覆盖层名称，方便排查 overlay 是否吃掉了底层运行时状态。
+
+9. 交互历史/日志页
+
+- `SaveData` 增加 `activity_log`，最多保留最近 32 条外勤事件。
+- 日志事件会随本地 RON 存档保存，退出重进后仍能在菜单里看到。
+- 当前会记录：获得物品、扫描完成、背包已满、入口/出口被锁、进入/离开设施、体力/负重/外骨骼/氧气/生命等状态告警。
+- 游戏内菜单原 `任务` 页升级为 `日志` 页，上半部分保留当前目标概览，下半部分显示最近外勤记录。
+- Debug Overlay 现在也会显示当前日志条目数量，方便确认事件是否写入存档。
+
+10. 外勤 HUD / 快捷栏 / 时间天气
+
+- 新增 `scenes::field_hud`，在 Overworld 和 Facility 游戏画面上常驻渲染外勤 HUD。
+- 左上状态面板显示当前场景、外勤时间、天气、生命、体力、外骨骼和负重。
+- 底部快捷栏显示 6 个快捷槽，直接读取 `SaveData.inventory.quickbar` 和当前背包槽位。
+- 数字键 `1` 到 `6` 会在外勤场景里切换对应快捷槽；打开游戏内菜单时不会误切换。
+- 快捷栏优先使用已有背包物品图标；缺少物品素材时用稳定的 fallback 标记显示，不会因为还没有消耗品素材而让 HUD 空白或报错。
+- `WorldSave` 增加 `field_time_minutes` 和 `weather`，会随本地 RON 存档保存。
+- 外勤时间按运行时推进，当前先用简化规则按时间段切换 `clear` / `ion_wind` / `spore_drift` / `cold_mist`。
+- `SaveData::normalize()` 会修正旧存档缺失的时间和天气字段，避免旧存档读入后状态面板显示异常。
 
 ## 已完成
 
@@ -124,40 +169,59 @@
 - `FacilityScene` 是侧视横版 2D，已有左右移动、重力和跳跃。
 - 游戏可以通过 `--scene overworld|facility --map <path> --spawn <id>` 直接启动到指定地图；不传参数时仍进入主菜单。
 - 游戏默认从 `saves/profile_01.ron` 读取/写入本地存档，也可以用 `ALIEN_ARCHIVE_SAVE_PATH` 指定测试存档路径。
+- 主菜单提供继续、新建、读取、删除、设置、退出；新建/读取/删除会进入 3 个存档槽的管理界面。
 - 俯视地图里的 `FacilityEntrance` 实体按 `E` 进入设施；设施里的 `FacilityExit` 实体按 `E` 返回俯视地图。
 - 主菜单支持键盘选择、鼠标悬停选择和左键确认。
 - 菜单文字会预渲染为纹理，优先使用 `assets/fonts/ui.ttf`。
-- 实现基础输入系统，支持 `WASD`、方向键、鼠标左键、`E`、`Space`、`Esc`、`I` / `Tab`、`C`。
+- 实现基础输入系统，支持 `WASD`、方向键、鼠标左键、`E`、`Space`、`Esc`、`I` / `Tab`、`C`、`F3`。
 - 实现基础 `Camera2d`，摄像机跟随玩家。
 - 实现 Demo 玩家矩形和俯视角 sprite sheet 播放。
 - 实现自定义地图文件加载。
-- 实现 `SaveData` 本地存档层，保存语言、场景、地图、玩家位置、Codex 解锁、已收集实体、人物档案、背包和快捷栏。
+- 实现 `SaveData` 本地存档层，保存语言、场景、地图、玩家位置、Codex 解锁、已收集实体、交互历史、人物档案、背包和快捷栏。
 - `MapDocument` 支持实体/区域级 `unlock` 规则，运行时入口/出口可按扫描记录或背包物品放行。
 - 运行时 `Map::load` 支持新的编辑器 RON 地图格式，并保留旧版 legacy RON 地图解析。
 - `World::solid_rects()` 提供 tile/entity/collision 碰撞矩形。
 - `World::codex_entities()` 提供扫描候选实体。
 - 运行时启动时加载 `content::CodexDatabase`，供扫描 UI 和游戏内 Codex 菜单共同使用。
 - 运行时启动时加载 `SaveData`，用于恢复语言、Codex 解锁、背包、人物档案和上次所在地图位置。
+- `SaveData` 已支持固定存档槽路径，主菜单可以读取、新建、删除并刷新槽位摘要。
+- 运行时已接入人物状态更新：体力、负重、外骨骼、生命和环境抗性会受移动、跳跃、背包和场景环境影响并保存。
 - `crates/editor` 已作为专用 Overworld 地图编辑器入口存在，读写 `assets/data/maps/*.ron`。
 - 编辑器菜单和工具栏支持“保存并运行当前地图”，用于快速验证当前 RON 和出生点。
+- `SceneStack` 已接入全局 Debug Overlay，可在运行时检查场景、地图、扫描目标、存档和人物状态。
+- 游戏内菜单 `日志` 页会读取 `SaveData.activity_log`，展示最近扫描、拾取、解锁和状态变化。
+- `SceneStack` 已接入外勤 HUD，可在 Overworld / Facility 画面直接查看人物状态、时间天气和快捷栏。
+- 外勤 HUD 现在读取 `assets/images/ui/hud/*.png` 组件；人物状态、时间和天气整合在 `hud_player_panel.png`，头像单独使用 `hud_player_avatar.png`，快捷栏保留独立底座和槽位图。
+- `SaveData.world` 已保存外勤时间和天气，旧存档会自动补默认值。
 
 ## 当前操作
 
 主菜单：
 
-- `WASD` / 方向键：选择菜单项
-- 鼠标悬停：选择菜单项
+- 首页包含：继续游戏、新建存档、读取存档、删除存档、设置、退出
+- 新建/读取/删除会进入 3 个存档槽；槽位会显示空槽、损坏槽或当前等级/场景/扫描数量
+- 删除存档需要在同一槽位上确认两次
+- `WASD` / 方向键：选择菜单项或存档槽
+- 鼠标悬停：选择菜单项或存档槽
 - `Enter` / `Space` / 鼠标左键：确认
-- `Esc`：退出
+- `Esc`：首页退出；设置页和存档槽页返回首页
 
 游戏中：
 
 - `WASD` / 方向键：移动
 - `E`：交互入口/出口；靠近 pickup 时收集物品；若入口/出口配置了 `unlock`，会先检查扫描记录或背包物品
 - `Space`：扫描；在 Facility 中也可跳跃
+- `1` 到 `6`：切换底部快捷栏选中槽位
+- 移动/扫描会消耗体力；停止后体力恢复
+- Facility 跳跃会额外消耗体力，体力不足时不能跳跃
+- 背包重量会影响负重，负重较高或体力较低时移动会变慢
+- Facility 环境会缓慢消耗外骨骼、氧气、辐射和孢子抗性；状态变化会写回存档
+- 左上 HUD：查看当前场景、外勤时间、天气、生命、体力、外骨骼和负重
+- 底部 HUD：查看 6 个快捷槽、物品数量和当前选中物品；缺图标时显示 fallback 标记
 - `Esc`：打开/关闭游戏内菜单
 - `I` / `Tab`：打开游戏内菜单并切到背包
 - `C`：打开游戏内菜单并切到属性
+- `F3`：显示/隐藏 Debug Overlay
 - 存档：移动、扫描、语言切换等会自动保存；当前没有手动存档 UI
 
 游戏内菜单：
@@ -166,6 +230,7 @@
 - 鼠标点击返回按钮：关闭菜单
 - 方向键：切换页签；背包页内移动选中格
 - 设置页 `Enter` / `E`：切换语言
+- 日志页：查看最近外勤事件；当前保留最近 32 条，菜单显示最近 5 条
 
 ## 技术决策
 
@@ -272,7 +337,12 @@ Alien-Archive/
           main_menu.rs
           overworld_scene.rs
           facility_scene.rs
+          field_hud.rs
           game_menu_scene.rs
+          debug_overlay.rs
+          inventory_scene.rs
+          notice_system.rs
+          rewards.rs
           scan_system.rs
         ui/
           game_menu_content.rs
@@ -382,16 +452,23 @@ $env:ALIEN_ARCHIVE_EXIT_AFTER_FRAMES='3'; cargo run -p alien_archive
 
 推荐下一阶段按这个顺序做：
 
-1. 给主菜单增加新建/继续/删除存档入口。
-2. 给门/区域解锁增加更明确的数据字段，而不是只依赖 `codex_id`。
-3. 增加更多人物状态变化来源，例如受伤、体力消耗、抗性变化。
-4. 做 Debug Overlay，显示 scene、player position、map、collider count、scan target、save path/save dirty。
-5. 做交互历史/日志页，保留最近获得物品、解锁和扫描结果。
+1. 接入恢复/消耗品使用规则，例如 med injector 恢复生命、energy cell 恢复体力、coolant 修复外骨骼，并让快捷栏可直接使用。
+2. 先补一批消耗品占位素材或生成需求清单，避免后续 UI/掉落/使用反馈一直依赖 fallback 图标。
+3. 补多地图入口/出口目标字段和区域脚本执行。
+4. 给主菜单补手动保存/另存提示、删除后的 toast 或更完整的错误提示。
+5. 让 Debug Overlay 增加可选 collision/interaction rect 可视化层，用于调地图和扫描范围。
+6. 给日志页补筛选/分页和“任务目标来自真实任务数据”的后续结构。
 
 地图编辑器的长期改进清单单独记录在：
 
 ```txt
 docs/EDITOR_ROADMAP.md
+```
+
+HUD 美术方向和切图清单单独记录在：
+
+```txt
+docs/HUD_ART_DIRECTION.md
 ```
 
 ## 暂时不要做
@@ -405,7 +482,7 @@ docs/EDITOR_ROADMAP.md
 - 程序生成星球
 - 与当前核心循环无关的大地图内容膨胀
 
-当前最重要的是把探索、扫描、图鉴、背包、开门这条核心循环跑通。
+当前最重要的是把探索、扫描、图鉴、背包、快捷栏、开门和人物状态这条核心循环跑通。
 
 ## 素材约定
 
@@ -437,6 +514,8 @@ assets/images/ui/profile/
 assets/images/ui/inventory/
 ```
 
+当前外勤 HUD 会复用背包物品图标；消耗品最终素材尚未补齐时，快捷栏会用 fallback 标记显示。
+
 菜单图标/缩略图可以用下面的脚本生成：
 
 ```powershell
@@ -465,9 +544,11 @@ assets/data/codex/
 
 ```txt
 saves/profile_01.ron
+saves/profile_02.ron
+saves/profile_03.ron
 ```
 
-`saves/` 不入库。测试或编辑器预览可以通过 `ALIEN_ARCHIVE_SAVE_PATH` 改用临时存档。
+`saves/` 不入库。主菜单固定管理上述 3 个槽位；测试或编辑器预览仍可以通过 `ALIEN_ARCHIVE_SAVE_PATH` 改用临时存档。
 
 俯视角玩家素材路径：
 

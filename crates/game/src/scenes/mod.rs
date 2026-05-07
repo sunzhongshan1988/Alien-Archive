@@ -1,4 +1,6 @@
+mod debug_overlay;
 mod facility_scene;
+mod field_hud;
 mod game_menu_scene;
 mod inventory_scene;
 mod main_menu;
@@ -11,10 +13,10 @@ mod scan_system;
 
 use anyhow::Result;
 use content::CodexDatabase;
-use runtime::{Camera2d, InputState, Renderer, SceneCommand, Vec2};
+use runtime::{Button, Camera2d, InputState, Renderer, SceneCommand, Vec2};
 use std::{collections::HashSet, path::PathBuf};
 
-use crate::save::{CodexSave, MeterSave, SaveData, SaveVec2, WorldSave};
+use crate::save::{CodexSave, InventorySave, MeterSave, SaveData, SaveVec2, WorldSave};
 use crate::world::MapUnlockRule;
 
 use facility_scene::FacilityScene;
@@ -25,7 +27,25 @@ use overworld_scene::OverworldScene;
 use pause_scene::PauseScene;
 use profile_scene::ProfileScene;
 
+use debug_overlay::{DebugOverlay, SceneDebugSnapshot};
+use field_hud::FieldHud;
+
 const AUTOSAVE_INTERVAL: f32 = 5.0;
+const STAMINA_MOVE_DRAIN_PER_SECOND: f32 = 2.0;
+const STAMINA_SCAN_DRAIN_PER_SECOND: f32 = 1.0;
+const STAMINA_IDLE_RECOVER_PER_SECOND: f32 = 5.0;
+const STAMINA_JUMP_COST: i32 = 8;
+const FACILITY_SUIT_DRAIN_PER_SECOND: f32 = 0.06;
+const FACILITY_OXYGEN_DRAIN_PER_SECOND: f32 = 0.16;
+const FACILITY_RADIATION_DRAIN_PER_SECOND: f32 = 0.05;
+const FACILITY_SPORE_DRAIN_PER_SECOND: f32 = 0.03;
+const OVERWORLD_RECOVERY_PER_SECOND: f32 = 0.08;
+const CRITICAL_HEALTH_DRAIN_PER_SECOND: f32 = 0.35;
+const FIELD_CLOCK_MINUTES_PER_SECOND: f32 = 1.0;
+const LOG_CATEGORY_PICKUP: &str = "pickup";
+const LOG_CATEGORY_SCAN: &str = "scan";
+const LOG_CATEGORY_UNLOCK: &str = "unlock";
+const LOG_CATEGORY_STATUS: &str = "status";
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -107,6 +127,49 @@ impl Default for GameMenuTab {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FieldEnvironment {
+    Overworld,
+    Facility,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct FieldActivity {
+    pub moving: bool,
+    pub scanning: bool,
+    pub jumped: bool,
+    pub environment: FieldEnvironment,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct FieldStatusEffects {
+    pub movement_speed_multiplier: f32,
+}
+
+impl Default for FieldStatusEffects {
+    fn default() -> Self {
+        Self {
+            movement_speed_multiplier: 1.0,
+        }
+    }
+}
+
+#[derive(Default)]
+struct ProfileStatusRuntime {
+    stamina: f32,
+    health: f32,
+    suit: f32,
+    spores: f32,
+    radiation: f32,
+    oxygen: f32,
+    field_clock_minutes: f32,
+    low_stamina_logged: bool,
+    heavy_load_logged: bool,
+    suit_critical_logged: bool,
+    oxygen_critical_logged: bool,
+    health_critical_logged: bool,
+}
+
 #[derive(Default)]
 pub struct GameContext {
     pub language: Language,
@@ -125,6 +188,7 @@ pub struct GameContext {
     save_dirty: bool,
     save_requested: bool,
     save_timer: f32,
+    profile_status_runtime: ProfileStatusRuntime,
 }
 
 impl GameContext {
@@ -143,12 +207,31 @@ impl GameContext {
             save_data,
             ..Self::default()
         };
+        ctx.sync_inventory_load_meter_silent();
         ctx.apply_world_save();
         ctx
     }
 
     pub fn resume_scene_id(&self) -> SceneId {
         scene_id_from_save_key(&self.save_data.world.current_scene)
+    }
+
+    pub fn load_save_file_or_default(&mut self, save_path: PathBuf) {
+        let save_data = if save_path.exists() {
+            SaveData::load_or_default(&save_path)
+        } else {
+            new_save_data_for_language(self.language)
+        };
+        self.replace_save_data(save_path, save_data);
+    }
+
+    pub fn start_new_save(&mut self, save_path: PathBuf) {
+        self.replace_save_data(save_path, new_save_data_for_language(self.language));
+        self.request_save();
+    }
+
+    pub fn reset_to_empty_save_slot(&mut self, save_path: PathBuf) {
+        self.replace_save_data(save_path, new_save_data_for_language(self.language));
     }
 
     pub fn request_save(&mut self) {
@@ -165,6 +248,7 @@ impl GameContext {
         if let Some(reward) = rewards::scan_reward_for_codex(codex_id) {
             self.add_inventory_item(reward.item_id, reward.quantity, reward.locked);
         }
+        self.log_codex_scan(codex_id);
         self.request_save();
         true
     }
@@ -176,9 +260,103 @@ impl GameContext {
             .inventory
             .add_item(item_id, quantity, max_stack, locked);
         if added > 0 {
+            self.sync_inventory_load_meter();
+            self.log_item_added(item_id, added);
             self.request_save();
         }
         added
+    }
+
+    pub fn set_inventory_save(&mut self, inventory: InventorySave) {
+        if self.save_data.inventory == inventory {
+            return;
+        }
+
+        self.save_data.inventory = inventory;
+        self.sync_inventory_load_meter();
+        self.request_save();
+    }
+
+    pub fn can_start_jump(&self) -> bool {
+        self.profile_meter_value("stamina") as i32 >= STAMINA_JUMP_COST
+    }
+
+    pub fn update_field_status(&mut self, dt: f32, activity: FieldActivity) -> FieldStatusEffects {
+        self.sync_inventory_load_meter();
+
+        if activity.jumped {
+            self.change_profile_meter("stamina", -STAMINA_JUMP_COST);
+        }
+        self.advance_field_clock(dt);
+
+        let mut stamina_rate = if activity.moving {
+            -STAMINA_MOVE_DRAIN_PER_SECOND
+        } else {
+            STAMINA_IDLE_RECOVER_PER_SECOND
+        };
+        if activity.scanning {
+            stamina_rate -= STAMINA_SCAN_DRAIN_PER_SECOND;
+        }
+        if self.profile_meter_ratio("load") >= 0.85 && activity.moving {
+            stamina_rate -= 0.75;
+        }
+        self.accumulate_profile_delta("stamina", stamina_rate * dt);
+
+        match activity.environment {
+            FieldEnvironment::Overworld => {
+                self.accumulate_profile_delta("suit", OVERWORLD_RECOVERY_PER_SECOND * dt);
+                self.accumulate_profile_delta("oxygen", OVERWORLD_RECOVERY_PER_SECOND * dt);
+                self.accumulate_profile_delta("spores", OVERWORLD_RECOVERY_PER_SECOND * dt);
+                self.accumulate_profile_delta("radiation", OVERWORLD_RECOVERY_PER_SECOND * dt);
+            }
+            FieldEnvironment::Facility => {
+                self.accumulate_profile_delta("suit", -FACILITY_SUIT_DRAIN_PER_SECOND * dt);
+                self.accumulate_profile_delta("oxygen", -FACILITY_OXYGEN_DRAIN_PER_SECOND * dt);
+                self.accumulate_profile_delta(
+                    "radiation",
+                    -FACILITY_RADIATION_DRAIN_PER_SECOND * dt,
+                );
+                self.accumulate_profile_delta("spores", -FACILITY_SPORE_DRAIN_PER_SECOND * dt);
+            }
+        }
+
+        if self.profile_meter_value("suit") == 0 || self.profile_meter_value("oxygen") == 0 {
+            self.accumulate_profile_delta("health", -CRITICAL_HEALTH_DRAIN_PER_SECOND * dt);
+        }
+        self.update_activity_status_alerts();
+
+        FieldStatusEffects {
+            movement_speed_multiplier: self.profile_movement_speed_multiplier(),
+        }
+    }
+
+    pub fn profile_meter_value(&self, id: &str) -> u32 {
+        self.save_data
+            .profile
+            .meter(id)
+            .map_or(0, |meter| meter.value)
+    }
+
+    pub fn select_quickbar_slot(&mut self, quick_index: usize) -> bool {
+        let Some(slot_count) = (!self.save_data.inventory.slots.is_empty())
+            .then_some(self.save_data.inventory.slots.len())
+        else {
+            return false;
+        };
+        let slot_index = self
+            .save_data
+            .inventory
+            .quickbar
+            .get(quick_index)
+            .and_then(|slot| *slot)
+            .unwrap_or(quick_index);
+        if slot_index >= slot_count || self.save_data.inventory.selected_slot == slot_index {
+            return false;
+        }
+
+        self.save_data.inventory.selected_slot = slot_index;
+        self.request_save();
+        true
     }
 
     pub fn is_unlock_rule_satisfied(&self, unlock: Option<&MapUnlockRule>) -> bool {
@@ -216,6 +394,67 @@ impl GameContext {
         inserted
     }
 
+    pub fn log_inventory_full(&mut self) {
+        let (title, detail) = match self.language {
+            Language::Chinese => ("背包已满", "没有空槽位，物品未收入背包"),
+            Language::English => (
+                "Inventory full",
+                "No empty slot was available for the pickup",
+            ),
+        };
+        self.push_activity_log(LOG_CATEGORY_STATUS, title, detail);
+    }
+
+    pub fn log_stamina_low(&mut self) {
+        let (title, detail) = match self.language {
+            Language::Chinese => ("体力不足", "本次动作被取消，先停止移动恢复体力"),
+            Language::English => (
+                "Stamina too low",
+                "The action was cancelled; pause to recover stamina",
+            ),
+        };
+        self.push_activity_log(LOG_CATEGORY_STATUS, title, detail);
+    }
+
+    pub fn log_locked_unlock_rule(&mut self, unlock: Option<&MapUnlockRule>) {
+        let detail = self.locked_rule_log_detail(unlock);
+        let title = match self.language {
+            Language::Chinese => "入口受限",
+            Language::English => "Access blocked",
+        };
+        self.push_activity_log(LOG_CATEGORY_UNLOCK, title, detail);
+    }
+
+    pub fn log_scene_transition(&mut self, scene_id: SceneId, map_path: &str) {
+        let title = match (self.language, scene_id) {
+            (Language::Chinese, SceneId::Facility) => "进入设施",
+            (Language::Chinese, _) => "返回外部区域",
+            (Language::English, SceneId::Facility) => "Entered facility",
+            (Language::English, _) => "Returned to overworld",
+        };
+        let detail = match self.language {
+            Language::Chinese => format!("目的地：{map_path}"),
+            Language::English => format!("Destination: {map_path}"),
+        };
+        self.push_activity_log(LOG_CATEGORY_UNLOCK, title, detail);
+    }
+
+    fn push_activity_log(
+        &mut self,
+        category: &str,
+        title: impl Into<String>,
+        detail: impl Into<String>,
+    ) {
+        self.save_data.activity_log.push(
+            category,
+            title,
+            detail,
+            self.save_data.world.current_scene.clone(),
+            self.save_data.world.map_path.clone(),
+        );
+        self.request_save();
+    }
+
     pub fn collected_entity_ids_for_map(
         &self,
         map_path: &str,
@@ -248,6 +487,8 @@ impl GameContext {
             },
             player_position: Some(position.into()),
             collected_entities: self.save_data.world.collected_entities.clone(),
+            field_time_minutes: self.save_data.world.field_time_minutes,
+            weather: self.save_data.world.weather.clone(),
         };
 
         match scene_id {
@@ -306,8 +547,14 @@ impl GameContext {
     }
 
     fn sync_runtime_to_save(&mut self) {
+        self.sync_inventory_load_meter();
         self.save_data.settings.language = self.language.save_key().to_owned();
         self.save_data.codex = CodexSave::from_runtime(&self.scanned_codex_ids);
+    }
+
+    fn replace_save_data(&mut self, save_path: PathBuf, save_data: SaveData) {
+        let codex_database = self.codex_database.clone();
+        *self = Self::from_save(save_path, save_data, codex_database);
     }
 
     fn apply_scan_profile_progress(&mut self, codex_id: &str) {
@@ -322,6 +569,269 @@ impl GameContext {
             self.save_data.profile.xp_next += 2_500;
         }
     }
+
+    fn sync_inventory_load_meter(&mut self) -> bool {
+        let load = inventory_load_units(&self.save_data.inventory);
+        self.set_profile_meter_value("load", load)
+    }
+
+    fn sync_inventory_load_meter_silent(&mut self) {
+        let load = inventory_load_units(&self.save_data.inventory);
+        self.save_data.profile.set_meter_value("load", load);
+    }
+
+    fn set_profile_meter_value(&mut self, id: &str, value: u32) -> bool {
+        let changed = self.save_data.profile.set_meter_value(id, value);
+        if changed {
+            self.mark_save_dirty();
+        }
+        changed
+    }
+
+    fn change_profile_meter(&mut self, id: &str, delta: i32) -> bool {
+        if delta == 0 {
+            return false;
+        }
+
+        let changed = self.save_data.profile.add_meter_delta(id, delta);
+        if changed {
+            self.mark_save_dirty();
+        }
+        changed
+    }
+
+    fn accumulate_profile_delta(&mut self, id: &str, delta: f32) -> bool {
+        let accumulator = match id {
+            "health" => &mut self.profile_status_runtime.health,
+            "stamina" => &mut self.profile_status_runtime.stamina,
+            "suit" => &mut self.profile_status_runtime.suit,
+            "spores" => &mut self.profile_status_runtime.spores,
+            "radiation" => &mut self.profile_status_runtime.radiation,
+            "oxygen" => &mut self.profile_status_runtime.oxygen,
+            _ => return false,
+        };
+        let whole_delta = accumulated_integer_delta(accumulator, delta);
+        self.change_profile_meter(id, whole_delta)
+    }
+
+    fn profile_meter_ratio(&self, id: &str) -> f32 {
+        self.save_data.profile.meter(id).map_or(0.0, |meter| {
+            if meter.max == 0 {
+                0.0
+            } else {
+                meter.value as f32 / meter.max as f32
+            }
+        })
+    }
+
+    fn profile_movement_speed_multiplier(&self) -> f32 {
+        let stamina = self.profile_meter_ratio("stamina");
+        let load = self.profile_meter_ratio("load");
+        let stamina_factor = if self.profile_meter_value("stamina") == 0 {
+            0.55
+        } else if stamina < 0.20 {
+            0.78
+        } else {
+            1.0
+        };
+        let load_factor = if load >= 0.95 {
+            0.70
+        } else if load >= 0.80 {
+            0.86
+        } else {
+            1.0
+        };
+
+        stamina_factor * load_factor
+    }
+
+    fn advance_field_clock(&mut self, dt: f32) -> bool {
+        if dt <= 0.0 {
+            return false;
+        }
+
+        self.profile_status_runtime.field_clock_minutes += dt * FIELD_CLOCK_MINUTES_PER_SECOND;
+        let whole_minutes = self.profile_status_runtime.field_clock_minutes.floor() as u32;
+        if whole_minutes == 0 {
+            return false;
+        }
+
+        self.profile_status_runtime.field_clock_minutes -= whole_minutes as f32;
+        let minutes_per_day = 24 * 60;
+        self.save_data.world.field_time_minutes =
+            (self.save_data.world.field_time_minutes + whole_minutes) % minutes_per_day;
+        let next_weather = weather_key_for_time(self.save_data.world.field_time_minutes);
+        if self.save_data.world.weather != next_weather {
+            self.save_data.world.weather = next_weather.to_owned();
+        }
+        self.mark_save_dirty();
+        true
+    }
+
+    fn log_item_added(&mut self, item_id: &str, quantity: u32) {
+        let item_name = inventory_scene::inventory_item_name(item_id, self.language);
+        let title = match self.language {
+            Language::Chinese => "获得物品".to_owned(),
+            Language::English => "Item acquired".to_owned(),
+        };
+        let detail = match self.language {
+            Language::Chinese => format!("{item_name} x{quantity} 已写入背包"),
+            Language::English => format!("{item_name} x{quantity} added to inventory"),
+        };
+        self.push_activity_log(LOG_CATEGORY_PICKUP, title, detail);
+    }
+
+    fn log_codex_scan(&mut self, codex_id: &str) {
+        let entry_title = self
+            .codex_database
+            .get(codex_id)
+            .map(|entry| entry.title.trim())
+            .filter(|title| !title.is_empty())
+            .unwrap_or(codex_id);
+        let research_meter = rewards::research_meter_for_codex(codex_id);
+        let title = match self.language {
+            Language::Chinese => "扫描完成",
+            Language::English => "Scan recorded",
+        };
+        let detail = match self.language {
+            Language::Chinese => format!("{entry_title} · {research_meter} 研究 +6 · XP +120"),
+            Language::English => format!("{entry_title} · {research_meter} research +6 · XP +120"),
+        };
+        self.push_activity_log(LOG_CATEGORY_SCAN, title, detail);
+    }
+
+    fn locked_rule_log_detail(&self, unlock: Option<&MapUnlockRule>) -> String {
+        let Some(unlock) = unlock else {
+            return match self.language {
+                Language::Chinese => "入口当前不可用".to_owned(),
+                Language::English => "The entrance is currently unavailable".to_owned(),
+            };
+        };
+
+        if let Some(message) = unlock.locked_message.as_deref() {
+            return message.to_owned();
+        }
+
+        let codex_title = unlock
+            .requires_codex_id
+            .as_deref()
+            .and_then(|id| self.codex_database.get(id).map(|entry| entry.title.trim()))
+            .filter(|title| !title.is_empty());
+        let item_name = unlock
+            .requires_item_id
+            .as_deref()
+            .map(|id| inventory_scene::inventory_item_name(id, self.language));
+        match (self.language, codex_title, item_name.as_deref()) {
+            (Language::Chinese, Some(codex), Some(item)) => {
+                format!("需要先扫描 {codex}，并携带 {item}")
+            }
+            (Language::Chinese, Some(codex), None) => format!("需要先扫描 {codex}"),
+            (Language::Chinese, None, Some(item)) => format!("需要携带 {item}"),
+            (Language::Chinese, None, None) => "缺少进入条件".to_owned(),
+            (Language::English, Some(codex), Some(item)) => {
+                format!("Requires scan: {codex}; item: {item}")
+            }
+            (Language::English, Some(codex), None) => format!("Requires scan: {codex}"),
+            (Language::English, None, Some(item)) => format!("Requires item: {item}"),
+            (Language::English, None, None) => "Missing access requirement".to_owned(),
+        }
+    }
+
+    fn update_activity_status_alerts(&mut self) {
+        if self.should_log_meter_below("stamina", 0.18, 0.35, StatusAlert::StaminaLow) {
+            let (title, detail) = match self.language {
+                Language::Chinese => ("体力偏低", "移动、扫描和跳跃会受到限制"),
+                Language::English => ("Stamina low", "Movement, scans, and jumps are limited"),
+            };
+            self.push_activity_log(LOG_CATEGORY_STATUS, title, detail);
+        }
+        if self.should_log_meter_above("load", 0.85, 0.70, StatusAlert::HeavyLoad) {
+            let (title, detail) = match self.language {
+                Language::Chinese => ("负重过高", "背包重量已经开始拖慢移动速度"),
+                Language::English => ("Load high", "Inventory weight is slowing movement"),
+            };
+            self.push_activity_log(LOG_CATEGORY_STATUS, title, detail);
+        }
+        if self.should_log_meter_below("suit", 0.25, 0.45, StatusAlert::SuitCritical) {
+            let (title, detail) = match self.language {
+                Language::Chinese => ("外骨骼受损", "继续暴露会提高生命风险"),
+                Language::English => (
+                    "Suit integrity low",
+                    "Continued exposure increases health risk",
+                ),
+            };
+            self.push_activity_log(LOG_CATEGORY_STATUS, title, detail);
+        }
+        if self.should_log_meter_below("oxygen", 0.25, 0.45, StatusAlert::OxygenCritical) {
+            let (title, detail) = match self.language {
+                Language::Chinese => ("氧气偏低", "氧气耗尽后生命值会下降"),
+                Language::English => ("Oxygen low", "Health will fall once oxygen is depleted"),
+            };
+            self.push_activity_log(LOG_CATEGORY_STATUS, title, detail);
+        }
+        if self.should_log_meter_below("health", 0.35, 0.55, StatusAlert::HealthCritical) {
+            let (title, detail) = match self.language {
+                Language::Chinese => ("生命值危险", "建议尽快撤离或使用恢复道具"),
+                Language::English => ("Health critical", "Extract or use recovery supplies soon"),
+            };
+            self.push_activity_log(LOG_CATEGORY_STATUS, title, detail);
+        }
+    }
+
+    fn should_log_meter_below(
+        &mut self,
+        id: &str,
+        trigger: f32,
+        reset: f32,
+        alert: StatusAlert,
+    ) -> bool {
+        let ratio = self.profile_meter_ratio(id);
+        let active = self.status_alert_flag(alert);
+        let should_log = !*active && ratio <= trigger;
+        if ratio >= reset {
+            *active = false;
+        } else if should_log {
+            *active = true;
+        }
+        should_log
+    }
+
+    fn should_log_meter_above(
+        &mut self,
+        id: &str,
+        trigger: f32,
+        reset: f32,
+        alert: StatusAlert,
+    ) -> bool {
+        let ratio = self.profile_meter_ratio(id);
+        let active = self.status_alert_flag(alert);
+        let should_log = !*active && ratio >= trigger;
+        if ratio <= reset {
+            *active = false;
+        } else if should_log {
+            *active = true;
+        }
+        should_log
+    }
+
+    fn status_alert_flag(&mut self, alert: StatusAlert) -> &mut bool {
+        match alert {
+            StatusAlert::StaminaLow => &mut self.profile_status_runtime.low_stamina_logged,
+            StatusAlert::HeavyLoad => &mut self.profile_status_runtime.heavy_load_logged,
+            StatusAlert::SuitCritical => &mut self.profile_status_runtime.suit_critical_logged,
+            StatusAlert::OxygenCritical => &mut self.profile_status_runtime.oxygen_critical_logged,
+            StatusAlert::HealthCritical => &mut self.profile_status_runtime.health_critical_logged,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum StatusAlert {
+    StaminaLow,
+    HeavyLoad,
+    SuitCritical,
+    OxygenCritical,
+    HealthCritical,
 }
 
 pub struct RenderContext<'a> {
@@ -349,6 +859,10 @@ pub trait Scene {
     fn camera(&self) -> Camera2d {
         Camera2d::default()
     }
+
+    fn debug_snapshot(&self, _ctx: &GameContext) -> SceneDebugSnapshot {
+        SceneDebugSnapshot::new(self.id(), self.name())
+    }
 }
 
 struct ManagedScene {
@@ -367,18 +881,24 @@ impl ManagedScene {
 
 pub struct SceneStack {
     stack: Vec<ManagedScene>,
+    debug_overlay: DebugOverlay,
+    field_hud: FieldHud,
 }
 
 impl SceneStack {
     pub fn new_main_menu() -> Self {
         Self {
             stack: vec![ManagedScene::new(Box::new(MainMenuScene::new()))],
+            debug_overlay: DebugOverlay::default(),
+            field_hud: FieldHud::default(),
         }
     }
 
     pub fn new_scene(scene_id: SceneId, ctx: &GameContext) -> Result<Self> {
         Ok(Self {
             stack: vec![ManagedScene::new(create_scene(scene_id, ctx)?)],
+            debug_overlay: DebugOverlay::default(),
+            field_hud: FieldHud::default(),
         })
     }
 
@@ -396,6 +916,13 @@ impl SceneStack {
     }
 
     pub fn update(&mut self, ctx: &mut GameContext, dt: f32, input: &InputState) -> Result<()> {
+        if input.just_pressed(Button::DebugOverlay) {
+            self.debug_overlay.toggle();
+        }
+        if self.current_field_scene_id().is_some() {
+            handle_quickbar_input(ctx, input);
+        }
+
         let Some(current) = self.stack.last_mut() else {
             ctx.should_quit = true;
             return Ok(());
@@ -405,7 +932,7 @@ impl SceneStack {
         self.apply_command(ctx, command)
     }
 
-    pub fn render(&mut self, renderer: &mut dyn Renderer) -> Result<()> {
+    pub fn render(&mut self, ctx: &GameContext, renderer: &mut dyn Renderer) -> Result<()> {
         if self.stack.is_empty() {
             return Ok(());
         }
@@ -427,18 +954,26 @@ impl SceneStack {
 
             renderer.set_camera(base.scene.camera());
             base.scene.render(&mut RenderContext { renderer })?;
+            if is_field_scene(base.scene.id()) {
+                self.field_hud.draw(renderer, ctx, base.scene.id())?;
+            }
             renderer.set_camera(overlay.scene.camera());
             overlay.scene.render(&mut RenderContext { renderer })?;
-            return Ok(());
+        } else {
+            let current = &mut self.stack[top_index];
+            if !current.setup_complete {
+                current.scene.setup(renderer)?;
+                current.setup_complete = true;
+            }
+            renderer.set_camera(current.scene.camera());
+            current.scene.render(&mut RenderContext { renderer })?;
+            if is_field_scene(current.scene.id()) {
+                self.field_hud.draw(renderer, ctx, current.scene.id())?;
+            }
         }
 
-        let current = &mut self.stack[top_index];
-        if !current.setup_complete {
-            current.scene.setup(renderer)?;
-            current.setup_complete = true;
-        }
-        renderer.set_camera(current.scene.camera());
-        current.scene.render(&mut RenderContext { renderer })
+        let snapshot = self.debug_snapshot(ctx);
+        self.debug_overlay.draw(renderer, ctx, &snapshot)
     }
 
     pub fn camera(&self) -> Camera2d {
@@ -450,6 +985,28 @@ impl SceneStack {
         }
 
         current.scene.camera()
+    }
+
+    fn debug_snapshot(&self, ctx: &GameContext) -> SceneDebugSnapshot {
+        let Some(current) = self.stack.last() else {
+            return SceneDebugSnapshot::new(SceneId::Boot, "EmptySceneStack");
+        };
+
+        if self.stack.len() > 1 && is_overlay_scene(current.scene.id()) {
+            let mut snapshot = self.stack[self.stack.len() - 2].scene.debug_snapshot(ctx);
+            snapshot.overlay_scene_name = Some(current.scene.name().to_owned());
+            return snapshot;
+        }
+
+        current.scene.debug_snapshot(ctx)
+    }
+
+    fn current_field_scene_id(&self) -> Option<SceneId> {
+        let current = self.stack.last()?;
+        if self.stack.len() > 1 && is_overlay_scene(current.scene.id()) {
+            return None;
+        }
+        is_field_scene(current.scene.id()).then_some(current.scene.id())
     }
 
     fn apply_command(
@@ -485,6 +1042,28 @@ impl SceneStack {
 
 fn is_overlay_scene(scene_id: SceneId) -> bool {
     matches!(scene_id, SceneId::GameMenu | SceneId::Pause)
+}
+
+fn is_field_scene(scene_id: SceneId) -> bool {
+    matches!(scene_id, SceneId::Overworld | SceneId::Facility)
+}
+
+fn handle_quickbar_input(ctx: &mut GameContext, input: &InputState) {
+    for (index, button) in [
+        Button::QuickSlot1,
+        Button::QuickSlot2,
+        Button::QuickSlot3,
+        Button::QuickSlot4,
+        Button::QuickSlot5,
+        Button::QuickSlot6,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if input.just_pressed(button) {
+            ctx.select_quickbar_slot(index);
+        }
+    }
 }
 
 fn create_scene(scene_id: SceneId, ctx: &GameContext) -> Result<Box<dyn Scene>> {
@@ -541,6 +1120,28 @@ fn position_changed(previous: Option<SaveVec2>, current: Vec2) -> bool {
     dx * dx + dy * dy > 16.0
 }
 
+fn inventory_load_units(inventory: &InventorySave) -> u32 {
+    inventory
+        .slots
+        .iter()
+        .flatten()
+        .map(|stack| inventory_scene::inventory_item_weight(&stack.item_id) * stack.quantity)
+        .sum()
+}
+
+fn accumulated_integer_delta(accumulator: &mut f32, delta: f32) -> i32 {
+    *accumulator += delta;
+    let whole = if *accumulator >= 1.0 {
+        (*accumulator).floor()
+    } else if *accumulator <= -1.0 {
+        (*accumulator).ceil()
+    } else {
+        0.0
+    };
+    *accumulator -= whole;
+    whole as i32
+}
+
 fn entity_progress_key(map_path: &str, entity_id: &str) -> String {
     format!("{map_path}::{entity_id}")
 }
@@ -548,6 +1149,22 @@ fn entity_progress_key(map_path: &str, entity_id: &str) -> String {
 fn bump_meter(meters: &mut [MeterSave], id: &str, amount: u32) {
     if let Some(meter) = meters.iter_mut().find(|meter| meter.id == id) {
         meter.value = (meter.value + amount).min(meter.max);
+    }
+}
+
+fn new_save_data_for_language(language: Language) -> SaveData {
+    let mut save_data = SaveData::default();
+    save_data.settings.language = language.save_key().to_owned();
+    save_data
+}
+
+fn weather_key_for_time(field_time_minutes: u32) -> &'static str {
+    match (field_time_minutes % (24 * 60)) / 60 {
+        0..=4 => "cold_mist",
+        5..=10 => "clear",
+        11..=16 => "ion_wind",
+        17..=20 => "spore_drift",
+        _ => "cold_mist",
     }
 }
 
@@ -619,5 +1236,101 @@ mod tests {
         assert!(ctx.is_unlock_rule_satisfied(Some(&codex_rule)));
         assert!(ctx.is_unlock_rule_satisfied(Some(&item_rule)));
         assert!(!ctx.is_unlock_rule_satisfied(Some(&missing_item_rule)));
+    }
+
+    #[test]
+    fn inventory_load_updates_profile_meter() {
+        let mut save = SaveData::default();
+        save.inventory.slots = vec![
+            Some(crate::save::ItemStackSave::new(
+                "alien_crystal_sample",
+                3,
+                false,
+            )),
+            None,
+        ];
+        let mut ctx = GameContext::from_save(PathBuf::new(), save, CodexDatabase::default());
+
+        assert_eq!(ctx.profile_meter_value("load"), 6);
+        ctx.add_inventory_item("scrap_part", 4, false);
+        assert_eq!(ctx.profile_meter_value("load"), 10);
+    }
+
+    #[test]
+    fn field_status_consumes_and_recovers_stamina() {
+        let mut ctx = GameContext::default();
+        ctx.save_data.inventory.slots.clear();
+        ctx.sync_inventory_load_meter();
+        ctx.save_data.profile.set_meter_value("stamina", 10);
+
+        ctx.update_field_status(
+            1.0,
+            FieldActivity {
+                moving: true,
+                scanning: true,
+                jumped: false,
+                environment: FieldEnvironment::Overworld,
+            },
+        );
+        assert_eq!(ctx.profile_meter_value("stamina"), 7);
+
+        ctx.update_field_status(
+            1.0,
+            FieldActivity {
+                moving: false,
+                scanning: false,
+                jumped: false,
+                environment: FieldEnvironment::Overworld,
+            },
+        );
+        assert_eq!(ctx.profile_meter_value("stamina"), 12);
+    }
+
+    #[test]
+    fn facility_environment_changes_persistent_condition_meters() {
+        let mut ctx = GameContext::default();
+        let starting_oxygen = ctx.profile_meter_value("oxygen");
+
+        ctx.update_field_status(
+            10.0,
+            FieldActivity {
+                moving: false,
+                scanning: false,
+                jumped: false,
+                environment: FieldEnvironment::Facility,
+            },
+        );
+
+        assert!(ctx.profile_meter_value("oxygen") < starting_oxygen);
+        assert!(ctx.save_dirty);
+    }
+
+    #[test]
+    fn activity_log_records_scans_inventory_and_status() {
+        let mut ctx = GameContext::default();
+
+        assert!(ctx.complete_codex_scan("codex.flora.glowfungus"));
+        ctx.log_inventory_full();
+        ctx.save_data.profile.set_meter_value("stamina", 12);
+        ctx.update_field_status(
+            0.0,
+            FieldActivity {
+                moving: false,
+                scanning: false,
+                jumped: false,
+                environment: FieldEnvironment::Overworld,
+            },
+        );
+
+        let categories = ctx
+            .save_data
+            .activity_log
+            .entries
+            .iter()
+            .map(|entry| entry.category.as_str())
+            .collect::<Vec<_>>();
+        assert!(categories.contains(&LOG_CATEGORY_SCAN));
+        assert!(categories.contains(&LOG_CATEGORY_PICKUP));
+        assert!(categories.contains(&LOG_CATEGORY_STATUS));
     }
 }

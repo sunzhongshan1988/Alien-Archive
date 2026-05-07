@@ -1,8 +1,9 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use runtime::{Button, Color, InputState, Rect, Renderer, SceneCommand, Vec2};
 
+use crate::save::{SAVE_SLOT_COUNT, SaveData, delete_save_file, save_slot_path};
 use crate::ui::menu_style::{self, icon, skin};
 use crate::ui::menu_widgets::{
     contain_rect, draw_border, draw_screen_rect, draw_texture_nine_slice, screen_rect as ui_rect,
@@ -14,34 +15,51 @@ use super::{GameContext, Language, RenderContext, Scene, SceneId};
 const BACKGROUND_TEXTURE_ID: &str = "main_menu_background";
 const BACKGROUND_PATH: &str = "assets/images/startup/startup_background.png";
 const FADE_TIME: f32 = 0.55;
-const MENU_PANEL_WIDTH: f32 = 620.0;
-const MENU_PANEL_HEIGHT: f32 = 440.0;
-const MENU_ITEM_WIDTH: f32 = 360.0;
-const MENU_ITEM_HEIGHT: f32 = 64.0;
-const MENU_ITEM_GAP: f32 = 14.0;
+const MENU_PANEL_WIDTH: f32 = 680.0;
+const MENU_PANEL_HEIGHT: f32 = 560.0;
+const MENU_ITEM_WIDTH: f32 = 430.0;
+const MENU_ITEM_HEIGHT: f32 = 52.0;
+const MENU_ITEM_GAP: f32 = 10.0;
+const SAVE_SLOT_WIDTH: f32 = 500.0;
+const SAVE_SLOT_HEIGHT: f32 = 70.0;
+const SAVE_SLOT_GAP: f32 = 12.0;
 const SETTINGS_ITEM_HEIGHT: f32 = 60.0;
 const SETTINGS_CHOICE_WIDTH: f32 = 128.0;
 const SETTINGS_CHOICE_HEIGHT: f32 = 46.0;
 const SETTINGS_CHOICE_GAP: f32 = 14.0;
 
-const MENU_ITEMS: [MenuAction; 3] = [
-    MenuAction::StartGame,
+const MENU_ITEMS: [MenuAction; 6] = [
+    MenuAction::Continue,
+    MenuAction::NewGame,
+    MenuAction::LoadGame,
+    MenuAction::DeleteSave,
     MenuAction::Settings,
     MenuAction::Quit,
 ];
 const SETTINGS_ITEMS: [SettingsItem; 2] = [SettingsItem::Language, SettingsItem::Back];
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MenuAction {
-    StartGame,
+    Continue,
+    NewGame,
+    LoadGame,
+    DeleteSave,
     Settings,
     Quit,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SaveSlotMode {
+    Load,
+    New,
+    Delete,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MenuPage {
     Main,
     Settings,
+    SaveSlots(SaveSlotMode),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -59,6 +77,22 @@ struct MainMenuText {
     language_label: Option<TextSprite>,
     language_values: Vec<TextSprite>,
     back: Option<TextSprite>,
+    slot_title: Option<TextSprite>,
+    slot_items: Vec<TextSprite>,
+}
+
+#[derive(Clone, Debug)]
+struct SaveSlotView {
+    index: usize,
+    path: PathBuf,
+    state: SaveSlotState,
+}
+
+#[derive(Clone, Debug)]
+enum SaveSlotState {
+    Empty,
+    Ready(SaveData),
+    Corrupt,
 }
 
 pub struct MainMenuScene {
@@ -67,6 +101,8 @@ pub struct MainMenuScene {
     selected_index: usize,
     language: Language,
     text: MainMenuText,
+    save_slots: Vec<SaveSlotView>,
+    pending_delete_slot: Option<usize>,
 }
 
 impl MainMenuScene {
@@ -77,18 +113,107 @@ impl MainMenuScene {
             selected_index: 0,
             language: Language::default(),
             text: MainMenuText::default(),
+            save_slots: load_save_slots(),
+            pending_delete_slot: None,
         }
     }
 
-    fn confirm_main_selection(&mut self, ctx: &GameContext) -> SceneCommand<SceneId> {
+    fn confirm_main_selection(&mut self, ctx: &mut GameContext) -> Result<SceneCommand<SceneId>> {
         match MENU_ITEMS[self.selected_index] {
-            MenuAction::StartGame => SceneCommand::Switch(ctx.resume_scene_id()),
+            MenuAction::Continue => Ok(SceneCommand::Switch(ctx.resume_scene_id())),
+            MenuAction::NewGame => {
+                self.open_save_slots(SaveSlotMode::New);
+                Ok(SceneCommand::None)
+            }
+            MenuAction::LoadGame => {
+                self.open_save_slots(SaveSlotMode::Load);
+                Ok(SceneCommand::None)
+            }
+            MenuAction::DeleteSave => {
+                self.open_save_slots(SaveSlotMode::Delete);
+                Ok(SceneCommand::None)
+            }
             MenuAction::Settings => {
+                self.pending_delete_slot = None;
                 self.page = MenuPage::Settings;
                 self.selected_index = 0;
-                SceneCommand::None
+                Ok(SceneCommand::None)
             }
-            MenuAction::Quit => SceneCommand::Quit,
+            MenuAction::Quit => Ok(SceneCommand::Quit),
+        }
+    }
+
+    fn open_save_slots(&mut self, mode: SaveSlotMode) {
+        self.pending_delete_slot = None;
+        self.refresh_save_slots();
+        self.page = MenuPage::SaveSlots(mode);
+        self.selected_index = 0;
+    }
+
+    fn confirm_save_slot_selection(
+        &mut self,
+        ctx: &mut GameContext,
+        mode: SaveSlotMode,
+    ) -> Result<SceneCommand<SceneId>> {
+        if self.selected_index >= SAVE_SLOT_COUNT {
+            self.page = MenuPage::Main;
+            self.selected_index = main_index_for_slot_mode(mode);
+            self.pending_delete_slot = None;
+            return Ok(SceneCommand::None);
+        }
+
+        let slot_path = self
+            .save_slots
+            .get(self.selected_index)
+            .map(|slot| slot.path.clone())
+            .unwrap_or_else(|| save_slot_path(self.selected_index));
+        match mode {
+            SaveSlotMode::Load => {
+                let has_readable_save = self
+                    .save_slots
+                    .get(self.selected_index)
+                    .is_some_and(|slot| matches!(&slot.state, SaveSlotState::Ready(_)));
+                if has_readable_save {
+                    ctx.load_save_file_or_default(slot_path);
+                } else {
+                    ctx.start_new_save(slot_path);
+                }
+                self.language = ctx.language;
+                self.refresh_save_slots();
+                Ok(SceneCommand::Switch(ctx.resume_scene_id()))
+            }
+            SaveSlotMode::New => {
+                ctx.start_new_save(slot_path);
+                self.language = ctx.language;
+                self.refresh_save_slots();
+                Ok(SceneCommand::Switch(ctx.resume_scene_id()))
+            }
+            SaveSlotMode::Delete => {
+                let can_delete = self
+                    .save_slots
+                    .get(self.selected_index)
+                    .is_some_and(|slot| !matches!(&slot.state, SaveSlotState::Empty));
+                if !can_delete {
+                    self.pending_delete_slot = None;
+                    self.text = MainMenuText::default();
+                    return Ok(SceneCommand::None);
+                }
+
+                if self.pending_delete_slot != Some(self.selected_index) {
+                    self.pending_delete_slot = Some(self.selected_index);
+                    self.text = MainMenuText::default();
+                    return Ok(SceneCommand::None);
+                }
+
+                self.pending_delete_slot = None;
+                delete_save_file(&slot_path)?;
+                if ctx.save_path == slot_path {
+                    ctx.reset_to_empty_save_slot(slot_path);
+                    self.language = ctx.language;
+                }
+                self.refresh_save_slots();
+                Ok(SceneCommand::None)
+            }
         }
     }
 
@@ -97,7 +222,8 @@ impl MainMenuScene {
             SettingsItem::Language => self.set_language(ctx, ctx.language.next()),
             SettingsItem::Back => {
                 self.page = MenuPage::Main;
-                self.selected_index = 1;
+                self.selected_index = 4;
+                self.pending_delete_slot = None;
             }
         }
     }
@@ -111,6 +237,11 @@ impl MainMenuScene {
         self.language = language;
         self.text = MainMenuText::default();
         ctx.request_save();
+    }
+
+    fn refresh_save_slots(&mut self) {
+        self.save_slots = load_save_slots();
+        self.text = MainMenuText::default();
     }
 
     fn draw_main_menu(&self, ctx: &mut RenderContext<'_>) {
@@ -155,6 +286,7 @@ impl MainMenuScene {
         match self.page {
             MenuPage::Main => self.draw_main_items(ctx, viewport),
             MenuPage::Settings => self.draw_settings(ctx, viewport),
+            MenuPage::SaveSlots(mode) => self.draw_save_slots(ctx, viewport, mode),
         }
     }
 
@@ -317,6 +449,53 @@ impl MainMenuScene {
         }
     }
 
+    fn draw_save_slots(&self, ctx: &mut RenderContext<'_>, viewport: Vec2, mode: SaveSlotMode) {
+        let panel_rect = self.menu_panel_rect(viewport);
+
+        if let Some(title) = &self.text.slot_title {
+            draw_text_centered(
+                ctx.renderer,
+                title,
+                viewport,
+                panel_rect.origin.x + panel_rect.size.x * 0.5,
+                centered_text_y(
+                    Rect::new(
+                        Vec2::new(panel_rect.origin.x, panel_rect.origin.y + 136.0),
+                        Vec2::new(panel_rect.size.x, 48.0),
+                    ),
+                    title,
+                    0.0,
+                ),
+                Color::rgba(0.78, 0.96, 1.0, 0.98),
+            );
+        }
+
+        for index in 0..=SAVE_SLOT_COUNT {
+            let item_rect = self.save_slot_item_rect(viewport, index);
+            let is_selected =
+                self.page == MenuPage::SaveSlots(mode) && index == self.selected_index;
+            draw_menu_button(ctx.renderer, viewport, item_rect, is_selected);
+
+            if let Some(text) = self.text.slot_items.get(index) {
+                let color = if is_selected {
+                    Color::rgba(0.94, 1.0, 0.98, 1.0)
+                } else if matches!(mode, SaveSlotMode::Delete) && index < SAVE_SLOT_COUNT {
+                    Color::rgba(1.0, 0.78, 0.66, 0.95)
+                } else {
+                    Color::rgba(0.64, 0.78, 0.84, 0.92)
+                };
+                draw_text_centered(
+                    ctx.renderer,
+                    text,
+                    viewport,
+                    item_rect.origin.x + item_rect.size.x * 0.5,
+                    centered_text_y(item_rect, text, 0.0),
+                    color,
+                );
+            }
+        }
+    }
+
     fn menu_panel_rect(&self, viewport: Vec2) -> Rect {
         Rect::new(
             Vec2::new(
@@ -354,6 +533,17 @@ impl MainMenuScene {
         )
     }
 
+    fn save_slot_item_rect(&self, viewport: Vec2, index: usize) -> Rect {
+        let panel = self.menu_panel_rect(viewport);
+        Rect::new(
+            Vec2::new(
+                panel.origin.x + (panel.size.x - SAVE_SLOT_WIDTH) * 0.5,
+                panel.origin.y + 188.0 + index as f32 * (SAVE_SLOT_HEIGHT + SAVE_SLOT_GAP),
+            ),
+            Vec2::new(SAVE_SLOT_WIDTH, SAVE_SLOT_HEIGHT),
+        )
+    }
+
     fn language_choice_rect(&self, viewport: Vec2, index: usize) -> Rect {
         let row = self.settings_item_rect(viewport, 0);
         let total_width = Language::SUPPORTED.len() as f32 * SETTINGS_CHOICE_WIDTH
@@ -376,6 +566,7 @@ impl MainMenuScene {
         match self.page {
             MenuPage::Main => MENU_ITEMS.len(),
             MenuPage::Settings => SETTINGS_ITEMS.len(),
+            MenuPage::SaveSlots(_) => SAVE_SLOT_COUNT + 1,
         }
     }
 
@@ -456,6 +647,41 @@ impl MainMenuScene {
                 Language::English => 28.0,
             },
         )?);
+        self.text.slot_title = Some(upload_text(
+            renderer,
+            &font,
+            "main_menu_slot_title",
+            save_slot_title(save_slot_mode_for_page(self.page), language),
+            match language {
+                Language::Chinese => 30.0,
+                Language::English => 26.0,
+            },
+        )?);
+        let mode = save_slot_mode_for_page(self.page);
+        self.text.slot_items = (0..=SAVE_SLOT_COUNT)
+            .map(|index| {
+                let label = if index < SAVE_SLOT_COUNT {
+                    save_slot_item_label(
+                        self.save_slots.get(index),
+                        mode,
+                        language,
+                        self.pending_delete_slot == Some(index),
+                    )
+                } else {
+                    back_label(language).to_owned()
+                };
+                upload_text(
+                    renderer,
+                    &font,
+                    &format!("main_menu_slot_item_{index}"),
+                    &label,
+                    match language {
+                        Language::Chinese => 23.0,
+                        Language::English => 20.0,
+                    },
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(())
     }
@@ -527,6 +753,17 @@ impl Scene for MainMenuScene {
                         }
                     }
                 }
+                MenuPage::SaveSlots(_) => {
+                    for index in 0..=SAVE_SLOT_COUNT {
+                        if screen_point_in_rect(
+                            cursor_position,
+                            self.save_slot_item_rect(viewport, index),
+                        ) {
+                            self.selected_index = index;
+                            mouse_confirmed_item = input.mouse_left_just_pressed();
+                        }
+                    }
+                }
             }
         }
 
@@ -551,26 +788,34 @@ impl Scene for MainMenuScene {
         }
 
         if input.just_pressed(Button::Pause) {
-            if self.page == MenuPage::Settings {
-                self.page = MenuPage::Main;
-                self.selected_index = 1;
-                return Ok(SceneCommand::None);
+            match self.page {
+                MenuPage::Main => return Ok(SceneCommand::Quit),
+                MenuPage::Settings => {
+                    self.page = MenuPage::Main;
+                    self.selected_index = 4;
+                    return Ok(SceneCommand::None);
+                }
+                MenuPage::SaveSlots(mode) => {
+                    self.page = MenuPage::Main;
+                    self.selected_index = main_index_for_slot_mode(mode);
+                    self.pending_delete_slot = None;
+                    return Ok(SceneCommand::None);
+                }
             }
-
-            return Ok(SceneCommand::Quit);
         }
 
         if input.just_pressed(Button::Confirm)
             || input.just_pressed(Button::Interact)
             || mouse_confirmed_item
         {
-            return Ok(match self.page {
+            return match self.page {
                 MenuPage::Main => self.confirm_main_selection(ctx),
                 MenuPage::Settings => {
                     self.confirm_settings_selection(ctx);
-                    SceneCommand::None
+                    Ok(SceneCommand::None)
                 }
-            });
+                MenuPage::SaveSlots(mode) => self.confirm_save_slot_selection(ctx, mode),
+            };
         }
 
         Ok(SceneCommand::None)
@@ -713,14 +958,182 @@ fn main_title(language: Language) -> &'static str {
 fn menu_action_label(action: MenuAction, language: Language) -> &'static str {
     match language {
         Language::Chinese => match action {
-            MenuAction::StartGame => "开始游戏",
+            MenuAction::Continue => "继续游戏",
+            MenuAction::NewGame => "新建存档",
+            MenuAction::LoadGame => "读取存档",
+            MenuAction::DeleteSave => "删除存档",
             MenuAction::Settings => "设置",
             MenuAction::Quit => "退出",
         },
         Language::English => match action {
-            MenuAction::StartGame => "Start Game",
+            MenuAction::Continue => "Continue",
+            MenuAction::NewGame => "New Save",
+            MenuAction::LoadGame => "Load Save",
+            MenuAction::DeleteSave => "Delete Save",
             MenuAction::Settings => "Settings",
             MenuAction::Quit => "Quit",
+        },
+    }
+}
+
+fn main_index_for_slot_mode(mode: SaveSlotMode) -> usize {
+    match mode {
+        SaveSlotMode::Load => 2,
+        SaveSlotMode::New => 1,
+        SaveSlotMode::Delete => 3,
+    }
+}
+
+fn load_save_slots() -> Vec<SaveSlotView> {
+    (0..SAVE_SLOT_COUNT)
+        .map(|index| {
+            let path = save_slot_path(index);
+            let state = if !path.exists() {
+                SaveSlotState::Empty
+            } else {
+                match SaveData::load(&path) {
+                    Ok(save_data) => SaveSlotState::Ready(save_data),
+                    Err(_) => SaveSlotState::Corrupt,
+                }
+            };
+            SaveSlotView { index, path, state }
+        })
+        .collect()
+}
+
+fn save_slot_mode_for_page(page: MenuPage) -> SaveSlotMode {
+    match page {
+        MenuPage::SaveSlots(mode) => mode,
+        _ => SaveSlotMode::Load,
+    }
+}
+
+fn save_slot_title(mode: SaveSlotMode, language: Language) -> &'static str {
+    match language {
+        Language::Chinese => match mode {
+            SaveSlotMode::Load => "读取存档",
+            SaveSlotMode::New => "新建存档",
+            SaveSlotMode::Delete => "删除存档",
+        },
+        Language::English => match mode {
+            SaveSlotMode::Load => "Load Save",
+            SaveSlotMode::New => "New Save",
+            SaveSlotMode::Delete => "Delete Save",
+        },
+    }
+}
+
+fn save_slot_item_label(
+    slot: Option<&SaveSlotView>,
+    mode: SaveSlotMode,
+    language: Language,
+    confirm_delete: bool,
+) -> String {
+    let Some(slot) = slot else {
+        return match language {
+            Language::Chinese => "未知槽位".to_owned(),
+            Language::English => "Unknown Slot".to_owned(),
+        };
+    };
+    let slot_name = match language {
+        Language::Chinese => format!("槽位 {}", slot.index + 1),
+        Language::English => format!("Slot {}", slot.index + 1),
+    };
+
+    if mode == SaveSlotMode::Delete
+        && confirm_delete
+        && !matches!(&slot.state, SaveSlotState::Empty)
+    {
+        return confirm_delete_slot_label(&slot_name, language);
+    }
+
+    match &slot.state {
+        SaveSlotState::Empty => empty_slot_label(&slot_name, mode, language),
+        SaveSlotState::Corrupt => corrupt_slot_label(&slot_name, mode, language),
+        SaveSlotState::Ready(save_data) => ready_slot_label(&slot_name, save_data, mode, language),
+    }
+}
+
+fn confirm_delete_slot_label(slot_name: &str, language: Language) -> String {
+    match language {
+        Language::Chinese => format!("{slot_name}  再次确认删除"),
+        Language::English => format!("{slot_name}  Confirm Delete"),
+    }
+}
+
+fn empty_slot_label(slot_name: &str, mode: SaveSlotMode, language: Language) -> String {
+    match language {
+        Language::Chinese => match mode {
+            SaveSlotMode::Load | SaveSlotMode::New => format!("{slot_name}  空 - 新游戏"),
+            SaveSlotMode::Delete => format!("{slot_name}  空"),
+        },
+        Language::English => match mode {
+            SaveSlotMode::Load | SaveSlotMode::New => format!("{slot_name}  Empty - New Game"),
+            SaveSlotMode::Delete => format!("{slot_name}  Empty"),
+        },
+    }
+}
+
+fn corrupt_slot_label(slot_name: &str, mode: SaveSlotMode, language: Language) -> String {
+    match language {
+        Language::Chinese => match mode {
+            SaveSlotMode::Delete => format!("{slot_name}  读取失败 - 删除"),
+            SaveSlotMode::Load | SaveSlotMode::New => format!("{slot_name}  读取失败 - 重建"),
+        },
+        Language::English => match mode {
+            SaveSlotMode::Delete => format!("{slot_name}  Read Failed - Delete"),
+            SaveSlotMode::Load | SaveSlotMode::New => format!("{slot_name}  Read Failed - Rebuild"),
+        },
+    }
+}
+
+fn ready_slot_label(
+    slot_name: &str,
+    save_data: &SaveData,
+    mode: SaveSlotMode,
+    language: Language,
+) -> String {
+    let scene = scene_display_name(&save_data.world.current_scene, language);
+    let scanned_count = save_data.codex.scanned_ids.len();
+    match language {
+        Language::Chinese => match mode {
+            SaveSlotMode::Load => format!(
+                "{slot_name}  Lv{}  {scene}  扫描 {scanned_count}",
+                save_data.profile.level
+            ),
+            SaveSlotMode::New => {
+                format!("{slot_name}  Lv{}  {scene}  覆盖", save_data.profile.level)
+            }
+            SaveSlotMode::Delete => {
+                format!("{slot_name}  Lv{}  {scene}  删除", save_data.profile.level)
+            }
+        },
+        Language::English => match mode {
+            SaveSlotMode::Load => format!(
+                "{slot_name}  Lv{}  {scene}  Scans {scanned_count}",
+                save_data.profile.level
+            ),
+            SaveSlotMode::New => format!(
+                "{slot_name}  Lv{}  {scene}  Overwrite",
+                save_data.profile.level
+            ),
+            SaveSlotMode::Delete => format!(
+                "{slot_name}  Lv{}  {scene}  Delete",
+                save_data.profile.level
+            ),
+        },
+    }
+}
+
+fn scene_display_name(scene: &str, language: Language) -> &'static str {
+    match language {
+        Language::Chinese => match scene {
+            "Facility" | "facility" => "设施",
+            _ => "地表",
+        },
+        Language::English => match scene {
+            "Facility" | "facility" => "Facility",
+            _ => "Overworld",
         },
     }
 }
@@ -765,10 +1178,62 @@ mod tests {
             assert!(!language_setting_label(language).is_empty());
             assert!(!language_option_label(language).is_empty());
             assert!(!back_label(language).is_empty());
+            assert!(!save_slot_title(SaveSlotMode::Load, language).is_empty());
+            assert!(!save_slot_title(SaveSlotMode::New, language).is_empty());
+            assert!(!save_slot_title(SaveSlotMode::Delete, language).is_empty());
 
             for action in MENU_ITEMS {
                 assert!(!menu_action_label(action, language).is_empty());
             }
         }
+    }
+
+    #[test]
+    fn save_slot_labels_describe_empty_and_ready_slots() {
+        let empty_slot = SaveSlotView {
+            index: 0,
+            path: PathBuf::from("saves/profile_01.ron"),
+            state: SaveSlotState::Empty,
+        };
+        assert!(
+            save_slot_item_label(
+                Some(&empty_slot),
+                SaveSlotMode::New,
+                Language::Chinese,
+                false,
+            )
+            .contains("新游戏")
+        );
+
+        let mut save_data = SaveData::default();
+        save_data.profile.level = 7;
+        save_data.world.current_scene = "Facility".to_owned();
+        save_data
+            .codex
+            .scanned_ids
+            .insert("codex.flora.glowfungus".to_owned());
+        let ready_slot = SaveSlotView {
+            index: 1,
+            path: PathBuf::from("saves/profile_02.ron"),
+            state: SaveSlotState::Ready(save_data),
+        };
+        let label = save_slot_item_label(
+            Some(&ready_slot),
+            SaveSlotMode::Load,
+            Language::Chinese,
+            false,
+        );
+        assert!(label.contains("Lv7"));
+        assert!(label.contains("设施"));
+        assert!(label.contains("扫描 1"));
+        assert!(
+            save_slot_item_label(
+                Some(&ready_slot),
+                SaveSlotMode::Delete,
+                Language::Chinese,
+                true,
+            )
+            .contains("再次确认删除")
+        );
     }
 }

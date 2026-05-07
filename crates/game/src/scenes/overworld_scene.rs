@@ -7,13 +7,15 @@ use crate::{
 };
 
 use super::{
-    GameContext, GameMenuTab, RenderContext, Scene, SceneId,
+    FieldActivity, FieldEnvironment, GameContext, GameMenuTab, RenderContext, Scene,
+    SceneDebugSnapshot, SceneId,
     notice_system::NoticeState,
     rewards,
     scan_system::{ScanState, nearby_scan_target},
 };
 
 const OVERWORLD_MAP: &str = "assets/data/maps/overworld_landing_site.ron";
+const FACILITY_MAP: &str = "assets/data/maps/facility_ruin_01.ron";
 const FACILITY_ENTRY_SPAWN: &str = "entry";
 const OVERWORLD_CAMERA_ZOOM: f32 = 1.5;
 
@@ -78,6 +80,7 @@ impl OverworldScene {
         let added = ctx.add_inventory_item(reward.item_id, reward.quantity, reward.locked);
         if added == 0 {
             self.notice.push_inventory_full(ctx.language);
+            ctx.log_inventory_full();
             return true;
         }
 
@@ -138,11 +141,17 @@ impl Scene for OverworldScene {
                         unlock.as_ref(),
                         &ctx.codex_database,
                     );
+                    ctx.log_locked_unlock_rule(unlock.as_ref());
                     return Ok(SceneCommand::None);
                 }
 
                 ctx.facility_spawn_id = Some(FACILITY_ENTRY_SPAWN.to_owned());
                 ctx.facility_player_position = None;
+                let target_map = ctx
+                    .facility_map_path
+                    .clone()
+                    .unwrap_or_else(|| FACILITY_MAP.to_owned());
+                ctx.log_scene_transition(SceneId::Facility, &target_map);
                 ctx.request_save();
                 return Ok(SceneCommand::Switch(SceneId::Facility));
             }
@@ -157,8 +166,21 @@ impl Scene for OverworldScene {
                 .push_scan_complete(ctx.language, &codex_id, &ctx.codex_database);
         }
 
-        self.player
-            .update_topdown(dt, input, self.world.solid_rects());
+        let status = ctx.update_field_status(
+            dt,
+            FieldActivity {
+                moving: input.movement().length_squared() > f32::EPSILON,
+                scanning: input.is_down(Button::Scan),
+                jumped: false,
+                environment: FieldEnvironment::Overworld,
+            },
+        );
+        self.player.update_topdown_with_speed(
+            dt,
+            input,
+            self.world.solid_rects(),
+            status.movement_speed_multiplier,
+        );
         self.camera.position = self.player.position;
         ctx.record_world_location(SceneId::Overworld, &self.map_path, self.player.position);
 
@@ -176,4 +198,21 @@ impl Scene for OverworldScene {
     fn camera(&self) -> Camera2d {
         self.camera
     }
+
+    fn debug_snapshot(&self, _ctx: &GameContext) -> SceneDebugSnapshot {
+        SceneDebugSnapshot::new(self.id(), self.name()).with_field_state(
+            &self.map_path,
+            self.player.position,
+            self.world.solid_rects().count(),
+            nearby_scan_target(&self.world, self.player.rect()).map(debug_scan_target_label),
+        )
+    }
+}
+
+fn debug_scan_target_label(entity: &MapEntity) -> String {
+    entity
+        .codex_id
+        .as_deref()
+        .map(|codex_id| format!("{codex_id} [{}]", entity.id))
+        .unwrap_or_else(|| entity.id.clone())
 }

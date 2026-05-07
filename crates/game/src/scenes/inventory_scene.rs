@@ -13,9 +13,9 @@ const BACKPACK_COLUMNS: usize = 6;
 const BACKPACK_ROWS: usize = 4;
 const BACKPACK_SLOTS: usize = BACKPACK_COLUMNS * BACKPACK_ROWS;
 const QUICKBAR_SLOTS: usize = 6;
-const SLOT_SIZE: f32 = 62.0;
+const SLOT_SIZE: f32 = 56.0;
 const SLOT_GAP: f32 = 10.0;
-const QUICKBAR_SLOT_SIZE: f32 = 48.0;
+const QUICKBAR_SLOT_SIZE: f32 = 44.0;
 const QUICKBAR_SLOT_GAP: f32 = 12.0;
 const INVENTORY_WIDTH: f32 = 1008.0;
 const INVENTORY_HEIGHT: f32 = 550.0;
@@ -137,6 +137,7 @@ const ITEM_DEFINITIONS: &[ItemDefinition] = &[
         texture_id: "item_alien_crystal_sample",
         icon_path: "assets/images/ui/inventory/items/item_alien_crystal_sample.png",
         max_stack: 10,
+        weight: 2,
         rarity: Rarity::Rare,
         research: 42,
     },
@@ -147,6 +148,7 @@ const ITEM_DEFINITIONS: &[ItemDefinition] = &[
         texture_id: "item_bio_sample_vial",
         icon_path: "assets/images/ui/inventory/items/item_bio_sample_vial.png",
         max_stack: 10,
+        weight: 1,
         rarity: Rarity::Uncommon,
         research: 18,
     },
@@ -157,6 +159,7 @@ const ITEM_DEFINITIONS: &[ItemDefinition] = &[
         texture_id: "item_data_shard",
         icon_path: "assets/images/ui/inventory/items/item_data_shard.png",
         max_stack: 99,
+        weight: 0,
         rarity: Rarity::Rare,
         research: 66,
     },
@@ -167,6 +170,7 @@ const ITEM_DEFINITIONS: &[ItemDefinition] = &[
         texture_id: "item_energy_cell",
         icon_path: "assets/images/ui/inventory/items/item_energy_cell.png",
         max_stack: 20,
+        weight: 1,
         rarity: Rarity::Uncommon,
         research: 35,
     },
@@ -177,6 +181,7 @@ const ITEM_DEFINITIONS: &[ItemDefinition] = &[
         texture_id: "item_scrap_part",
         icon_path: "assets/images/ui/inventory/items/item_scrap_part.png",
         max_stack: 99,
+        weight: 1,
         rarity: Rarity::Common,
         research: 8,
     },
@@ -187,6 +192,7 @@ const ITEM_DEFINITIONS: &[ItemDefinition] = &[
         texture_id: "item_ruin_key",
         icon_path: "assets/images/ui/inventory/items/item_ruin_key.png",
         max_stack: 1,
+        weight: 1,
         rarity: Rarity::Artifact,
         research: 91,
     },
@@ -197,6 +203,7 @@ const ITEM_DEFINITIONS: &[ItemDefinition] = &[
         texture_id: "item_scanner_tool",
         icon_path: "assets/images/ui/inventory/items/item_scanner_tool.png",
         max_stack: 1,
+        weight: 3,
         rarity: Rarity::Uncommon,
         research: 100,
     },
@@ -207,6 +214,7 @@ const ITEM_DEFINITIONS: &[ItemDefinition] = &[
         texture_id: "item_med_injector",
         icon_path: "assets/images/ui/inventory/items/item_med_injector.png",
         max_stack: 5,
+        weight: 1,
         rarity: Rarity::Common,
         research: 0,
     },
@@ -217,6 +225,7 @@ const ITEM_DEFINITIONS: &[ItemDefinition] = &[
         texture_id: "item_coolant_canister",
         icon_path: "assets/images/ui/inventory/items/item_coolant_canister.png",
         max_stack: 10,
+        weight: 3,
         rarity: Rarity::Uncommon,
         research: 24,
     },
@@ -227,6 +236,7 @@ const ITEM_DEFINITIONS: &[ItemDefinition] = &[
         texture_id: "item_metal_fragment",
         icon_path: "assets/images/ui/inventory/items/item_metal_fragment.png",
         max_stack: 99,
+        weight: 1,
         rarity: Rarity::Common,
         research: 12,
     },
@@ -237,6 +247,7 @@ const ITEM_DEFINITIONS: &[ItemDefinition] = &[
         texture_id: "item_glow_fungus_sample",
         icon_path: "assets/images/ui/inventory/items/item_glow_fungus_sample.png",
         max_stack: 10,
+        weight: 1,
         rarity: Rarity::Uncommon,
         research: 54,
     },
@@ -247,6 +258,7 @@ const ITEM_DEFINITIONS: &[ItemDefinition] = &[
         texture_id: "item_artifact_core",
         icon_path: "assets/images/ui/inventory/items/item_artifact_core.png",
         max_stack: 1,
+        weight: 4,
         rarity: Rarity::Artifact,
         research: 73,
     },
@@ -373,6 +385,7 @@ struct ItemDefinition {
     texture_id: &'static str,
     icon_path: &'static str,
     max_stack: u32,
+    weight: u32,
     rarity: Rarity,
     research: u32,
 }
@@ -1275,8 +1288,7 @@ impl Scene for InventoryScene {
 
         let after = self.state.to_save();
         if after != before {
-            ctx.save_data.inventory = after;
-            ctx.request_save();
+            ctx.set_inventory_save(after);
         }
 
         Ok(SceneCommand::None)
@@ -1528,6 +1540,10 @@ pub(super) fn inventory_item_max_stack(item_id: &str) -> Option<u32> {
     item_definition(item_id).map(|definition| definition.max_stack)
 }
 
+pub(super) fn inventory_item_weight(item_id: &str) -> u32 {
+    item_definition(item_id).map_or(1, |definition| definition.weight)
+}
+
 pub(super) fn inventory_item_name(item_id: &str, language: Language) -> String {
     item_definition(item_id)
         .map(|definition| definition.name.get(language).to_owned())
@@ -1744,6 +1760,7 @@ mod tests {
 
             for definition in ITEM_DEFINITIONS {
                 assert!(!definition.name.get(language).is_empty());
+                assert_eq!(inventory_item_weight(definition.id), definition.weight);
             }
         }
     }

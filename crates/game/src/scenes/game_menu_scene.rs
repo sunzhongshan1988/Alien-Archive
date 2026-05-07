@@ -5,10 +5,11 @@ use content::CodexEntry;
 use runtime::{Button, Color, InputState, Rect, Renderer, SceneCommand, Vec2};
 use rusttype::Font;
 
-use crate::save::{InventorySave, PlayerProfileSave};
+use crate::save::{ActivityLogEntrySave, InventorySave, PlayerProfileSave};
 use crate::ui::game_menu_content::{
-    BOTTOM_ACTIONS, QUEST_PREVIEWS, category_label, close_hint, codex_discoveries_title,
-    compact_vital_label, empty_slot_body, empty_slot_title, inventory_hint, language_option_label,
+    BOTTOM_ACTIONS, QUEST_PREVIEWS, activity_category_label, activity_log_empty,
+    activity_log_header, category_label, close_hint, codex_discoveries_title, compact_vital_label,
+    empty_slot_body, empty_slot_title, inventory_hint, language_option_label,
     language_setting_label, locked_label, map_labels, menu_status, placeholder_text,
     profile_core_header, profile_level_label, profile_research_header, quantity_label,
     rarity_label, research_label, return_label, return_sublabel, settings_hint, stack_limit_label,
@@ -35,6 +36,7 @@ const EXPLORER_PORTRAIT_PATH: &str = "assets/images/ui/profile/explorer_portrait
 const CODEX_VISIBLE_ROWS: usize = 4;
 const CODEX_VISIBLE_COLUMNS: usize = 2;
 const CODEX_VISIBLE_COUNT: usize = CODEX_VISIBLE_ROWS * CODEX_VISIBLE_COLUMNS;
+const ACTIVITY_LOG_VISIBLE_ROWS: usize = 5;
 
 #[derive(Default)]
 struct GameMenuText {
@@ -76,6 +78,9 @@ struct GameMenuText {
     codex_entries: Vec<CodexEntryCardText>,
     map_labels: Vec<TextSprite>,
     quest_rows: Vec<(TextSprite, TextSprite)>,
+    activity_log_header: Option<TextSprite>,
+    activity_log_empty: Option<TextSprite>,
+    activity_log_rows: Vec<ActivityLogRowText>,
     settings_language: Option<TextSprite>,
     settings_hint: Option<TextSprite>,
     language_values: Vec<TextSprite>,
@@ -108,6 +113,14 @@ struct CodexEntryCardText {
     status: TextSprite,
     description_lines: Vec<TextSprite>,
     unlocked: bool,
+}
+
+struct ActivityLogRowText {
+    category: TextSprite,
+    title: TextSprite,
+    detail: TextSprite,
+    meta: TextSprite,
+    category_key: String,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -163,6 +176,7 @@ pub struct GameMenuScene {
     codex_snapshot: CodexMenuSnapshot,
     profile_snapshot: PlayerProfileSave,
     inventory_snapshot: InventorySave,
+    activity_log_snapshot: Vec<ActivityLogEntrySave>,
     text: GameMenuText,
 }
 
@@ -176,6 +190,7 @@ impl GameMenuScene {
             codex_snapshot: CodexMenuSnapshot::from_context(ctx),
             profile_snapshot: ctx.save_data.profile.clone(),
             inventory_snapshot: ctx.save_data.inventory.clone(),
+            activity_log_snapshot: ctx.save_data.activity_log.entries.clone(),
             text: GameMenuText::default(),
         }
     }
@@ -212,12 +227,14 @@ impl GameMenuScene {
     fn sync_save_snapshot(&mut self, ctx: &GameContext) {
         if self.profile_snapshot == ctx.save_data.profile
             && self.inventory_snapshot == ctx.save_data.inventory
+            && self.activity_log_snapshot == ctx.save_data.activity_log.entries
         {
             return;
         }
 
         self.profile_snapshot = ctx.save_data.profile.clone();
         self.inventory_snapshot = ctx.save_data.inventory.clone();
+        self.activity_log_snapshot = ctx.save_data.activity_log.entries.clone();
         self.selected_inventory_slot = self.selected_inventory_slot.min(
             inventory_scene::inventory_slots(&self.inventory_snapshot)
                 .len()
@@ -1453,29 +1470,52 @@ impl GameMenuScene {
 
     fn draw_quests_page(&self, renderer: &mut dyn Renderer, viewport: Vec2, layout: &MenuLayout) {
         let content = layout.content_body();
-        let row_heights = vec![96.0 * layout.scale; self.text.quest_rows.len()];
-        let rows =
-            Stack::vertical()
-                .gap(22.0 * layout.scale)
-                .fixed_main(content, &row_heights, None);
+        let objective_panel = Rect::new(
+            content.origin,
+            Vec2::new(content.size.x, 166.0 * layout.scale),
+        );
+        draw_inner_panel(renderer, viewport, objective_panel, layout.scale);
+
+        let card_gap = 14.0 * layout.scale;
+        let card_width = (objective_panel.size.x - 48.0 * layout.scale - card_gap * 2.0) / 3.0;
         for (index, (label, status)) in self.text.quest_rows.iter().enumerate() {
-            let row = rows[index];
-            draw_inner_panel(renderer, viewport, row, layout.scale);
+            let row = Rect::new(
+                Vec2::new(
+                    objective_panel.origin.x
+                        + 24.0 * layout.scale
+                        + index as f32 * (card_width + card_gap),
+                    objective_panel.origin.y + 24.0 * layout.scale,
+                ),
+                Vec2::new(card_width, 118.0 * layout.scale),
+            );
+            draw_screen_rect(
+                renderer,
+                viewport,
+                row,
+                Color::rgba(0.020, 0.050, 0.060, 0.72),
+            );
+            draw_border(
+                renderer,
+                viewport,
+                row,
+                1.0 * layout.scale,
+                Color::rgba(0.16, 0.36, 0.42, 0.76),
+            );
             draw_text_strong(
                 renderer,
                 label,
                 viewport,
-                row.origin.x + 24.0 * layout.scale,
+                row.origin.x + 18.0 * layout.scale,
                 row.origin.y + 18.0 * layout.scale,
                 color::TEXT_PRIMARY,
                 layout.scale,
             );
             let status_rect = Rect::new(
                 Vec2::new(
-                    row.right() - 150.0 * layout.scale,
-                    row.origin.y + 16.0 * layout.scale,
+                    row.origin.x + 18.0 * layout.scale,
+                    row.origin.y + 50.0 * layout.scale,
                 ),
-                Vec2::new(120.0 * layout.scale, 34.0 * layout.scale),
+                Vec2::new(112.0 * layout.scale, 28.0 * layout.scale),
             );
             draw_screen_rect(
                 renderer,
@@ -1488,7 +1528,7 @@ impl GameMenuScene {
                 status,
                 viewport,
                 status_rect.origin.x + status_rect.size.x * 0.5,
-                status_rect.origin.y + 4.0 * layout.scale,
+                status_rect.origin.y + 1.0 * layout.scale,
                 Color::rgba(0.82, 1.0, 0.94, 1.0),
             );
             draw_bar(
@@ -1496,13 +1536,115 @@ impl GameMenuScene {
                 viewport,
                 Rect::new(
                     Vec2::new(
-                        row.origin.x + 24.0 * layout.scale,
-                        row.origin.y + 64.0 * layout.scale,
+                        row.origin.x + 18.0 * layout.scale,
+                        row.origin.y + 92.0 * layout.scale,
                     ),
-                    Vec2::new(row.size.x - 48.0 * layout.scale, 10.0 * layout.scale),
+                    Vec2::new(row.size.x - 36.0 * layout.scale, 9.0 * layout.scale),
                 ),
                 QUEST_PREVIEWS[index].progress as f32 / 100.0,
                 layout.scale,
+            );
+        }
+
+        let log_panel_top = objective_panel.bottom() + 18.0 * layout.scale;
+        let log_panel = Rect::new(
+            Vec2::new(content.origin.x, log_panel_top),
+            Vec2::new(content.size.x, (content.bottom() - log_panel_top).max(0.0)),
+        );
+        draw_inner_panel(renderer, viewport, log_panel, layout.scale);
+        if let Some(header) = &self.text.activity_log_header {
+            draw_text_strong(
+                renderer,
+                header,
+                viewport,
+                log_panel.origin.x + 24.0 * layout.scale,
+                log_panel.origin.y + 18.0 * layout.scale,
+                color::TEXT_PRIMARY,
+                layout.scale,
+            );
+        }
+
+        if self.text.activity_log_rows.is_empty() {
+            if let Some(empty) = &self.text.activity_log_empty {
+                draw_text(
+                    renderer,
+                    empty,
+                    viewport,
+                    log_panel.origin.x + 24.0 * layout.scale,
+                    log_panel.origin.y + 72.0 * layout.scale,
+                    color::TEXT_MUTED,
+                );
+            }
+            return;
+        }
+
+        let row_height = 55.0 * layout.scale;
+        let row_gap = 8.0 * layout.scale;
+        for (index, row_text) in self.text.activity_log_rows.iter().enumerate() {
+            let row = Rect::new(
+                Vec2::new(
+                    log_panel.origin.x + 18.0 * layout.scale,
+                    log_panel.origin.y
+                        + 62.0 * layout.scale
+                        + index as f32 * (row_height + row_gap),
+                ),
+                Vec2::new(log_panel.size.x - 36.0 * layout.scale, row_height),
+            );
+            draw_screen_rect(
+                renderer,
+                viewport,
+                row,
+                Color::rgba(0.018, 0.040, 0.050, 0.72),
+            );
+            draw_border(
+                renderer,
+                viewport,
+                row,
+                1.0 * layout.scale,
+                Color::rgba(0.10, 0.24, 0.30, 0.82),
+            );
+
+            let badge = Rect::new(
+                Vec2::new(
+                    row.origin.x + 12.0 * layout.scale,
+                    row.origin.y + 13.0 * layout.scale,
+                ),
+                Vec2::new(72.0 * layout.scale, 28.0 * layout.scale),
+            );
+            let badge_color = activity_category_color(&row_text.category_key);
+            draw_screen_rect(renderer, viewport, badge, badge_color);
+            draw_text_centered(
+                renderer,
+                &row_text.category,
+                viewport,
+                badge.origin.x + badge.size.x * 0.5,
+                badge.origin.y + 1.0 * layout.scale,
+                Color::rgba(0.88, 1.0, 0.96, 1.0),
+            );
+            draw_text_strong(
+                renderer,
+                &row_text.title,
+                viewport,
+                row.origin.x + 102.0 * layout.scale,
+                row.origin.y + 7.0 * layout.scale,
+                color::TEXT_PRIMARY,
+                layout.scale,
+            );
+            draw_text(
+                renderer,
+                &row_text.detail,
+                viewport,
+                row.origin.x + 102.0 * layout.scale,
+                row.origin.y + 29.0 * layout.scale,
+                color::TEXT_MUTED,
+            );
+            draw_text(
+                renderer,
+                &row_text.meta,
+                viewport,
+                row.right() - row_text.meta.size.x - 14.0 * layout.scale,
+                row.origin.y + 8.0 * layout.scale,
+                Color::rgba(0.46, 0.70, 0.76, 0.88),
             );
         }
     }
@@ -1997,6 +2139,60 @@ impl GameMenuScene {
                         16.0,
                     )?,
                 ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        self.text.activity_log_header = Some(upload_text(
+            renderer,
+            font,
+            "game_menu_activity_log_header",
+            activity_log_header(language),
+            22.0,
+        )?);
+        self.text.activity_log_empty = Some(upload_text(
+            renderer,
+            font,
+            "game_menu_activity_log_empty",
+            activity_log_empty(language),
+            16.0,
+        )?);
+        self.text.activity_log_rows = self
+            .activity_log_snapshot
+            .iter()
+            .rev()
+            .take(ACTIVITY_LOG_VISIBLE_ROWS)
+            .enumerate()
+            .map(|(index, entry)| {
+                Ok(ActivityLogRowText {
+                    category: upload_text(
+                        renderer,
+                        font,
+                        &format!("game_menu_activity_category_{index}"),
+                        activity_category_label(&entry.category, language),
+                        14.0,
+                    )?,
+                    title: upload_text(
+                        renderer,
+                        font,
+                        &format!("game_menu_activity_title_{index}"),
+                        &short_activity_text(&entry.title, 28),
+                        17.0,
+                    )?,
+                    detail: upload_text(
+                        renderer,
+                        font,
+                        &format!("game_menu_activity_detail_{index}"),
+                        &short_activity_text(&entry.detail, 58),
+                        14.0,
+                    )?,
+                    meta: upload_text(
+                        renderer,
+                        font,
+                        &format!("game_menu_activity_meta_{index}"),
+                        &activity_log_meta(entry, language),
+                        13.0,
+                    )?,
+                    category_key: entry.category.clone(),
+                })
             })
             .collect::<Result<Vec<_>>>()?;
         self.text.settings_language = Some(upload_text(
@@ -2530,6 +2726,44 @@ fn wrap_text(text: &str, max_chars: usize, max_lines: usize) -> Vec<String> {
 fn non_empty_or<'a>(value: &'a str, fallback: &'a str) -> &'a str {
     let value = value.trim();
     if value.is_empty() { fallback } else { value }
+}
+
+fn short_activity_text(text: &str, max_chars: usize) -> String {
+    let trimmed = text.trim();
+    let count = trimmed.chars().count();
+    if count <= max_chars {
+        return trimmed.to_owned();
+    }
+
+    let mut shortened = trimmed
+        .chars()
+        .take(max_chars.saturating_sub(3))
+        .collect::<String>();
+    shortened.push_str("...");
+    shortened
+}
+
+fn activity_log_meta(entry: &ActivityLogEntrySave, language: Language) -> String {
+    let scene = if entry.scene.trim().is_empty() {
+        "-"
+    } else {
+        entry.scene.as_str()
+    };
+    let prefix = match language {
+        Language::Chinese => "记录",
+        Language::English => "Log",
+    };
+    format!("{prefix} #{:03} · {scene}", entry.sequence)
+}
+
+fn activity_category_color(category: &str) -> Color {
+    match category {
+        "pickup" => Color::rgba(0.06, 0.34, 0.22, 0.88),
+        "scan" => Color::rgba(0.07, 0.28, 0.42, 0.88),
+        "unlock" => Color::rgba(0.30, 0.20, 0.48, 0.88),
+        "status" => Color::rgba(0.42, 0.24, 0.08, 0.88),
+        _ => Color::rgba(0.16, 0.24, 0.28, 0.88),
+    }
 }
 
 fn draw_crystal_glyph(renderer: &mut dyn Renderer, viewport: Vec2, rect: Rect, scale: f32) {
@@ -3725,6 +3959,9 @@ mod tests {
         for language in Language::SUPPORTED {
             assert!(!menu_status(language).is_empty());
             assert!(!close_hint(language).is_empty());
+            assert!(!activity_log_header(language).is_empty());
+            assert!(!activity_log_empty(language).is_empty());
+            assert!(!activity_category_label("scan", language).is_empty());
             assert!(!language_setting_label(language).is_empty());
             assert!(!settings_hint(language).is_empty());
             assert!(!top_location_value(language).is_empty());

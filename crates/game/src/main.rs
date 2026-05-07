@@ -141,7 +141,7 @@ impl Game for AlienArchiveApp {
     }
 
     fn render(&mut self, renderer: &mut dyn Renderer) -> Result<()> {
-        self.scenes.render(renderer)
+        self.scenes.render(&self.context, renderer)
     }
 
     fn camera(&self) -> Camera2d {

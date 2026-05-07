@@ -82,13 +82,14 @@ impl Player {
         Ok(())
     }
 
-    pub fn update_topdown(
+    pub fn update_topdown_with_speed(
         &mut self,
         dt: f32,
         input: &InputState,
         solid_rects: impl IntoIterator<Item = Rect>,
+        speed_multiplier: f32,
     ) {
-        self.update_topdown_movement(dt, input.movement(), solid_rects);
+        self.update_topdown_movement(dt, input.movement(), solid_rects, speed_multiplier);
     }
 
     pub fn tick_animation(&mut self, dt: f32) {
@@ -137,10 +138,11 @@ impl Player {
         dt: f32,
         movement: Vec2,
         solid_rects: impl IntoIterator<Item = Rect>,
+        speed_multiplier: f32,
     ) {
         let solid_rects = solid_rects.into_iter().collect::<Vec<_>>();
         let movement = movement.normalized();
-        let delta = movement * PLAYER_SPEED * dt;
+        let delta = movement * PLAYER_SPEED * speed_multiplier.clamp(0.35, 1.25) * dt;
 
         self.move_topdown_axis(Vec2::new(delta.x, 0.0), &solid_rects);
         self.move_topdown_axis(Vec2::new(0.0, delta.y), &solid_rects);
@@ -305,7 +307,7 @@ mod tests {
         let solid = Rect::new(Vec2::new(20.0, -16.0), Vec2::new(32.0, 32.0));
         let mut player = Player::new(Vec2::ZERO);
 
-        player.update_topdown_movement(0.2, Vec2::new(1.0, 0.0), [solid]);
+        player.update_topdown_movement(0.2, Vec2::new(1.0, 0.0), [solid], 1.0);
 
         assert_eq!(
             player.position,
@@ -318,7 +320,7 @@ mod tests {
         let solid = Rect::new(Vec2::new(20.0, -16.0), Vec2::new(32.0, 32.0));
         let mut player = Player::new(Vec2::ZERO);
 
-        player.update_topdown_movement(0.2, Vec2::new(1.0, 1.0), [solid]);
+        player.update_topdown_movement(0.2, Vec2::new(1.0, 1.0), [solid], 1.0);
 
         assert_eq!(
             player.position.x,

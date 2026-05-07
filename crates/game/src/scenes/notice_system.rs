@@ -50,6 +50,10 @@ impl NoticeState {
         self.push(inventory_full_message(language), NoticeTone::Warning);
     }
 
+    pub(super) fn push_stamina_low(&mut self, language: Language) {
+        self.push(stamina_low_message(language), NoticeTone::Warning);
+    }
+
     pub(super) fn push_locked_unlock_rule(
         &mut self,
         language: Language,
@@ -184,6 +188,13 @@ fn inventory_full_message(language: Language) -> String {
     }
 }
 
+fn stamina_low_message(language: Language) -> String {
+    match language {
+        Language::Chinese => "体力不足，无法跳跃".to_owned(),
+        Language::English => "Stamina too low to jump".to_owned(),
+    }
+}
+
 fn generic_locked_message(language: Language) -> String {
     match language {
         Language::Chinese => "通路尚未解锁".to_owned(),
@@ -257,6 +268,7 @@ mod tests {
             locked_rule_message(Language::Chinese, None, Some("遗迹钥匙")),
             "需要物品：遗迹钥匙"
         );
+        assert_eq!(stamina_low_message(Language::Chinese), "体力不足，无法跳跃");
         assert!(scan_complete_message(Language::Chinese, "终端").contains("扫描完成"));
     }
 }

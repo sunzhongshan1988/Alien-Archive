@@ -19,6 +19,13 @@ pub enum Button {
     Profile,
     Confirm,
     Pause,
+    DebugOverlay,
+    QuickSlot1,
+    QuickSlot2,
+    QuickSlot3,
+    QuickSlot4,
+    QuickSlot5,
+    QuickSlot6,
 }
 
 #[derive(Default)]
@@ -133,7 +140,30 @@ fn key_to_buttons(code: KeyCode) -> &'static [Button] {
         KeyCode::KeyC => &[Button::Profile],
         KeyCode::Enter => &[Button::Confirm],
         KeyCode::Escape => &[Button::Pause],
+        KeyCode::F3 => &[Button::DebugOverlay],
+        KeyCode::Digit1 => &[Button::QuickSlot1],
+        KeyCode::Digit2 => &[Button::QuickSlot2],
+        KeyCode::Digit3 => &[Button::QuickSlot3],
+        KeyCode::Digit4 => &[Button::QuickSlot4],
+        KeyCode::Digit5 => &[Button::QuickSlot5],
+        KeyCode::Digit6 => &[Button::QuickSlot6],
         KeyCode::Space => &[Button::Scan, Button::Confirm],
         _ => &[],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn f3_maps_to_debug_overlay_toggle() {
+        assert_eq!(key_to_buttons(KeyCode::F3), &[Button::DebugOverlay]);
+    }
+
+    #[test]
+    fn digit_keys_map_to_quickbar_slots() {
+        assert_eq!(key_to_buttons(KeyCode::Digit1), &[Button::QuickSlot1]);
+        assert_eq!(key_to_buttons(KeyCode::Digit6), &[Button::QuickSlot6]);
     }
 }

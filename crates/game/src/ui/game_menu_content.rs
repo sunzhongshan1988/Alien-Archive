@@ -91,7 +91,7 @@ pub fn tab_label(tab: GameMenuTab, language: Language) -> &'static str {
             GameMenuTab::Inventory => "背包",
             GameMenuTab::Codex => "图鉴",
             GameMenuTab::Map => "地图",
-            GameMenuTab::Quests => "任务",
+            GameMenuTab::Quests => "日志",
             GameMenuTab::Settings => "设置",
         },
         Language::English => match tab {
@@ -99,7 +99,7 @@ pub fn tab_label(tab: GameMenuTab, language: Language) -> &'static str {
             GameMenuTab::Inventory => "Inventory",
             GameMenuTab::Codex => "Codex",
             GameMenuTab::Map => "Map",
-            GameMenuTab::Quests => "Quests",
+            GameMenuTab::Quests => "Log",
             GameMenuTab::Settings => "Settings",
         },
     }
@@ -112,7 +112,7 @@ pub fn tab_sublabel(tab: GameMenuTab, language: Language) -> &'static str {
             GameMenuTab::Inventory => "物资管理",
             GameMenuTab::Codex => "发现记录",
             GameMenuTab::Map => "区域路线",
-            GameMenuTab::Quests => "目标追踪",
+            GameMenuTab::Quests => "外勤记录",
             GameMenuTab::Settings => "系统偏好",
         },
         Language::English => match tab {
@@ -120,7 +120,7 @@ pub fn tab_sublabel(tab: GameMenuTab, language: Language) -> &'static str {
             GameMenuTab::Inventory => "Storage",
             GameMenuTab::Codex => "Discoveries",
             GameMenuTab::Map => "Routes",
-            GameMenuTab::Quests => "Objectives",
+            GameMenuTab::Quests => "Field Log",
             GameMenuTab::Settings => "Preferences",
         },
     }
@@ -133,7 +133,7 @@ pub fn tab_title(tab: GameMenuTab, language: Language) -> &'static str {
             GameMenuTab::Inventory => "背包",
             GameMenuTab::Codex => "异星图鉴",
             GameMenuTab::Map => "区域地图",
-            GameMenuTab::Quests => "任务日志",
+            GameMenuTab::Quests => "外勤日志",
             GameMenuTab::Settings => "设置",
         },
         Language::English => match tab {
@@ -141,7 +141,7 @@ pub fn tab_title(tab: GameMenuTab, language: Language) -> &'static str {
             GameMenuTab::Inventory => "Inventory",
             GameMenuTab::Codex => "Alien Codex",
             GameMenuTab::Map => "Region Map",
-            GameMenuTab::Quests => "Quest Log",
+            GameMenuTab::Quests => "Field Log",
             GameMenuTab::Settings => "Settings",
         },
     }
@@ -154,7 +154,7 @@ pub fn tab_subtitle(tab: GameMenuTab, language: Language) -> &'static str {
             GameMenuTab::Inventory => "管理样本、消耗品、工具与关键物品",
             GameMenuTab::Codex => "追踪已发现的生物、矿物和遗迹资料",
             GameMenuTab::Map => "确认探索路线、入口和未调查区域",
-            GameMenuTab::Quests => "查看当前目标和外勤进度",
+            GameMenuTab::Quests => "查看最近扫描、拾取、解锁和状态变化",
             GameMenuTab::Settings => "调整语言与游戏内菜单偏好",
         },
         Language::English => match tab {
@@ -162,7 +162,9 @@ pub fn tab_subtitle(tab: GameMenuTab, language: Language) -> &'static str {
             GameMenuTab::Inventory => "Manage samples, consumables, tools, and key items",
             GameMenuTab::Codex => "Track discovered organisms, minerals, and ruin records",
             GameMenuTab::Map => "Check routes, entrances, and unsurveyed sectors",
-            GameMenuTab::Quests => "Review active objectives and field progress",
+            GameMenuTab::Quests => {
+                "Review recent scans, pickups, access checks, and status changes"
+            }
             GameMenuTab::Settings => "Adjust language and in-game menu preferences",
         },
     }
@@ -179,6 +181,37 @@ pub fn close_hint(language: Language) -> &'static str {
     match language {
         Language::Chinese => "Esc 关闭",
         Language::English => "Esc Close",
+    }
+}
+
+pub fn activity_log_header(language: Language) -> &'static str {
+    match language {
+        Language::Chinese => "最近外勤记录",
+        Language::English => "Recent Field Activity",
+    }
+}
+
+pub fn activity_log_empty(language: Language) -> &'static str {
+    match language {
+        Language::Chinese => "还没有外勤记录。扫描、拾取、解锁和状态变化会显示在这里。",
+        Language::English => {
+            "No field activity yet. Scans, pickups, access checks, and status changes appear here."
+        }
+    }
+}
+
+pub fn activity_category_label(category: &str, language: Language) -> &'static str {
+    match (language, category) {
+        (Language::Chinese, "pickup") => "拾取",
+        (Language::Chinese, "scan") => "扫描",
+        (Language::Chinese, "unlock") => "解锁",
+        (Language::Chinese, "status") => "状态",
+        (Language::English, "pickup") => "Pickup",
+        (Language::English, "scan") => "Scan",
+        (Language::English, "unlock") => "Access",
+        (Language::English, "status") => "Status",
+        (Language::Chinese, _) => "系统",
+        (Language::English, _) => "System",
     }
 }
 
