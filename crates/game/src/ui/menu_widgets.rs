@@ -89,12 +89,13 @@ pub fn draw_screen_rect(renderer: &mut dyn Renderer, viewport: Vec2, rect: Rect,
 }
 
 pub fn screen_rect(viewport: Vec2, rect: Rect) -> Rect {
+    let left = rect.origin.x.round();
+    let top = rect.origin.y.round();
+    let right = rect.right().round();
+    let bottom = rect.bottom().round();
     Rect::new(
-        Vec2::new(
-            -viewport.x * 0.5 + rect.origin.x,
-            -viewport.y * 0.5 + rect.origin.y,
-        ),
-        rect.size,
+        Vec2::new(left - viewport.x * 0.5, top - viewport.y * 0.5),
+        Vec2::new((right - left).max(0.0), (bottom - top).max(0.0)),
     )
 }
 

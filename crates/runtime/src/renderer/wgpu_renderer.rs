@@ -127,12 +127,14 @@ impl ImageVertex {
 
 #[derive(Clone, Copy)]
 struct RectCommand {
+    camera: Camera2d,
     rect: Rect,
     color: Color,
 }
 
 #[derive(Clone)]
 struct ImageCommand {
+    camera: Camera2d,
     texture_id: String,
     rect: Rect,
     source: Option<Rect>,
@@ -497,10 +499,12 @@ impl WgpuRenderer {
             command.color.a,
         ];
 
-        let top_left = self.world_to_clip(rect.origin);
-        let top_right = self.world_to_clip(Vec2::new(rect.right(), rect.origin.y));
-        let bottom_right = self.world_to_clip(Vec2::new(rect.right(), rect.bottom()));
-        let bottom_left = self.world_to_clip(Vec2::new(rect.origin.x, rect.bottom()));
+        let top_left = self.world_to_clip(command.camera, rect.origin);
+        let top_right = self.world_to_clip(command.camera, Vec2::new(rect.right(), rect.origin.y));
+        let bottom_right =
+            self.world_to_clip(command.camera, Vec2::new(rect.right(), rect.bottom()));
+        let bottom_left =
+            self.world_to_clip(command.camera, Vec2::new(rect.origin.x, rect.bottom()));
 
         [
             RectVertex {
@@ -551,10 +555,10 @@ impl WgpuRenderer {
 
         let [top_left, top_right, bottom_right, bottom_left] =
             transformed_rect_points(rect, command.rotation);
-        let top_left = self.world_to_clip(top_left);
-        let top_right = self.world_to_clip(top_right);
-        let bottom_right = self.world_to_clip(bottom_right);
-        let bottom_left = self.world_to_clip(bottom_left);
+        let top_left = self.world_to_clip(command.camera, top_left);
+        let top_right = self.world_to_clip(command.camera, top_right);
+        let bottom_right = self.world_to_clip(command.camera, bottom_right);
+        let bottom_left = self.world_to_clip(command.camera, bottom_left);
 
         [
             ImageVertex {
@@ -590,10 +594,10 @@ impl WgpuRenderer {
         ]
     }
 
-    fn world_to_clip(&self, point: Vec2) -> [f32; 2] {
+    fn world_to_clip(&self, camera: Camera2d, point: Vec2) -> [f32; 2] {
         let width = self.config.width as f32;
         let height = self.config.height as f32;
-        let relative = (point - self.camera.position) * self.camera.zoom;
+        let relative = (point - camera.position) * camera.zoom;
         let screen = Vec2::new(relative.x + width * 0.5, relative.y + height * 0.5);
 
         [
@@ -707,13 +711,21 @@ impl Renderer for WgpuRenderer {
         Vec2::new(self.config.width as f32, self.config.height as f32)
     }
 
+    fn set_camera(&mut self, camera: Camera2d) {
+        self.camera = camera;
+    }
+
     fn draw_rect(&mut self, rect: Rect, color: Color) {
-        self.commands
-            .push(RenderCommand::Rect(RectCommand { rect, color }));
+        self.commands.push(RenderCommand::Rect(RectCommand {
+            camera: self.camera,
+            rect,
+            color,
+        }));
     }
 
     fn draw_image(&mut self, texture_id: &str, rect: Rect, tint: Color) {
         self.commands.push(RenderCommand::Image(ImageCommand {
+            camera: self.camera,
             texture_id: texture_id.to_owned(),
             rect,
             source: None,
@@ -732,6 +744,7 @@ impl Renderer for WgpuRenderer {
         rotation: i32,
     ) {
         self.commands.push(RenderCommand::Image(ImageCommand {
+            camera: self.camera,
             texture_id: texture_id.to_owned(),
             rect,
             source: None,
@@ -743,6 +756,7 @@ impl Renderer for WgpuRenderer {
 
     fn draw_image_region(&mut self, texture_id: &str, rect: Rect, source: Rect, tint: Color) {
         self.commands.push(RenderCommand::Image(ImageCommand {
+            camera: self.camera,
             texture_id: texture_id.to_owned(),
             rect,
             source: Some(source),

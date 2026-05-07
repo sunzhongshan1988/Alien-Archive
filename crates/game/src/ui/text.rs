@@ -170,10 +170,7 @@ fn font_candidates() -> Vec<PathBuf> {
 
 fn screen_rect(viewport: Vec2, x: f32, y: f32, width: f32, height: f32) -> Rect {
     Rect::new(
-        Vec2::new(
-            (-viewport.x * 0.5 + x).round(),
-            (-viewport.y * 0.5 + y).round(),
-        ),
+        Vec2::new(x.round() - viewport.x * 0.5, y.round() - viewport.y * 0.5),
         Vec2::new(width, height),
     )
 }

@@ -229,7 +229,7 @@ pub mod color {
     use runtime::Color;
 
     pub const TRANSPARENT_IMAGE: Color = Color::rgba(1.0, 1.0, 1.0, 1.0);
-    pub const SCREEN_OVERLAY: Color = Color::rgba(0.0, 0.0, 0.0, 0.70);
+    pub const SCREEN_OVERLAY: Color = Color::rgba(0.0, 0.0, 0.0, 0.35);
 
     pub const ROOT_FILL: Color = Color::rgba(0.013, 0.021, 0.030, 0.96);
     pub const ROOT_BORDER: Color = Color::rgba(0.24, 0.42, 0.54, 0.92);

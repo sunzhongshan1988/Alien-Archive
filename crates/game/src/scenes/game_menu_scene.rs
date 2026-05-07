@@ -145,7 +145,7 @@ impl GameMenuScene {
             viewport,
             skin::ROOT,
             layout.root,
-            Color::rgba(1.0, 1.0, 1.0, 0.98),
+            Color::rgba(1.0, 1.0, 1.0, 1.0),
         );
         if !root_textured {
             draw_screen_rect(renderer, viewport, layout.root, color::ROOT_FILL);

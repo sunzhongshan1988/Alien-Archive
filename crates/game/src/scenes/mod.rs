@@ -182,20 +182,50 @@ impl SceneStack {
     }
 
     pub fn render(&mut self, renderer: &mut dyn Renderer) -> Result<()> {
-        self.setup_current(renderer)?;
-
-        let Some(current) = self.stack.last_mut() else {
+        if self.stack.is_empty() {
             return Ok(());
-        };
+        }
 
+        let top_index = self.stack.len() - 1;
+        if top_index > 0 && is_overlay_scene(self.stack[top_index].scene.id()) {
+            let (base_scenes, overlay_scenes) = self.stack.split_at_mut(top_index);
+            let base = &mut base_scenes[top_index - 1];
+            let overlay = &mut overlay_scenes[0];
+
+            if !base.setup_complete {
+                base.scene.setup(renderer)?;
+                base.setup_complete = true;
+            }
+            if !overlay.setup_complete {
+                overlay.scene.setup(renderer)?;
+                overlay.setup_complete = true;
+            }
+
+            renderer.set_camera(base.scene.camera());
+            base.scene.render(&mut RenderContext { renderer })?;
+            renderer.set_camera(overlay.scene.camera());
+            overlay.scene.render(&mut RenderContext { renderer })?;
+            return Ok(());
+        }
+
+        let current = &mut self.stack[top_index];
+        if !current.setup_complete {
+            current.scene.setup(renderer)?;
+            current.setup_complete = true;
+        }
+        renderer.set_camera(current.scene.camera());
         current.scene.render(&mut RenderContext { renderer })
     }
 
     pub fn camera(&self) -> Camera2d {
-        self.stack
-            .last()
-            .map(|scene| scene.scene.camera())
-            .unwrap_or_default()
+        let Some(current) = self.stack.last() else {
+            return Camera2d::default();
+        };
+        if self.stack.len() > 1 && is_overlay_scene(current.scene.id()) {
+            return self.stack[self.stack.len() - 2].scene.camera();
+        }
+
+        current.scene.camera()
     }
 
     fn apply_command(
@@ -227,6 +257,10 @@ impl SceneStack {
 
         Ok(())
     }
+}
+
+fn is_overlay_scene(scene_id: SceneId) -> bool {
+    matches!(scene_id, SceneId::GameMenu | SceneId::Pause)
 }
 
 fn create_scene(scene_id: SceneId, ctx: &GameContext) -> Result<Box<dyn Scene>> {
