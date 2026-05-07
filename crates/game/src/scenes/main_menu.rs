@@ -3,6 +3,10 @@ use std::path::Path;
 use anyhow::Result;
 use runtime::{Button, Color, InputState, Rect, Renderer, SceneCommand, Vec2};
 
+use crate::ui::menu_style::{self, icon, skin};
+use crate::ui::menu_widgets::{
+    contain_rect, draw_border, draw_screen_rect, draw_texture_nine_slice, screen_rect as ui_rect,
+};
 use crate::ui::text::{TextSprite, draw_text, draw_text_centered, load_ui_font, upload_text};
 
 use super::{GameContext, Language, RenderContext, Scene, SceneId};
@@ -10,11 +14,11 @@ use super::{GameContext, Language, RenderContext, Scene, SceneId};
 const BACKGROUND_TEXTURE_ID: &str = "main_menu_background";
 const BACKGROUND_PATH: &str = "assets/images/startup/startup_background.png";
 const FADE_TIME: f32 = 0.55;
-const MENU_PANEL_WIDTH: f32 = 560.0;
-const MENU_PANEL_HEIGHT: f32 = 400.0;
-const MENU_ITEM_WIDTH: f32 = 320.0;
-const MENU_ITEM_HEIGHT: f32 = 54.0;
-const MENU_ITEM_GAP: f32 = 18.0;
+const MENU_PANEL_WIDTH: f32 = 620.0;
+const MENU_PANEL_HEIGHT: f32 = 440.0;
+const MENU_ITEM_WIDTH: f32 = 360.0;
+const MENU_ITEM_HEIGHT: f32 = 64.0;
+const MENU_ITEM_GAP: f32 = 14.0;
 const SETTINGS_ITEM_HEIGHT: f32 = 60.0;
 const SETTINGS_CHOICE_WIDTH: f32 = 128.0;
 const SETTINGS_CHOICE_HEIGHT: f32 = 46.0;
@@ -123,32 +127,11 @@ impl MainMenuScene {
         );
         ctx.renderer.draw_rect(
             screen_rect(Vec2::ZERO, viewport, 0.0, 0.0, viewport.x, viewport.y),
-            Color::rgba(0.0, 0.0, 0.0, 0.18),
+            Color::rgba(0.0, 0.0, 0.0, 0.28),
         );
 
         let panel_rect = self.menu_panel_rect(viewport);
-        ctx.renderer.draw_rect(
-            screen_rect(
-                Vec2::ZERO,
-                viewport,
-                panel_rect.origin.x,
-                panel_rect.origin.y,
-                panel_rect.size.x,
-                panel_rect.size.y,
-            ),
-            Color::rgba(0.015, 0.020, 0.035, 0.62),
-        );
-        ctx.renderer.draw_rect(
-            screen_rect(
-                Vec2::ZERO,
-                viewport,
-                panel_rect.origin.x + 72.0,
-                panel_rect.origin.y + 126.0,
-                panel_rect.size.x - 144.0,
-                2.0,
-            ),
-            Color::rgba(0.32, 0.86, 1.0, 0.88),
-        );
+        self.draw_main_panel(ctx.renderer, viewport, panel_rect);
 
         if let Some(title) = &self.text.title {
             draw_text_centered(
@@ -156,7 +139,14 @@ impl MainMenuScene {
                 title,
                 viewport,
                 panel_rect.origin.x + panel_rect.size.x * 0.5,
-                panel_rect.origin.y + 44.0,
+                centered_text_y(
+                    Rect::new(
+                        Vec2::new(panel_rect.origin.x, panel_rect.origin.y + 48.0),
+                        Vec2::new(panel_rect.size.x, 78.0),
+                    ),
+                    title,
+                    0.0,
+                ),
                 Color::rgba(0.78, 0.96, 1.0, 1.0),
             );
         }
@@ -167,46 +157,60 @@ impl MainMenuScene {
         }
     }
 
+    fn draw_main_panel(&self, renderer: &mut dyn Renderer, viewport: Vec2, panel: Rect) {
+        let textured = draw_texture_nine_slice(
+            renderer,
+            viewport,
+            skin::PANEL,
+            panel,
+            46.0,
+            28.0,
+            Color::rgba(1.0, 1.0, 1.0, 0.96),
+        );
+        if !textured {
+            draw_screen_rect(
+                renderer,
+                viewport,
+                panel,
+                Color::rgba(0.015, 0.020, 0.035, 0.78),
+            );
+            draw_border(
+                renderer,
+                viewport,
+                panel,
+                1.0,
+                Color::rgba(0.16, 0.52, 0.62, 0.86),
+            );
+        }
+
+        let logo = Rect::new(
+            Vec2::new(panel.origin.x + 44.0, panel.origin.y + 36.0),
+            Vec2::new(72.0, 72.0),
+        );
+        if let Some(image_size) = renderer.texture_size(icon::BRAND_CRYSTAL) {
+            renderer.draw_image(
+                icon::BRAND_CRYSTAL,
+                ui_rect(viewport, contain_rect(logo, image_size)),
+                Color::rgba(1.0, 1.0, 1.0, 0.96),
+            );
+        }
+
+        draw_screen_rect(
+            renderer,
+            viewport,
+            Rect::new(
+                Vec2::new(panel.origin.x + 72.0, panel.origin.y + 134.0),
+                Vec2::new(panel.size.x - 144.0, 2.0),
+            ),
+            Color::rgba(0.32, 0.86, 1.0, 0.68),
+        );
+    }
+
     fn draw_main_items(&self, ctx: &mut RenderContext<'_>, viewport: Vec2) {
         for (index, text) in self.text.main_items.iter().enumerate() {
             let item_rect = self.menu_item_rect(viewport, index);
             let is_selected = self.page == MenuPage::Main && index == self.selected_index;
-
-            if is_selected {
-                ctx.renderer.draw_rect(
-                    screen_rect(
-                        Vec2::ZERO,
-                        viewport,
-                        item_rect.origin.x,
-                        item_rect.origin.y,
-                        item_rect.size.x,
-                        item_rect.size.y,
-                    ),
-                    Color::rgba(0.07, 0.46, 0.70, 0.68),
-                );
-                ctx.renderer.draw_rect(
-                    screen_rect(
-                        Vec2::ZERO,
-                        viewport,
-                        item_rect.origin.x + 16.0,
-                        item_rect.origin.y + 15.0,
-                        6.0,
-                        24.0,
-                    ),
-                    Color::rgba(0.65, 1.0, 0.88, 1.0),
-                );
-                ctx.renderer.draw_rect(
-                    screen_rect(
-                        Vec2::ZERO,
-                        viewport,
-                        item_rect.origin.x,
-                        item_rect.origin.y + item_rect.size.y - 2.0,
-                        item_rect.size.x,
-                        2.0,
-                    ),
-                    Color::rgba(0.32, 0.86, 1.0, 0.85),
-                );
-            }
+            draw_menu_button(ctx.renderer, viewport, item_rect, is_selected);
 
             let color = if is_selected {
                 Color::rgba(0.94, 1.0, 0.98, 1.0)
@@ -219,7 +223,7 @@ impl MainMenuScene {
                 text,
                 viewport,
                 item_rect.origin.x + item_rect.size.x * 0.5,
-                item_rect.origin.y + 8.0,
+                centered_text_y(item_rect, text, 0.0),
                 color,
             );
         }
@@ -234,7 +238,14 @@ impl MainMenuScene {
                 title,
                 viewport,
                 panel_rect.origin.x + panel_rect.size.x * 0.5,
-                panel_rect.origin.y + 146.0,
+                centered_text_y(
+                    Rect::new(
+                        Vec2::new(panel_rect.origin.x, panel_rect.origin.y + 136.0),
+                        Vec2::new(panel_rect.size.x, 48.0),
+                    ),
+                    title,
+                    0.0,
+                ),
                 Color::rgba(0.78, 0.96, 1.0, 0.98),
             );
         }
@@ -243,7 +254,9 @@ impl MainMenuScene {
         let language_selected = self.page == MenuPage::Settings
             && SETTINGS_ITEMS[self.selected_index] == SettingsItem::Language;
         if language_selected {
-            self.draw_selection_bar(ctx, viewport, language_rect);
+            draw_menu_button(ctx.renderer, viewport, language_rect, true);
+        } else {
+            draw_menu_button(ctx.renderer, viewport, language_rect, false);
         }
 
         if let Some(label) = &self.text.language_label {
@@ -252,7 +265,7 @@ impl MainMenuScene {
                 label,
                 viewport,
                 language_rect.origin.x + 24.0,
-                language_rect.origin.y + 11.0,
+                centered_text_y(language_rect, label, 0.0),
                 if language_selected {
                     Color::rgba(0.92, 1.0, 0.98, 1.0)
                 } else {
@@ -264,34 +277,7 @@ impl MainMenuScene {
         for (index, language) in Language::SUPPORTED.iter().copied().enumerate() {
             let choice_rect = self.language_choice_rect(viewport, index);
             let active = self.language == language;
-            ctx.renderer.draw_rect(
-                screen_rect(
-                    Vec2::ZERO,
-                    viewport,
-                    choice_rect.origin.x,
-                    choice_rect.origin.y,
-                    choice_rect.size.x,
-                    choice_rect.size.y,
-                ),
-                if active {
-                    Color::rgba(0.08, 0.44, 0.60, 0.88)
-                } else {
-                    Color::rgba(0.025, 0.07, 0.10, 0.76)
-                },
-            );
-            if active {
-                ctx.renderer.draw_rect(
-                    screen_rect(
-                        Vec2::ZERO,
-                        viewport,
-                        choice_rect.origin.x,
-                        choice_rect.origin.y + choice_rect.size.y - 2.0,
-                        choice_rect.size.x,
-                        2.0,
-                    ),
-                    Color::rgba(0.65, 1.0, 0.88, 1.0),
-                );
-            }
+            draw_language_button(ctx.renderer, viewport, choice_rect, active);
 
             if let Some(text) = self.text.language_values.get(index) {
                 draw_text_centered(
@@ -299,7 +285,7 @@ impl MainMenuScene {
                     text,
                     viewport,
                     choice_rect.origin.x + choice_rect.size.x * 0.5,
-                    choice_rect.origin.y + 7.0,
+                    centered_text_y(choice_rect, text, 0.0),
                     if active {
                         Color::rgba(0.94, 1.0, 0.98, 1.0)
                     } else {
@@ -312,9 +298,7 @@ impl MainMenuScene {
         let back_rect = self.settings_item_rect(viewport, 1);
         let back_selected = self.page == MenuPage::Settings
             && SETTINGS_ITEMS[self.selected_index] == SettingsItem::Back;
-        if back_selected {
-            self.draw_selection_bar(ctx, viewport, back_rect);
-        }
+        draw_menu_button(ctx.renderer, viewport, back_rect, back_selected);
 
         if let Some(back) = &self.text.back {
             draw_text_centered(
@@ -322,7 +306,7 @@ impl MainMenuScene {
                 back,
                 viewport,
                 back_rect.origin.x + back_rect.size.x * 0.5,
-                back_rect.origin.y + 10.0,
+                centered_text_y(back_rect, back, 0.0),
                 if back_selected {
                     Color::rgba(0.94, 1.0, 0.98, 1.0)
                 } else {
@@ -330,31 +314,6 @@ impl MainMenuScene {
                 },
             );
         }
-    }
-
-    fn draw_selection_bar(&self, ctx: &mut RenderContext<'_>, viewport: Vec2, rect: Rect) {
-        ctx.renderer.draw_rect(
-            screen_rect(
-                Vec2::ZERO,
-                viewport,
-                rect.origin.x,
-                rect.origin.y,
-                rect.size.x,
-                rect.size.y,
-            ),
-            Color::rgba(0.07, 0.46, 0.70, 0.56),
-        );
-        ctx.renderer.draw_rect(
-            screen_rect(
-                Vec2::ZERO,
-                viewport,
-                rect.origin.x,
-                rect.origin.y + rect.size.y - 2.0,
-                rect.size.x,
-                2.0,
-            ),
-            Color::rgba(0.32, 0.86, 1.0, 0.85),
-        );
     }
 
     fn menu_panel_rect(&self, viewport: Vec2) -> Rect {
@@ -512,6 +471,7 @@ impl Scene for MainMenuScene {
 
     fn setup(&mut self, renderer: &mut dyn Renderer) -> Result<()> {
         renderer.load_texture(BACKGROUND_TEXTURE_ID, Path::new(BACKGROUND_PATH))?;
+        load_menu_textures(renderer)?;
         self.upload_textures(renderer)
     }
 
@@ -655,6 +615,91 @@ fn screen_point_in_rect(point: Vec2, rect: Rect) -> bool {
         && point.x <= rect.right()
         && point.y >= rect.origin.y
         && point.y <= rect.bottom()
+}
+
+fn load_menu_textures(renderer: &mut dyn Renderer) -> Result<()> {
+    for texture in menu_style::TEXTURES {
+        if renderer.texture_size(texture.texture_id).is_none() {
+            renderer.load_texture(texture.texture_id, Path::new(texture.path))?;
+        }
+    }
+
+    Ok(())
+}
+
+fn draw_menu_button(renderer: &mut dyn Renderer, viewport: Vec2, rect: Rect, selected: bool) {
+    let texture_id = if selected {
+        skin::NAV_ACTIVE
+    } else {
+        skin::NAV_IDLE
+    };
+    let textured = draw_texture_nine_slice(
+        renderer,
+        viewport,
+        texture_id,
+        rect,
+        42.0,
+        18.0,
+        Color::rgba(1.0, 1.0, 1.0, if selected { 0.96 } else { 0.82 }),
+    );
+    if !textured {
+        draw_screen_rect(
+            renderer,
+            viewport,
+            rect,
+            if selected {
+                Color::rgba(0.07, 0.46, 0.70, 0.68)
+            } else {
+                Color::rgba(0.015, 0.045, 0.058, 0.68)
+            },
+        );
+        draw_border(
+            renderer,
+            viewport,
+            rect,
+            1.0,
+            if selected {
+                Color::rgba(0.52, 0.96, 1.0, 0.92)
+            } else {
+                Color::rgba(0.12, 0.27, 0.35, 0.86)
+            },
+        );
+    }
+}
+
+fn draw_language_button(renderer: &mut dyn Renderer, viewport: Vec2, rect: Rect, active: bool) {
+    let texture_id = if active {
+        skin::NAV_ACTIVE
+    } else {
+        skin::LANGUAGE_TOGGLE
+    };
+    let textured = draw_texture_nine_slice(
+        renderer,
+        viewport,
+        texture_id,
+        rect,
+        46.0,
+        16.0,
+        Color::rgba(1.0, 1.0, 1.0, if active { 0.96 } else { 0.82 }),
+    );
+    if !textured {
+        draw_screen_rect(
+            renderer,
+            viewport,
+            rect,
+            if active {
+                Color::rgba(0.08, 0.44, 0.60, 0.88)
+            } else {
+                Color::rgba(0.025, 0.07, 0.10, 0.76)
+            },
+        );
+    }
+}
+
+fn centered_text_y(rect: Rect, text: &TextSprite, y_offset: f32) -> f32 {
+    let text_padding = 8.0;
+    let visual_height = (text.size.y - text_padding * 2.0).max(0.0);
+    rect.origin.y + (rect.size.y - visual_height) * 0.5 + y_offset - text_padding
 }
 
 fn main_title(language: Language) -> &'static str {

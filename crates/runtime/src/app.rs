@@ -92,7 +92,7 @@ impl<G> RuntimeApp<G> {
         let attributes = Window::default_attributes()
             .with_title(self.title.clone())
             .with_inner_size(LogicalSize::new(1280.0, 720.0))
-            .with_min_inner_size(LogicalSize::new(640.0, 360.0));
+            .with_min_inner_size(LogicalSize::new(1280.0, 720.0));
         let window = match event_loop.create_window(attributes) {
             Ok(window) => window,
             Err(error) => {
