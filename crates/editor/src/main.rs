@@ -6,6 +6,7 @@ mod dialogs;
 mod inspector;
 mod native_menu;
 mod panels;
+mod terrain;
 mod tools;
 mod ui;
 mod util;
@@ -52,6 +53,7 @@ use eframe::egui::{
     self, Color32, Context as EguiContext, Key, Modifiers, Pos2, Rect, Sense, Shape, Stroke,
     StrokeKind, Vec2, vec2,
 };
+use terrain::{TerrainMask, TerrainRules};
 use tools::ToolKind;
 use ui::asset_grid::{asset_grid_columns, asset_list_row, asset_tile};
 use ui::buttons::editor_icon_button;
@@ -139,6 +141,7 @@ impl EditorApp {
             tool: ToolKind::Brush,
             ground_footprint_w: 4,
             ground_footprint_h: 4,
+            terrain_autotile: true,
             collision_brush_w: 1,
             collision_brush_h: 1,
             rectangle_erase_mode: false,
@@ -1587,6 +1590,11 @@ impl EditorApp {
                             .prefix("H "),
                     );
                 });
+                toolbar_centered(ui, vec2(86.0, 26.0), |ui| {
+                    ui.checkbox(&mut self.terrain_autotile, "自动接边")
+                })
+                .inner
+                .on_hover_text("刷地、矩形填充或擦除后，自动重算周围同族地形素材");
             } else if self.active_layer == LayerKind::Collision || self.tool == ToolKind::Collision
             {
                 ui.separator();

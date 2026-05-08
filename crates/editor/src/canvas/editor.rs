@@ -56,7 +56,12 @@ impl EditorApp {
             self.mouse_tile = None;
         }
 
-        self.draw_ground_footprint_preview(rect, &painter);
+        self.draw_brush_preview(
+            rect,
+            &painter,
+            response.hover_pos(),
+            ctx.input(|input| input.modifiers),
+        );
         self.draw_rectangle_preview(rect, &painter);
         self.draw_zone_draft(rect, &painter, response.hover_pos());
         self.draw_selection_marquee(&painter);
@@ -253,8 +258,16 @@ impl EditorApp {
         }
 
         if self.tool == ToolKind::Erase {
+            let [width, height] = if self.active_layer == LayerKind::Collision {
+                self.clamped_collision_brush_at(tile_x, tile_y)
+            } else {
+                self.clamped_ground_footprint_at(tile_x, tile_y)
+            };
             self.push_undo_snapshot();
             self.erase_brush_at(tile_x, tile_y);
+            if self.active_layer == LayerKind::Ground {
+                self.autotile_ground_near_rect(tile_x, tile_y, width, height);
+            }
             self.mark_dirty();
             self.status = format!("Erased {}, {}", tile_x, tile_y);
             return;
@@ -280,6 +293,7 @@ impl EditorApp {
             self.push_undo_snapshot();
             let filled = self.bucket_fill_ground(tile_x, tile_y, &asset_id);
             if filled > 0 {
+                self.autotile_all_ground();
                 self.mark_dirty();
             }
             self.status = format!("油漆桶填充 {} 格", filled);
@@ -304,6 +318,7 @@ impl EditorApp {
             LayerKind::Ground => {
                 let [width, height] = self.selected_ground_footprint_at(tile_x, tile_y);
                 self.paint_ground_brush(tile_x, tile_y, &asset_id);
+                self.autotile_ground_near_rect(tile_x, tile_y, width, height);
                 Some([width, height])
             }
             LayerKind::Decals => {
@@ -700,6 +715,7 @@ impl EditorApp {
                         }
                     }
                 }
+                self.autotile_ground_near_rect(min_x, min_y, max_x - min_x + 1, max_y - min_y + 1);
                 self.status = format!(
                     "矩形{}: {}x{}",
                     if self.rectangle_erase_mode {
@@ -810,6 +826,132 @@ impl EditorApp {
         }
 
         filled
+    }
+
+    pub(crate) fn autotile_all_ground(&mut self) -> usize {
+        if !self.terrain_autotile {
+            return 0;
+        }
+        let rules = TerrainRules::from_assets(self.registry.assets());
+        if rules.is_empty() {
+            return 0;
+        }
+        let anchors = self
+            .document
+            .layers
+            .ground
+            .iter()
+            .map(|tile| (tile.x, tile.y))
+            .collect::<Vec<_>>();
+        self.autotile_ground_anchors(&rules, anchors)
+    }
+
+    pub(crate) fn autotile_ground_near_rect(&mut self, x: i32, y: i32, w: i32, h: i32) -> usize {
+        if !self.terrain_autotile {
+            return 0;
+        }
+        let rules = TerrainRules::from_assets(self.registry.assets());
+        if rules.is_empty() {
+            return 0;
+        }
+        let min_x = x.saturating_sub(1);
+        let min_y = y.saturating_sub(1);
+        let max_x = (x + w.max(1)).min(self.document.width as i32);
+        let max_y = (y + h.max(1)).min(self.document.height as i32);
+        let anchors = self
+            .document
+            .layers
+            .ground
+            .iter()
+            .filter(|tile| tile_intersects_rect(tile, min_x, min_y, max_x, max_y))
+            .map(|tile| (tile.x, tile.y))
+            .collect::<Vec<_>>();
+
+        self.autotile_ground_anchors(&rules, anchors)
+    }
+
+    fn autotile_ground_anchors(
+        &mut self,
+        rules: &TerrainRules,
+        mut anchors: Vec<(i32, i32)>,
+    ) -> usize {
+        anchors.sort_unstable();
+        anchors.dedup();
+
+        let mut changed = 0;
+        for (x, y) in anchors {
+            changed += usize::from(self.autotile_ground_at_anchor(rules, x, y));
+        }
+        changed
+    }
+
+    fn autotile_ground_at_anchor(&mut self, rules: &TerrainRules, x: i32, y: i32) -> bool {
+        let Some(tile) = self
+            .document
+            .layers
+            .ground
+            .iter()
+            .find(|tile| tile.x == x && tile.y == y)
+            .cloned()
+        else {
+            return false;
+        };
+        let Some(family) = rules.family_for_asset(&tile.asset) else {
+            return false;
+        };
+        let mask = TerrainMask {
+            north: self.same_terrain_at_side(rules, family, &tile, DirectionSide::North),
+            east: self.same_terrain_at_side(rules, family, &tile, DirectionSide::East),
+            south: self.same_terrain_at_side(rules, family, &tile, DirectionSide::South),
+            west: self.same_terrain_at_side(rules, family, &tile, DirectionSide::West),
+        };
+        let Some(choice) = rules.choice_for(&tile.asset, mask) else {
+            return false;
+        };
+        if choice.asset_id == tile.asset && choice.rotation == tile.rotation {
+            return false;
+        }
+
+        let Some(target) = self
+            .document
+            .layers
+            .ground
+            .iter_mut()
+            .find(|target| target.x == x && target.y == y)
+        else {
+            return false;
+        };
+        target.asset = choice.asset_id;
+        target.rotation = choice.rotation;
+        true
+    }
+
+    fn same_terrain_at_side(
+        &self,
+        rules: &TerrainRules,
+        family: &str,
+        tile: &content::TileInstance,
+        side: DirectionSide,
+    ) -> bool {
+        let width = tile.w.max(1);
+        let height = tile.h.max(1);
+        let [x, y] = match side {
+            DirectionSide::North => [tile.x + width / 2, tile.y - 1],
+            DirectionSide::East => [tile.x + width, tile.y + height / 2],
+            DirectionSide::South => [tile.x + width / 2, tile.y + height],
+            DirectionSide::West => [tile.x - 1, tile.y + height / 2],
+        };
+        if x < 0 || y < 0 || x >= self.document.width as i32 || y >= self.document.height as i32 {
+            return false;
+        }
+
+        self.document
+            .layers
+            .ground
+            .iter()
+            .rev()
+            .find(|candidate| tile_contains_cell(candidate, x, y))
+            .is_some_and(|candidate| rules.same_family(&candidate.asset, family))
     }
 
     pub(crate) fn ground_asset_at_cell(&self, x: i32, y: i32) -> Option<String> {
@@ -1883,7 +2025,7 @@ impl EditorApp {
         if let Some(rect) =
             self.object_screen_rect_scaled(canvas_rect, asset_id, x, y, scale_x, scale_y)
         {
-            self.draw_asset_image(painter, asset_id, rect, flip_x, rotation);
+            self.draw_asset_image_tinted(painter, asset_id, rect, flip_x, rotation, Color32::WHITE);
         }
     }
 
@@ -1972,18 +2114,27 @@ impl EditorApp {
         flip_x: bool,
         rotation: i32,
     ) {
+        self.draw_asset_image_tinted(painter, asset_id, rect, flip_x, rotation, Color32::WHITE);
+    }
+
+    pub(crate) fn draw_asset_image_tinted(
+        &self,
+        painter: &egui::Painter,
+        asset_id: &str,
+        rect: Rect,
+        flip_x: bool,
+        rotation: i32,
+        tint: Color32,
+    ) {
         if let Some(texture) = self.thumbnails.get(asset_id) {
             let image_rect = fit_centered_rect(rect, texture.size_vec2());
-            paint_transformed_image(
-                painter,
-                texture.id(),
-                image_rect,
-                flip_x,
-                rotation,
-                Color32::WHITE,
-            );
+            paint_transformed_image(painter, texture.id(), image_rect, flip_x, rotation, tint);
         } else {
-            painter.rect_filled(rect, 1.0, Color32::from_rgb(68, 72, 64));
+            painter.rect_filled(
+                rect,
+                1.0,
+                Color32::from_rgba_unmultiplied(68, 72, 64, tint.a()),
+            );
         }
     }
 
@@ -2216,41 +2367,327 @@ impl EditorApp {
         }
     }
 
-    pub(crate) fn draw_ground_footprint_preview(&self, canvas_rect: Rect, painter: &egui::Painter) {
+    pub(crate) fn draw_brush_preview(
+        &self,
+        canvas_rect: Rect,
+        painter: &egui::Painter,
+        hover_pos: Option<Pos2>,
+        modifiers: Modifiers,
+    ) {
         if !matches!(
-            (self.active_layer, self.tool),
-            (LayerKind::Ground, ToolKind::Brush | ToolKind::Rectangle)
-                | (
-                    LayerKind::Collision,
-                    ToolKind::Brush | ToolKind::Rectangle | ToolKind::Collision
-                )
+            self.tool,
+            ToolKind::Brush | ToolKind::Rectangle | ToolKind::Erase | ToolKind::Collision
         ) {
             return;
         }
-        if self.active_layer == LayerKind::Ground && self.selected_asset.is_none() {
+
+        if self.tool == ToolKind::Rectangle && self.rectangle_drag_start.is_some() {
             return;
         }
-        let Some([x, y]) = self.mouse_tile else {
+
+        let Some(hover_pos) = hover_pos else {
             return;
         };
 
-        let [width, height] = if self.active_layer == LayerKind::Collision {
-            self.clamped_collision_brush_at(x, y)
+        let preview_layer = if self.tool == ToolKind::Collision {
+            LayerKind::Collision
         } else {
-            self.clamped_ground_footprint_at(x, y)
+            self.active_layer
         };
+
+        if preview_layer == LayerKind::Zones {
+            return;
+        };
+
+        let Some([x, y]) = self.screen_to_tile(canvas_rect, hover_pos) else {
+            self.draw_canvas_hover_label(painter, hover_pos, THEME_ERROR, "地图外");
+            return;
+        };
+
+        match preview_layer {
+            LayerKind::Ground | LayerKind::Collision => {
+                self.draw_tile_brush_preview(canvas_rect, painter, preview_layer, x, y);
+            }
+            LayerKind::Decals | LayerKind::Objects | LayerKind::Entities => {
+                if self.tool == ToolKind::Erase {
+                    self.draw_object_erase_preview(canvas_rect, painter, preview_layer, x, y);
+                } else {
+                    self.draw_asset_placement_preview(
+                        canvas_rect,
+                        painter,
+                        preview_layer,
+                        hover_pos,
+                        modifiers,
+                    );
+                }
+            }
+            LayerKind::Zones => {}
+        }
+    }
+
+    fn draw_tile_brush_preview(
+        &self,
+        canvas_rect: Rect,
+        painter: &egui::Painter,
+        layer: LayerKind,
+        x: i32,
+        y: i32,
+    ) {
+        let mut warnings = Vec::new();
+        if self.layer_state(layer).locked {
+            warnings.push(format!("{} 已锁定", layer.zh_label()));
+        }
+
+        let selected_asset = self.selected_asset();
+        if layer == LayerKind::Ground && self.tool != ToolKind::Erase && selected_asset.is_none() {
+            let rect = self.tile_screen_rect(canvas_rect, x, y, 1, 1);
+            self.paint_preview_rect(painter, rect, THEME_WARNING, true);
+            self.draw_canvas_hover_label(
+                painter,
+                rect.right_top(),
+                THEME_WARNING,
+                "先选择地表素材",
+            );
+            return;
+        }
+
+        if let Some(asset) = selected_asset.filter(|_| layer == LayerKind::Ground) {
+            warnings.extend(self.asset_placement_warnings(asset, layer));
+        }
+
+        let desired = match layer {
+            LayerKind::Collision => [self.collision_brush_w.max(1), self.collision_brush_h.max(1)],
+            LayerKind::Ground if self.tool == ToolKind::Erase => [
+                self.ground_footprint_w.max(1),
+                self.ground_footprint_h.max(1),
+            ],
+            LayerKind::Ground => selected_asset
+                .map(|asset| self.asset_tile_footprint(asset))
+                .unwrap_or([
+                    self.ground_footprint_w.max(1),
+                    self.ground_footprint_h.max(1),
+                ]),
+            _ => [1, 1],
+        };
+        let clamped = match layer {
+            LayerKind::Collision => self.clamped_collision_brush_at(x, y),
+            LayerKind::Ground if self.tool == ToolKind::Erase => {
+                self.clamped_ground_footprint_at(x, y)
+            }
+            LayerKind::Ground => selected_asset
+                .map(|asset| self.clamped_tile_footprint_at(asset, x, y))
+                .unwrap_or_else(|| self.clamped_ground_footprint_at(x, y)),
+            _ => [1, 1],
+        };
+
+        if desired != clamped {
+            warnings.push(format!(
+                "边界裁切 {}x{} -> {}x{}",
+                desired[0], desired[1], clamped[0], clamped[1]
+            ));
+        }
+
+        let [width, height] = clamped;
         let rect = self.tile_screen_rect(canvas_rect, x, y, width, height);
-        let color = if self.active_layer == LayerKind::Collision {
+        let color = if self.layer_state(layer).locked {
+            THEME_ERROR
+        } else if !warnings.is_empty() {
+            THEME_WARNING
+        } else if layer == LayerKind::Collision {
             THEME_COLLISION
         } else {
             THEME_ACCENT
         };
+        self.paint_preview_rect(painter, rect, color, !warnings.is_empty());
+
+        if layer == LayerKind::Ground && self.tool != ToolKind::Erase {
+            if let Some(asset) = selected_asset {
+                self.draw_asset_image_tinted(
+                    painter,
+                    &asset.id,
+                    rect,
+                    false,
+                    0,
+                    Color32::from_rgba_unmultiplied(255, 255, 255, 150),
+                );
+                painter.rect_stroke(rect, 0.0, Stroke::new(2.0, color), StrokeKind::Inside);
+            }
+        }
+
+        if !warnings.is_empty() {
+            self.draw_canvas_hover_label(painter, rect.right_top(), color, &warnings.join("\n"));
+        }
+    }
+
+    fn draw_asset_placement_preview(
+        &self,
+        canvas_rect: Rect,
+        painter: &egui::Painter,
+        layer: LayerKind,
+        hover_pos: Pos2,
+        modifiers: Modifiers,
+    ) {
+        let Some(asset) = self.selected_asset() else {
+            self.draw_canvas_hover_label(painter, hover_pos, THEME_WARNING, "先选择素材");
+            return;
+        };
+        let Some(raw_pos) = self.screen_to_map_position(canvas_rect, hover_pos) else {
+            return;
+        };
+        let place_pos = self.snapped_map_position(raw_pos, Some(asset), modifiers);
+        let Some(rect) = self.object_screen_rect_scaled(
+            canvas_rect,
+            &asset.id,
+            place_pos[0],
+            place_pos[1],
+            1.0,
+            1.0,
+        ) else {
+            return;
+        };
+
+        let mut warnings = self.asset_placement_warnings(asset, layer);
+        let map_rect = self.map_screen_rect(canvas_rect);
+        if !map_rect.contains(rect.min) || !map_rect.contains(rect.max) {
+            warnings.push("图像超出地图边界".to_owned());
+        }
+
+        let color = if self.layer_state(layer).locked {
+            THEME_ERROR
+        } else if !warnings.is_empty() {
+            THEME_WARNING
+        } else {
+            THEME_ACCENT
+        };
+        let tile_x = place_pos[0].floor() as i32;
+        let tile_y = place_pos[1].floor() as i32;
+        if let Some([width, height]) = self.asset_preview_footprint(asset) {
+            let footprint = self.tile_screen_rect(canvas_rect, tile_x, tile_y, width, height);
+            self.paint_preview_rect(painter, footprint, color, !warnings.is_empty());
+        } else {
+            let anchor_cell = self.tile_screen_rect(canvas_rect, tile_x, tile_y, 1, 1);
+            painter.rect_stroke(
+                anchor_cell,
+                0.0,
+                Stroke::new(
+                    1.0,
+                    Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 150),
+                ),
+                StrokeKind::Inside,
+            );
+        }
+
+        let tint = if warnings.is_empty() {
+            Color32::from_rgba_unmultiplied(255, 255, 255, 155)
+        } else {
+            Color32::from_rgba_unmultiplied(255, 232, 190, 140)
+        };
+        self.draw_asset_image_tinted(painter, &asset.id, rect, false, 0, tint);
+        painter.rect_stroke(
+            rect.expand(2.0),
+            2.0,
+            Stroke::new(2.0, color),
+            StrokeKind::Inside,
+        );
+
+        if !warnings.is_empty() {
+            self.draw_canvas_hover_label(painter, rect.right_top(), color, &warnings.join("\n"));
+        }
+    }
+
+    fn draw_object_erase_preview(
+        &self,
+        canvas_rect: Rect,
+        painter: &egui::Painter,
+        layer: LayerKind,
+        x: i32,
+        y: i32,
+    ) {
+        let rect = self.tile_screen_rect(canvas_rect, x, y, 1, 1);
+        let locked = self.layer_state(layer).locked;
+        let color = if locked { THEME_ERROR } else { THEME_WARNING };
+        self.paint_preview_rect(painter, rect, color, locked);
+        if locked {
+            self.draw_canvas_hover_label(
+                painter,
+                rect.right_top(),
+                color,
+                &format!("{} 已锁定", layer.zh_label()),
+            );
+        }
+    }
+
+    fn paint_preview_rect(
+        &self,
+        painter: &egui::Painter,
+        rect: Rect,
+        color: Color32,
+        warning: bool,
+    ) {
+        let alpha = if warning { 46 } else { 32 };
         painter.rect_filled(
             rect,
             0.0,
-            Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 32),
+            Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha),
         );
         painter.rect_stroke(rect, 0.0, Stroke::new(2.0, color), StrokeKind::Inside);
+    }
+
+    fn draw_canvas_hover_label(
+        &self,
+        painter: &egui::Painter,
+        anchor: Pos2,
+        color: Color32,
+        text: &str,
+    ) {
+        let pos = anchor + vec2(10.0, 10.0);
+        let font = egui::TextStyle::Small.resolve(&egui::Style::default());
+        painter.text(
+            pos + vec2(1.0, 1.0),
+            egui::Align2::LEFT_TOP,
+            text,
+            font.clone(),
+            Color32::from_rgba_unmultiplied(0, 0, 0, 180),
+        );
+        painter.text(pos, egui::Align2::LEFT_TOP, text, font, color);
+    }
+
+    fn asset_placement_warnings(&self, asset: &AssetEntry, layer: LayerKind) -> Vec<String> {
+        let mut warnings = Vec::new();
+        if self.layer_state(layer).locked {
+            warnings.push(format!("{} 已锁定", layer.zh_label()));
+        }
+        if let Some(expected) = expected_asset_kind_for_layer(layer) {
+            if asset.kind != expected {
+                warnings.push(format!(
+                    "素材类型是{}，当前层需要{}",
+                    asset.kind.zh_label(),
+                    expected.zh_label()
+                ));
+            }
+        }
+        if asset.default_layer != layer {
+            warnings.push(format!("素材默认层是{}", asset.default_layer.zh_label()));
+        }
+        warnings
+    }
+
+    fn asset_preview_footprint(&self, asset: &AssetEntry) -> Option<[i32; 2]> {
+        asset
+            .footprint
+            .or_else(|| infer_tile_footprint(asset.default_size, self.document.tile_size))
+            .filter(|[width, height]| *width > 1 || *height > 1)
+    }
+
+    fn map_screen_rect(&self, canvas_rect: Rect) -> Rect {
+        let tile_size = self.document.tile_size as f32;
+        Rect::from_min_size(
+            self.world_to_screen(canvas_rect, vec2(0.0, 0.0)),
+            vec2(
+                self.document.width as f32 * tile_size,
+                self.document.height as f32 * tile_size,
+            ) * self.zoom,
+        )
     }
 
     pub(crate) fn draw_rectangle_preview(&self, canvas_rect: Rect, painter: &egui::Painter) {
@@ -2432,4 +2869,40 @@ impl EditorApp {
             SnapMode::Free => [raw[0], raw[1]],
         }
     }
+}
+
+fn expected_asset_kind_for_layer(layer: LayerKind) -> Option<AssetKind> {
+    match layer {
+        LayerKind::Ground => Some(AssetKind::Tile),
+        LayerKind::Decals => Some(AssetKind::Decal),
+        LayerKind::Objects => Some(AssetKind::Object),
+        LayerKind::Entities => Some(AssetKind::Entity),
+        LayerKind::Zones | LayerKind::Collision => None,
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum DirectionSide {
+    North,
+    East,
+    South,
+    West,
+}
+
+fn tile_intersects_rect(
+    tile: &content::TileInstance,
+    min_x: i32,
+    min_y: i32,
+    max_x: i32,
+    max_y: i32,
+) -> bool {
+    let tile_max_x = tile.x + tile.w.max(1);
+    let tile_max_y = tile.y + tile.h.max(1);
+    tile.x < max_x && tile_max_x > min_x && tile.y < max_y && tile_max_y > min_y
+}
+
+fn tile_contains_cell(tile: &content::TileInstance, x: i32, y: i32) -> bool {
+    let width = tile.w.max(1);
+    let height = tile.h.max(1);
+    x >= tile.x && x < tile.x + width && y >= tile.y && y < tile.y + height
 }
