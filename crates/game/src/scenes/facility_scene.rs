@@ -161,6 +161,13 @@ impl Scene for FacilityScene {
             return Ok(SceneCommand::Push(SceneId::GameMenu));
         }
 
+        if input.just_pressed(Button::UseQuickItem) {
+            let result = ctx.use_selected_quickbar_item();
+            self.notice
+                .push_quick_item_use_result(ctx.language, &result);
+            return Ok(SceneCommand::None);
+        }
+
         if input.just_pressed(Button::Interact) {
             if self.try_collect_pickup(ctx) {
                 return Ok(SceneCommand::None);

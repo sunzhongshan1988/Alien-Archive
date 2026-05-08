@@ -20,6 +20,7 @@ pub enum Button {
     Confirm,
     Pause,
     DebugOverlay,
+    UseQuickItem,
     QuickSlot1,
     QuickSlot2,
     QuickSlot3,
@@ -141,6 +142,7 @@ fn key_to_buttons(code: KeyCode) -> &'static [Button] {
         KeyCode::Enter => &[Button::Confirm],
         KeyCode::Escape => &[Button::Pause],
         KeyCode::F3 => &[Button::DebugOverlay],
+        KeyCode::KeyQ => &[Button::UseQuickItem],
         KeyCode::Digit1 => &[Button::QuickSlot1],
         KeyCode::Digit2 => &[Button::QuickSlot2],
         KeyCode::Digit3 => &[Button::QuickSlot3],
@@ -165,5 +167,10 @@ mod tests {
     fn digit_keys_map_to_quickbar_slots() {
         assert_eq!(key_to_buttons(KeyCode::Digit1), &[Button::QuickSlot1]);
         assert_eq!(key_to_buttons(KeyCode::Digit6), &[Button::QuickSlot6]);
+    }
+
+    #[test]
+    fn q_maps_to_quick_item_use() {
+        assert_eq!(key_to_buttons(KeyCode::KeyQ), &[Button::UseQuickItem]);
     }
 }

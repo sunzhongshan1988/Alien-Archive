@@ -22,7 +22,7 @@ const HUD_QUICK_SLOT_SELECTED: &str = "hud.quick_slot_selected";
 const HUD_TEXTURES: &[(&str, &str)] = &[
     (
         HUD_PLAYER_PANEL,
-        "assets/images/ui/hud/hud_player_panel.png",
+        "assets/images/ui/hud/hud_player_panel_1.png",
     ),
     (
         HUD_PLAYER_AVATAR,
@@ -42,13 +42,13 @@ const HUD_TEXTURES: &[(&str, &str)] = &[
     ),
 ];
 
-const PLAYER_PANEL_SOURCE: Vec2 = Vec2::new(1678.0, 454.0);
+const PLAYER_PANEL_SOURCE: Vec2 = Vec2::new(1064.0, 592.0);
 const PLAYER_PANEL_CROP: Rect = Rect::new(Vec2::new(0.0, 0.0), PLAYER_PANEL_SOURCE);
 const QUICKBAR_DOCK_SOURCE: Vec2 = Vec2::new(1024.0, 240.0);
 const QUICKBAR_SLOT_SOURCE_SIZE: f32 = 118.0;
 const QUICKBAR_SLOT_CENTERS_X: [f32; QUICKBAR_SLOTS] = [138.0, 300.0, 452.0, 603.0, 750.0, 895.5];
 
-const PLAYER_PANEL_BASE_WIDTH: f32 = 760.0;
+const PLAYER_PANEL_BASE_WIDTH: f32 = 620.0;
 const QUICKBAR_BASE_WIDTH: f32 = 540.0;
 
 #[derive(Default)]
@@ -160,7 +160,7 @@ impl FieldHud {
         let portrait_frame = source_rect(
             layout.player_panel,
             PLAYER_PANEL_SOURCE,
-            Rect::new(Vec2::new(58.0, 74.0), Vec2::new(332.0, 332.0)),
+            Rect::new(Vec2::new(54.0, 28.0), Vec2::new(336.0, 336.0)),
         );
         let portrait = inset_rect(
             portrait_frame,
@@ -197,21 +197,6 @@ impl FieldHud {
                 Color::rgba(0.78, 0.97, 1.0, 0.94),
             );
         }
-
-        for meter_index in 0..4 {
-            let Some(text) = self.status_lines.get(3 + meter_index) else {
-                continue;
-            };
-            let rect = meter_source_rect(layout.player_panel, meter_index);
-            draw_text(
-                renderer,
-                text,
-                viewport,
-                rect.origin.x + 6.0 * panel_scale,
-                rect.origin.y - 26.0 * panel_scale,
-                Color::rgba(0.68, 0.88, 0.92, 0.94),
-            );
-        }
     }
 
     fn draw_time_weather_text(
@@ -222,22 +207,32 @@ impl FieldHud {
     ) {
         let panel_scale = layout.player_panel.size.x / PLAYER_PANEL_SOURCE.x;
         if let Some(time) = self.status_lines.get(1) {
+            let rect = source_rect(
+                layout.player_panel,
+                PLAYER_PANEL_SOURCE,
+                Rect::new(Vec2::new(48.0, 390.0), Vec2::new(336.0, 64.0)),
+            );
             draw_text(
                 renderer,
                 time,
                 viewport,
-                layout.player_panel.origin.x + 1325.0 * panel_scale,
-                layout.player_panel.origin.y + 110.0 * panel_scale,
+                rect.origin.x + 30.0 * panel_scale,
+                rect.origin.y + (rect.size.y - time.size.y).max(0.0) * 0.5,
                 Color::rgba(0.82, 1.0, 0.96, 0.96),
             );
         }
         if let Some(weather) = self.status_lines.get(2) {
+            let rect = source_rect(
+                layout.player_panel,
+                PLAYER_PANEL_SOURCE,
+                Rect::new(Vec2::new(48.0, 484.0), Vec2::new(336.0, 64.0)),
+            );
             draw_text(
                 renderer,
                 weather,
                 viewport,
-                layout.player_panel.origin.x + 1268.0 * panel_scale,
-                layout.player_panel.origin.y + 294.0 * panel_scale,
+                rect.origin.x + 30.0 * panel_scale,
+                rect.origin.y + (rect.size.y - weather.size.y).max(0.0) * 0.5,
                 Color::rgba(0.52, 0.84, 0.90, 0.92),
             );
         }
@@ -250,8 +245,10 @@ impl FieldHud {
         ctx: &GameContext,
         layout: &HudLayout,
     ) {
-        for (index, meter_id) in ["health", "stamina", "suit", "load"].iter().enumerate() {
-            let rect = meter_source_rect(layout.player_panel, index);
+        for (index, meter_id) in ["health", "suit", "stamina", "load"].iter().enumerate() {
+            let mut rect = meter_source_rect(layout.player_panel, index);
+            rect.origin.x -= 2.0;
+            rect.origin.y -= 2.0;
             draw_segmented_fill(
                 renderer,
                 viewport,
@@ -416,7 +413,7 @@ impl FieldHud {
                     line,
                     match index {
                         0 => 15.0,
-                        1 | 2 => 13.0,
+                        1 | 2 => 16.0,
                         _ => 12.0,
                     },
                 )
@@ -477,15 +474,7 @@ fn status_lines(ctx: &GameContext, scene_id: SceneId) -> Vec<String> {
         scene_label(scene_id, language).to_owned(),
         field_time_label(ctx.save_data.world.field_time_minutes),
         weather_label(&ctx.save_data.world.weather, language).to_owned(),
-        meter_line(ctx, "health", language),
-        meter_line(ctx, "stamina", language),
-        meter_line(ctx, "suit", language),
-        meter_line(ctx, "load", language),
     ]
-}
-
-fn meter_line(ctx: &GameContext, id: &str, language: Language) -> String {
-    format!("{} {}", meter_label(id, language), meter_text(ctx, id))
 }
 
 fn quickbar_counts(ctx: &GameContext) -> Vec<Option<String>> {
@@ -555,28 +544,6 @@ fn weather_label(weather: &str, language: Language) -> &'static str {
         (_, Language::Chinese) => "未知天气",
         (_, Language::English) => "Unknown",
     }
-}
-
-fn meter_label(id: &str, language: Language) -> &'static str {
-    match (id, language) {
-        ("health", Language::Chinese) => "生命",
-        ("stamina", Language::Chinese) => "体力",
-        ("suit", Language::Chinese) => "外骨骼",
-        ("load", Language::Chinese) => "负重",
-        ("health", Language::English) => "HP",
-        ("stamina", Language::English) => "STA",
-        ("suit", Language::English) => "Suit",
-        ("load", Language::English) => "Load",
-        _ => "Meter",
-    }
-}
-
-fn meter_text(ctx: &GameContext, id: &str) -> String {
-    ctx.save_data
-        .profile
-        .meter(id)
-        .map(|meter| format!("{}/{}", meter.value, meter.max))
-        .unwrap_or_else(|| "-".to_owned())
 }
 
 fn meter_ratio(ctx: &GameContext, id: &str) -> f32 {
@@ -708,10 +675,10 @@ fn draw_item_fallback(renderer: &mut dyn Renderer, viewport: Vec2, rect: Rect, c
 
 fn meter_source_rect(panel: Rect, index: usize) -> Rect {
     let source = match index {
-        0 => Rect::new(Vec2::new(548.0, 72.0), Vec2::new(560.0, 26.0)),
-        1 => Rect::new(Vec2::new(548.0, 164.0), Vec2::new(560.0, 26.0)),
-        2 => Rect::new(Vec2::new(548.0, 254.0), Vec2::new(560.0, 26.0)),
-        _ => Rect::new(Vec2::new(548.0, 343.0), Vec2::new(560.0, 26.0)),
+        0 => Rect::new(Vec2::new(590.0, 122.0), Vec2::new(386.0, 18.0)),
+        1 => Rect::new(Vec2::new(590.0, 240.0), Vec2::new(386.0, 18.0)),
+        2 => Rect::new(Vec2::new(590.0, 356.0), Vec2::new(386.0, 18.0)),
+        _ => Rect::new(Vec2::new(590.0, 472.0), Vec2::new(386.0, 18.0)),
     };
     source_rect(panel, PLAYER_PANEL_SOURCE, source)
 }

@@ -166,7 +166,7 @@ const ITEM_DEFINITIONS: &[ItemDefinition] = &[
     ItemDefinition {
         id: "energy_cell",
         name: LocalizedText::new("Energy Cell", "能量电池"),
-        category: ItemCategory::Components,
+        category: ItemCategory::Consumables,
         texture_id: "item_energy_cell",
         icon_path: "assets/images/ui/inventory/items/item_energy_cell.png",
         max_stack: 20,
@@ -221,7 +221,7 @@ const ITEM_DEFINITIONS: &[ItemDefinition] = &[
     ItemDefinition {
         id: "coolant_canister",
         name: LocalizedText::new("Coolant Canister", "冷却罐"),
-        category: ItemCategory::Components,
+        category: ItemCategory::Consumables,
         texture_id: "item_coolant_canister",
         icon_path: "assets/images/ui/inventory/items/item_coolant_canister.png",
         max_stack: 10,

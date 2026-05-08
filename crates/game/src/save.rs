@@ -307,6 +307,25 @@ impl InventorySave {
 
         quantity - remaining
     }
+
+    pub fn consume_slot(&mut self, slot_index: usize, quantity: u32) -> bool {
+        let Some(slot) = self.slots.get_mut(slot_index) else {
+            return false;
+        };
+        let Some(stack) = slot else {
+            return false;
+        };
+        if quantity == 0 {
+            return false;
+        }
+
+        if stack.quantity > quantity {
+            stack.quantity -= quantity;
+        } else {
+            *slot = None;
+        }
+        true
+    }
 }
 
 impl Default for InventorySave {

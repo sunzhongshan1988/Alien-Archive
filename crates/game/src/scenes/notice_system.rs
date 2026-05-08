@@ -9,7 +9,7 @@ use crate::ui::{
 };
 use crate::world::MapUnlockRule;
 
-use super::{Language, inventory_scene};
+use super::{Language, QuickItemUseResult, inventory_scene, profile_meter_label};
 
 const NOTICE_TIME: f32 = 2.35;
 const NOTICE_WIDTH_MIN: f32 = 300.0;
@@ -52,6 +52,45 @@ impl NoticeState {
 
     pub(super) fn push_stamina_low(&mut self, language: Language) {
         self.push(stamina_low_message(language), NoticeTone::Warning);
+    }
+
+    pub(super) fn push_quick_item_use_result(
+        &mut self,
+        language: Language,
+        result: &QuickItemUseResult,
+    ) {
+        match result {
+            QuickItemUseResult::Empty => {
+                self.push(quick_item_empty_message(language), NoticeTone::Warning);
+            }
+            QuickItemUseResult::NotUsable { item_id } => {
+                let item_name = inventory_scene::inventory_item_name(item_id, language);
+                self.push(
+                    quick_item_not_usable_message(language, &item_name),
+                    NoticeTone::Warning,
+                );
+            }
+            QuickItemUseResult::AlreadyFull { item_id, meter_id } => {
+                let item_name = inventory_scene::inventory_item_name(item_id, language);
+                let meter_name = profile_meter_label(meter_id, language);
+                self.push(
+                    quick_item_full_message(language, &item_name, meter_name),
+                    NoticeTone::Info,
+                );
+            }
+            QuickItemUseResult::Used {
+                item_id,
+                meter_id,
+                amount,
+            } => {
+                let item_name = inventory_scene::inventory_item_name(item_id, language);
+                let meter_name = profile_meter_label(meter_id, language);
+                self.push(
+                    quick_item_used_message(language, &item_name, meter_name, *amount),
+                    NoticeTone::Success,
+                );
+            }
+        }
     }
 
     pub(super) fn push_locked_unlock_rule(
@@ -195,6 +234,39 @@ fn stamina_low_message(language: Language) -> String {
     }
 }
 
+fn quick_item_empty_message(language: Language) -> String {
+    match language {
+        Language::Chinese => "当前快捷槽为空".to_owned(),
+        Language::English => "Selected quick slot is empty".to_owned(),
+    }
+}
+
+fn quick_item_not_usable_message(language: Language, item_name: &str) -> String {
+    match language {
+        Language::Chinese => format!("{item_name} 不能直接使用"),
+        Language::English => format!("{item_name} cannot be used directly"),
+    }
+}
+
+fn quick_item_full_message(language: Language, item_name: &str, meter_name: &str) -> String {
+    match language {
+        Language::Chinese => format!("{meter_name} 已满，无需使用 {item_name}"),
+        Language::English => format!("{meter_name} is full; {item_name} not used"),
+    }
+}
+
+fn quick_item_used_message(
+    language: Language,
+    item_name: &str,
+    meter_name: &str,
+    amount: u32,
+) -> String {
+    match language {
+        Language::Chinese => format!("使用 {item_name}，{meter_name} +{amount}"),
+        Language::English => format!("Used {item_name}: {meter_name} +{amount}"),
+    }
+}
+
 fn generic_locked_message(language: Language) -> String {
     match language {
         Language::Chinese => "通路尚未解锁".to_owned(),
@@ -269,6 +341,10 @@ mod tests {
             "需要物品：遗迹钥匙"
         );
         assert_eq!(stamina_low_message(Language::Chinese), "体力不足，无法跳跃");
+        assert_eq!(
+            quick_item_used_message(Language::Chinese, "医疗注射器", "生命", 35),
+            "使用 医疗注射器，生命 +35"
+        );
         assert!(scan_complete_message(Language::Chinese, "终端").contains("扫描完成"));
     }
 }

@@ -46,6 +46,7 @@ const LOG_CATEGORY_PICKUP: &str = "pickup";
 const LOG_CATEGORY_SCAN: &str = "scan";
 const LOG_CATEGORY_UNLOCK: &str = "unlock";
 const LOG_CATEGORY_STATUS: &str = "status";
+const LOG_CATEGORY_ITEM: &str = "item";
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -152,6 +153,23 @@ impl Default for FieldStatusEffects {
             movement_speed_multiplier: 1.0,
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum QuickItemUseResult {
+    Empty,
+    NotUsable {
+        item_id: String,
+    },
+    AlreadyFull {
+        item_id: String,
+        meter_id: String,
+    },
+    Used {
+        item_id: String,
+        meter_id: &'static str,
+        amount: u32,
+    },
 }
 
 #[derive(Default)]
@@ -337,6 +355,13 @@ impl GameContext {
             .map_or(0, |meter| meter.value)
     }
 
+    pub fn profile_meter_max(&self, id: &str) -> u32 {
+        self.save_data
+            .profile
+            .meter(id)
+            .map_or(0, |meter| meter.max)
+    }
+
     pub fn select_quickbar_slot(&mut self, quick_index: usize) -> bool {
         let Some(slot_count) = (!self.save_data.inventory.slots.is_empty())
             .then_some(self.save_data.inventory.slots.len())
@@ -357,6 +382,41 @@ impl GameContext {
         self.save_data.inventory.selected_slot = slot_index;
         self.request_save();
         true
+    }
+
+    pub fn use_selected_quickbar_item(&mut self) -> QuickItemUseResult {
+        let slot_index = self.save_data.inventory.selected_slot;
+        let Some(stack) = self
+            .save_data
+            .inventory
+            .slots
+            .get(slot_index)
+            .and_then(|slot| slot.as_ref())
+        else {
+            return QuickItemUseResult::Empty;
+        };
+        let item_id = stack.item_id.clone();
+
+        let Some(effect) = consumable_effect_for_item(&item_id) else {
+            return QuickItemUseResult::NotUsable { item_id };
+        };
+        if self.profile_meter_value(effect.meter_id) >= self.profile_meter_max(effect.meter_id) {
+            return QuickItemUseResult::AlreadyFull {
+                item_id,
+                meter_id: effect.meter_id.to_owned(),
+            };
+        }
+
+        self.change_profile_meter(effect.meter_id, effect.amount as i32);
+        self.save_data.inventory.consume_slot(slot_index, 1);
+        self.sync_inventory_load_meter();
+        self.log_item_used(&item_id, effect.meter_id, effect.amount);
+        self.request_save();
+        QuickItemUseResult::Used {
+            item_id,
+            meter_id: effect.meter_id,
+            amount: effect.amount,
+        }
     }
 
     pub fn is_unlock_rule_satisfied(&self, unlock: Option<&MapUnlockRule>) -> bool {
@@ -437,6 +497,22 @@ impl GameContext {
             Language::English => format!("Destination: {map_path}"),
         };
         self.push_activity_log(LOG_CATEGORY_UNLOCK, title, detail);
+    }
+
+    fn log_item_used(&mut self, item_id: &str, meter_id: &str, amount: u32) {
+        let item_name = inventory_scene::inventory_item_name(item_id, self.language);
+        let meter_name = profile_meter_label(meter_id, self.language);
+        let (title, detail) = match self.language {
+            Language::Chinese => (
+                format!("使用 {item_name}"),
+                format!("{meter_name} 恢复 {amount}"),
+            ),
+            Language::English => (
+                format!("Used {item_name}"),
+                format!("Restored {meter_name} by {amount}"),
+            ),
+        };
+        self.push_activity_log(LOG_CATEGORY_ITEM, title, detail);
     }
 
     fn push_activity_log(
@@ -1129,6 +1205,50 @@ fn inventory_load_units(inventory: &InventorySave) -> u32 {
         .sum()
 }
 
+struct ConsumableEffect {
+    meter_id: &'static str,
+    amount: u32,
+}
+
+fn consumable_effect_for_item(item_id: &str) -> Option<ConsumableEffect> {
+    let effect = match item_id {
+        "med_injector" => ConsumableEffect {
+            meter_id: "health",
+            amount: 35,
+        },
+        "energy_cell" => ConsumableEffect {
+            meter_id: "stamina",
+            amount: 35,
+        },
+        "coolant_canister" => ConsumableEffect {
+            meter_id: "suit",
+            amount: 30,
+        },
+        _ => return None,
+    };
+    Some(effect)
+}
+
+fn profile_meter_label(id: &str, language: Language) -> &'static str {
+    match (id, language) {
+        ("health", Language::Chinese) => "生命",
+        ("stamina", Language::Chinese) => "体力",
+        ("suit", Language::Chinese) => "外骨骼",
+        ("load", Language::Chinese) => "负重",
+        ("oxygen", Language::Chinese) => "氧气",
+        ("radiation", Language::Chinese) => "辐射抗性",
+        ("spores", Language::Chinese) => "孢子抗性",
+        ("health", Language::English) => "Health",
+        ("stamina", Language::English) => "Stamina",
+        ("suit", Language::English) => "Suit",
+        ("load", Language::English) => "Load",
+        ("oxygen", Language::English) => "Oxygen",
+        ("radiation", Language::English) => "Radiation",
+        ("spores", Language::English) => "Spore resistance",
+        _ => "Status",
+    }
+}
+
 fn accumulated_integer_delta(accumulator: &mut f32, delta: f32) -> i32 {
     *accumulator += delta;
     let whole = if *accumulator >= 1.0 {
@@ -1284,6 +1404,62 @@ mod tests {
             },
         );
         assert_eq!(ctx.profile_meter_value("stamina"), 12);
+    }
+
+    #[test]
+    fn selected_quickbar_consumable_restores_meter_and_consumes_stack() {
+        let mut ctx = GameContext::default();
+        ctx.save_data.inventory.selected_slot = 7;
+        ctx.save_data.profile.set_meter_value("health", 50);
+
+        let result = ctx.use_selected_quickbar_item();
+
+        assert_eq!(
+            result,
+            QuickItemUseResult::Used {
+                item_id: "med_injector".to_owned(),
+                meter_id: "health",
+                amount: 35,
+            }
+        );
+        assert_eq!(ctx.profile_meter_value("health"), 85);
+        assert_eq!(
+            ctx.save_data.inventory.slots[7]
+                .as_ref()
+                .map(|stack| stack.quantity),
+            Some(1)
+        );
+        assert!(ctx.save_dirty);
+        assert!(
+            ctx.save_data
+                .activity_log
+                .entries
+                .iter()
+                .any(|entry| entry.category == LOG_CATEGORY_ITEM)
+        );
+    }
+
+    #[test]
+    fn selected_quickbar_consumable_is_not_spent_when_meter_is_full() {
+        let mut ctx = GameContext::default();
+        ctx.save_data.inventory.selected_slot = 7;
+        ctx.save_data.profile.set_meter_value("health", 100);
+
+        let result = ctx.use_selected_quickbar_item();
+
+        assert_eq!(
+            result,
+            QuickItemUseResult::AlreadyFull {
+                item_id: "med_injector".to_owned(),
+                meter_id: "health".to_owned(),
+            }
+        );
+        assert_eq!(
+            ctx.save_data.inventory.slots[7]
+                .as_ref()
+                .map(|stack| stack.quantity),
+            Some(2)
+        );
     }
 
     #[test]
