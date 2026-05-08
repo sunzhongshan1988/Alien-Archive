@@ -52,7 +52,8 @@
 - Inspector：地图属性、资产属性、单选实例属性、多选属性、碰撞/实体/区域相关属性。
 - 验证：能检查空地图 id、无效尺寸、越界、重复 id、未知资产、资产类型/默认层不匹配、实体类型为空、scale 非法、区域点数过少等。
 - UI 组件层：`crates/editor/src/ui` 是 Alien Archive Editor 自己的组件层。`egui` 只作为底层 immediate-mode GUI，长期不要在业务面板里反复手写 tabs、toolbar button、property row 等常见控件。
-- 面板拆分：左侧 `资源库 / 图层 / 对象` 面板已经从 `main.rs` 移到 `crates/editor/src/panels.rs`，右侧 Inspector 已移到 `crates/editor/src/inspector.rs`，弹窗和素材草稿编辑已移到 `crates/editor/src/dialogs.rs`，入口文件只保留主布局调度。下一步继续拆 canvas。
+- 面板拆分：左侧 `资源库 / 图层 / 对象` 面板已经从 `main.rs` 移到 `crates/editor/src/panels.rs`，右侧 Inspector 已移到 `crates/editor/src/inspector.rs`，弹窗和素材草稿编辑已移到 `crates/editor/src/dialogs.rs`。
+- Canvas 拆分：画布绘制、输入处理、hit test、工具操作和坐标转换已经从 `main.rs` 移到 `crates/editor/src/canvas/editor.rs`，纯绘制 helper 保留在 `crates/editor/src/canvas/rendering.rs`。下一步在 canvas 内继续拆 `viewport / input / hit_test / tools / overlays`，并引入可见区域裁剪。
 
 这个基础已经足够继续做内容，但如果进入长期地图生产，下面这些缺口会很快变成效率和质量问题。
 
