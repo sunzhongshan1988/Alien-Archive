@@ -143,7 +143,6 @@ impl EditorApp {
             ground_footprint_w: 4,
             ground_footprint_h: 4,
             terrain_autotile: true,
-            terrain_variation: true,
             collision_brush_w: 1,
             collision_brush_h: 1,
             rectangle_erase_mode: false,
@@ -1602,11 +1601,6 @@ impl EditorApp {
                 })
                 .inner
                 .on_hover_text("刷地、矩形填充或擦除后，自动重算周围同族地形素材");
-                toolbar_centered(ui, vec2(86.0, 26.0), |ui| {
-                    ui.checkbox(&mut self.terrain_variation, "随机变体")
-                })
-                .inner
-                .on_hover_text("刷地、矩形填充或油漆桶会按坐标稳定选择同族中心素材");
             } else if self.active_layer == LayerKind::Collision || self.tool == ToolKind::Collision
             {
                 ui.separator();

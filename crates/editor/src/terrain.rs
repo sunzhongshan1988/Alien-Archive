@@ -27,15 +27,9 @@ pub(crate) struct TerrainRules {
 
 #[derive(Clone, Debug, Default)]
 struct TerrainFamily {
-    centers: Vec<TerrainVariant>,
+    centers: Vec<String>,
     edges: HashMap<Direction, String>,
     corners: HashMap<Corner, String>,
-}
-
-#[derive(Clone, Debug)]
-struct TerrainVariant {
-    asset_id: String,
-    weight: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -78,10 +72,7 @@ impl TerrainRules {
             let family = rules.families.entry(classification.family).or_default();
             match classification.role {
                 TerrainRole::Center => {
-                    family.centers.push(TerrainVariant {
-                        asset_id: asset.id.clone(),
-                        weight: variation_weight(asset),
-                    });
+                    family.centers.push(asset.id.clone());
                 }
                 TerrainRole::Edge(direction) => {
                     family
@@ -120,20 +111,6 @@ impl TerrainRules {
         let current_role = self.asset_roles.get(asset_id).copied();
         family.choice_for(asset_id, current_role, role)
     }
-
-    pub(crate) fn center_variant_for(
-        &self,
-        asset_id: &str,
-        x: i32,
-        y: i32,
-    ) -> Option<TerrainChoice> {
-        if self.asset_roles.get(asset_id).copied()? != TerrainRole::Center {
-            return None;
-        }
-        let family_id = self.family_for_asset(asset_id)?;
-        let family = self.families.get(family_id)?;
-        family.center_variant_choice(family_id, x, y)
-    }
 }
 
 impl TerrainFamily {
@@ -146,10 +123,7 @@ impl TerrainFamily {
         match role {
             TerrainRole::Center => {
                 if current_role == Some(TerrainRole::Center)
-                    && self
-                        .centers
-                        .iter()
-                        .any(|center| center.asset_id == asset_id)
+                    && self.centers.iter().any(|center| center == asset_id)
                 {
                     return Some(TerrainChoice {
                         asset_id: asset_id.to_owned(),
@@ -181,10 +155,7 @@ impl TerrainFamily {
         current_role: Option<TerrainRole>,
     ) -> Option<TerrainChoice> {
         (current_role == Some(TerrainRole::Center)
-            && self
-                .centers
-                .iter()
-                .any(|center| center.asset_id == asset_id))
+            && self.centers.iter().any(|center| center == asset_id))
         .then(|| TerrainChoice {
             asset_id: asset_id.to_owned(),
             rotation: 0,
@@ -193,36 +164,9 @@ impl TerrainFamily {
 
     fn center_choice(&self) -> Option<TerrainChoice> {
         self.centers.first().map(|asset_id| TerrainChoice {
-            asset_id: asset_id.asset_id.to_owned(),
+            asset_id: asset_id.to_owned(),
             rotation: 0,
         })
-    }
-
-    fn center_variant_choice(&self, family_id: &str, x: i32, y: i32) -> Option<TerrainChoice> {
-        if self.centers.len() < 2 {
-            return None;
-        }
-        let total_weight = self
-            .centers
-            .iter()
-            .map(|variant| variant.weight)
-            .sum::<u32>();
-        if total_weight == 0 {
-            return None;
-        }
-
-        let mut roll = stable_variation_hash(family_id, x, y) % total_weight;
-        for variant in &self.centers {
-            if roll < variant.weight {
-                return Some(TerrainChoice {
-                    asset_id: variant.asset_id.clone(),
-                    rotation: 0,
-                });
-            }
-            roll -= variant.weight;
-        }
-
-        self.center_choice()
     }
 
     fn edge_choice(&self, direction: Direction) -> Option<TerrainChoice> {
@@ -334,34 +278,6 @@ fn terrain_role_tag(tag: &str) -> Option<TerrainRole> {
     let value =
         terrain_tag_value(tag, "terrain_role").or_else(|| terrain_tag_value(tag, "role"))?;
     role_from_token(value)
-}
-
-fn variation_weight(asset: &AssetEntry) -> u32 {
-    asset
-        .tags
-        .iter()
-        .find_map(|tag| {
-            terrain_tag_value(tag, "variation_weight")
-                .or_else(|| terrain_tag_value(tag, "weight"))
-                .and_then(|value| value.parse::<u32>().ok())
-        })
-        .unwrap_or(1)
-        .clamp(1, 100)
-}
-
-fn stable_variation_hash(family_id: &str, x: i32, y: i32) -> u32 {
-    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
-    for byte in family_id
-        .as_bytes()
-        .iter()
-        .copied()
-        .chain(x.to_le_bytes())
-        .chain(y.to_le_bytes())
-    {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x100_0000_01b3);
-    }
-    (hash ^ (hash >> 32)) as u32
 }
 
 fn inferred_terrain_name(asset_id: &str) -> String {
@@ -635,44 +551,6 @@ mod tests {
 
         assert_eq!(choice.asset_id, "ow_tile_gen_sand_02");
         assert_eq!(choice.rotation, 0);
-    }
-
-    #[test]
-    fn picks_stable_center_variants_by_coordinate() {
-        let mut first = asset("ow_tile_gen_sand_01");
-        first.tags.push("terrain:sand".to_owned());
-        first.tags.push("terrain_role:center".to_owned());
-        let mut second = asset("ow_tile_gen_sand_02");
-        second.tags.push("terrain:sand".to_owned());
-        second.tags.push("terrain_role:center".to_owned());
-
-        let rules = TerrainRules::from_assets(&[first, second]);
-        let choice = rules.center_variant_for("ow_tile_gen_sand_01", 12, 9);
-        let repeat = rules.center_variant_for("ow_tile_gen_sand_01", 12, 9);
-
-        assert_eq!(choice, repeat);
-        assert!(matches!(
-            choice.map(|choice| choice.asset_id).as_deref(),
-            Some("ow_tile_gen_sand_01" | "ow_tile_gen_sand_02")
-        ));
-    }
-
-    #[test]
-    fn ignores_center_variation_for_edge_assets() {
-        let mut center = asset("ow_tile_gen_sand_01");
-        center.tags.push("terrain:sand".to_owned());
-        center.tags.push("terrain_role:center".to_owned());
-        let mut edge = asset("ow_tile_gen_sand_edge_n");
-        edge.tags.push("terrain:sand".to_owned());
-        edge.tags.push("terrain_role:edge_n".to_owned());
-
-        let rules = TerrainRules::from_assets(&[center, edge]);
-
-        assert!(
-            rules
-                .center_variant_for("ow_tile_gen_sand_edge_n", 12, 9)
-                .is_none()
-        );
     }
 
     fn asset(id: &str) -> AssetEntry {

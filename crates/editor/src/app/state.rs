@@ -202,7 +202,6 @@ pub(crate) struct EditorApp {
     pub(crate) ground_footprint_w: i32,
     pub(crate) ground_footprint_h: i32,
     pub(crate) terrain_autotile: bool,
-    pub(crate) terrain_variation: bool,
     pub(crate) collision_brush_w: i32,
     pub(crate) collision_brush_h: i32,
     pub(crate) rectangle_erase_mode: bool,
