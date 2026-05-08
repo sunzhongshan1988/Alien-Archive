@@ -3,7 +3,7 @@ mod map;
 use anyhow::Result;
 use runtime::{Rect, Renderer, Vec2};
 
-pub use map::{MapEntity, MapEntityKind, MapUnlockRule};
+pub use map::{MapEntity, MapEntityKind, MapTransitionTarget, MapUnlockRule, MapZone};
 
 use map::Map;
 
@@ -57,6 +57,13 @@ impl World {
             .entities()
             .iter()
             .filter(move |entity| entity.kind == kind)
+    }
+
+    pub fn zones<'a>(&'a self, zone_type: &'a str) -> impl Iterator<Item = &'a MapZone> + 'a {
+        self.map
+            .zones()
+            .iter()
+            .filter(move |zone| zone.zone_type == zone_type)
     }
 
     pub fn codex_entities(&self) -> impl Iterator<Item = &MapEntity> + '_ {
@@ -117,6 +124,13 @@ mod tests {
                 .and_then(|unlock| unlock.requires_codex_id.as_deref()),
             Some("ruin.entrance_01")
         );
+        assert_eq!(
+            entrance
+                .transition
+                .as_ref()
+                .and_then(|transition| transition.spawn_id.as_deref()),
+            Some("entry")
+        );
     }
 
     #[test]
@@ -163,6 +177,11 @@ mod tests {
             color: (0.660, 0.360, 1.000, 0.82),
             solid: false,
             codex_id: Some("ruin.entrance_01"),
+            transition: Some((
+                scene: Some("Facility"),
+                map_path: Some("assets/data/maps/facility_ruin_01.ron"),
+                spawn_id: Some("entry"),
+            )),
         ),
     ],
 )"#,

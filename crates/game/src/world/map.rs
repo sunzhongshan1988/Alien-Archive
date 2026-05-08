@@ -7,7 +7,7 @@ use std::{
 use anyhow::{Context, Result, bail};
 use content::{
     AnchorKind, AssetDatabase, DEFAULT_ASSET_DB_PATH, InstanceRect, MapDocument as EditorMapFile,
-    ObjectInstance as EditorObjectInstance, UnlockRule,
+    ObjectInstance as EditorObjectInstance, TransitionTarget, UnlockRule,
 };
 use runtime::{Color, Rect, Renderer, Vec2};
 use serde::Deserialize;
@@ -17,6 +17,7 @@ pub struct Map {
     tiles: Vec<MapTile>,
     sprites: Vec<MapSprite>,
     entities: Vec<MapEntity>,
+    zones: Vec<MapZone>,
     collision_rects: Vec<Rect>,
     textures: HashMap<String, PathBuf>,
 }
@@ -34,6 +35,10 @@ impl Map {
 
     pub fn entities(&self) -> &[MapEntity] {
         &self.entities
+    }
+
+    pub fn zones(&self) -> &[MapZone] {
+        &self.zones
     }
 
     pub fn remove_entities_by_id(&mut self, ids: &std::collections::BTreeSet<String>) {
@@ -197,6 +202,7 @@ impl Map {
                     asset_id: None,
                     codex_id,
                     unlock,
+                    transition: MapTransitionTarget::from_content(entity.transition),
                     texture_id: None,
                     flip_x: false,
                     rotation: 0,
@@ -208,6 +214,7 @@ impl Map {
             tiles,
             sprites: Vec::new(),
             entities,
+            zones: Vec::new(),
             collision_rects: Vec::new(),
             textures: HashMap::new(),
         })
@@ -294,6 +301,7 @@ impl Map {
                 asset_id: None,
                 codex_id: None,
                 unlock: None,
+                transition: None,
                 texture_id: None,
                 flip_x: false,
                 rotation: 0,
@@ -334,11 +342,39 @@ impl Map {
                 asset_id: Some(asset.id.clone()),
                 codex_id,
                 unlock,
+                transition: MapTransitionTarget::from_content(entity.transition),
                 texture_id: Some(asset.id.clone()),
                 flip_x: entity.flip_x,
                 rotation: entity.rotation,
             });
         }
+
+        let zones = file
+            .layers
+            .zones
+            .into_iter()
+            .map(|zone| {
+                let points = zone
+                    .points
+                    .into_iter()
+                    .map(|point| {
+                        Vec2::new(
+                            origin.x + point[0] * tile_size,
+                            origin.y + point[1] * tile_size,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let bounds = bounds_for_points(&points);
+                MapZone {
+                    id: zone.id,
+                    zone_type: zone.zone_type,
+                    points,
+                    bounds,
+                    unlock: MapUnlockRule::from_content(zone.unlock),
+                    transition: MapTransitionTarget::from_content(zone.transition),
+                }
+            })
+            .collect();
 
         let collision_rects = file
             .layers
@@ -357,6 +393,7 @@ impl Map {
             tiles,
             sprites,
             entities,
+            zones,
             collision_rects,
             textures,
         })
@@ -401,9 +438,21 @@ pub struct MapEntity {
     pub asset_id: Option<String>,
     pub codex_id: Option<String>,
     pub unlock: Option<MapUnlockRule>,
+    pub transition: Option<MapTransitionTarget>,
     texture_id: Option<String>,
     flip_x: bool,
     rotation: i32,
+}
+
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub struct MapZone {
+    pub id: String,
+    pub zone_type: String,
+    pub points: Vec<Vec2>,
+    pub bounds: Rect,
+    pub unlock: Option<MapUnlockRule>,
+    pub transition: Option<MapTransitionTarget>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -411,6 +460,29 @@ pub struct MapUnlockRule {
     pub requires_codex_id: Option<String>,
     pub requires_item_id: Option<String>,
     pub locked_message: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct MapTransitionTarget {
+    pub scene: Option<String>,
+    pub map_path: Option<String>,
+    pub spawn_id: Option<String>,
+}
+
+impl MapTransitionTarget {
+    fn from_content(target: Option<TransitionTarget>) -> Option<Self> {
+        let target = target?;
+        let transition = Self {
+            scene: clean_optional_string(target.scene),
+            map_path: clean_optional_string(target.map_path),
+            spawn_id: clean_optional_string(target.spawn_id),
+        };
+        (!transition.is_empty()).then_some(transition)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.scene.is_none() && self.map_path.is_none() && self.spawn_id.is_none()
+    }
 }
 
 impl MapUnlockRule {
@@ -473,6 +545,8 @@ struct MapEntityDef {
     color: [f32; 4],
     solid: bool,
     codex_id: Option<String>,
+    #[serde(default)]
+    transition: Option<TransitionTarget>,
 }
 
 #[derive(Clone, Debug)]
@@ -580,6 +654,34 @@ fn instance_rect_to_world(
             origin.y + (y + rect.offset[1]) * tile_size,
         ),
         Vec2::new(rect.size[0] * tile_size, rect.size[1] * tile_size),
+    )
+}
+
+fn bounds_for_points(points: &[Vec2]) -> Rect {
+    if points.is_empty() {
+        return Rect::new(Vec2::ZERO, Vec2::ZERO);
+    }
+
+    let min_x = points
+        .iter()
+        .map(|point| point.x)
+        .fold(f32::INFINITY, f32::min);
+    let max_x = points
+        .iter()
+        .map(|point| point.x)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let min_y = points
+        .iter()
+        .map(|point| point.y)
+        .fold(f32::INFINITY, f32::min);
+    let max_y = points
+        .iter()
+        .map(|point| point.y)
+        .fold(f32::NEG_INFINITY, f32::max);
+
+    Rect::new(
+        Vec2::new(min_x, min_y),
+        Vec2::new(max_x - min_x, max_y - min_y),
     )
 }
 

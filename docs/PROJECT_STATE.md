@@ -36,9 +36,9 @@
 
 还没有完成的核心循环部分：
 
-- 多地图入口/出口目标字段和区域脚本执行
 - 更完整的日志筛选、分页和真实任务数据
-- 更完整的危险环境、受伤来源、消耗品素材和使用反馈
+- 更完整的危险环境、受伤来源和消耗品使用反馈
+- 更完整的多地图内容、目标地图校验和区域脚本类型扩展
 
 ## 今天更新重点
 
@@ -150,6 +150,17 @@
 - 外勤时间按运行时推进，当前先用简化规则按时间段切换 `clear` / `ion_wind` / `spore_drift` / `cold_mist`。
 - `SaveData::normalize()` 会修正旧存档缺失的时间和天气字段，避免旧存档读入后状态面板显示异常。
 
+11. 地图转场目标和区域触发
+
+- `content::MapDocument` 的 `EntityInstance` 和 `ZoneInstance` 增加 `transition` 字段。
+- `transition` 当前支持 `scene`、`map_path`、`spawn_id`，用于显式指定目标场景、目标地图和出生点。
+- 运行时 `MapEntity` 会携带 `MapTransitionTarget`；Overworld 入口和 Facility 出口会优先读取地图字段，没有配置时继续使用旧默认目的地。
+- 运行时现在会读取编辑器地图里的 `zones`，`zone_type == "MapTransition"` 的区域在玩家重叠且解锁条件满足时触发切场景。
+- `GameContext::apply_map_transition` 会统一更新目标场景对应的 map path、spawn id、玩家位置、日志和保存请求。
+- 编辑器 Inspector 已能给实体/区域启用并编辑转场目标字段。
+- `validate_map_with_codex` 会检查空转场目标、未知 scene、非 RON map path 和带空白的 spawn id。
+- 旧版 legacy RON 实体可选写入 `transition`，不写仍按旧逻辑运行。
+
 ## 已完成
 
 - 初始化 Rust workspace。
@@ -180,6 +191,7 @@
 - 实现自定义地图文件加载。
 - 实现 `SaveData` 本地存档层，保存语言、场景、地图、玩家位置、Codex 解锁、已收集实体、交互历史、人物档案、背包和快捷栏。
 - `MapDocument` 支持实体/区域级 `unlock` 规则，运行时入口/出口可按扫描记录或背包物品放行。
+- `MapDocument` 支持实体/区域级 `transition` 目标，运行时入口/出口和 `MapTransition` 区域可按目标场景、地图、出生点切换。
 - 运行时 `Map::load` 支持新的编辑器 RON 地图格式，并保留旧版 legacy RON 地图解析。
 - `World::solid_rects()` 提供 tile/entity/collision 碰撞矩形。
 - `World::codex_entities()` 提供扫描候选实体。
@@ -454,11 +466,11 @@ $env:ALIEN_ARCHIVE_EXIT_AFTER_FRAMES='3'; cargo run -p alien_archive
 
 推荐下一阶段按这个顺序做：
 
-1. 先补一批消耗品占位素材或生成需求清单，避免后续 UI/掉落/使用反馈一直依赖 fallback 图标。
-2. 补多地图入口/出口目标字段和区域脚本执行。
-3. 给主菜单补手动保存/另存提示、删除后的 toast 或更完整的错误提示。
-4. 让 Debug Overlay 增加可选 collision/interaction rect 可视化层，用于调地图和扫描范围。
-5. 给日志页补筛选/分页和“任务目标来自真实任务数据”的后续结构。
+1. 给主菜单补手动保存/另存提示、删除后的 toast 或更完整的错误提示。
+2. 让 Debug Overlay 增加可选 collision/interaction rect 可视化层，用于调地图和扫描范围。
+3. 给日志页补筛选/分页和“任务目标来自真实任务数据”的后续结构。
+4. 扩展 `MapTransition` 之外的区域脚本类型，例如危险环境、一次性提示、任务推进。
+5. 补目标地图/spawn 跨文件存在性校验，避免转场字段写错后运行时才发现。
 
 地图编辑器的长期改进清单单独记录在：
 

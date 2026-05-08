@@ -180,6 +180,7 @@ impl MapDocument {
             collision_rect: None,
             interaction_rect: None,
             unlock: None,
+            transition: None,
             flip_x: false,
             rotation: 0,
         });
@@ -285,6 +286,11 @@ pub struct EntityInstance {
     pub interaction_rect: Option<InstanceRect>,
     #[serde(default, skip_serializing_if = "option_unlock_rule_is_none_or_empty")]
     pub unlock: Option<UnlockRule>,
+    #[serde(
+        default,
+        skip_serializing_if = "option_transition_target_is_none_or_empty"
+    )]
+    pub transition: Option<TransitionTarget>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub flip_x: bool,
     #[serde(default, skip_serializing_if = "is_zero_i32")]
@@ -317,6 +323,32 @@ impl UnlockRule {
     }
 }
 
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct TransitionTarget {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scene: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub map_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spawn_id: Option<String>,
+}
+
+impl TransitionTarget {
+    pub fn is_empty(&self) -> bool {
+        self.scene
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+            && self
+                .map_path
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+            && self
+                .spawn_id
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct InstanceRect {
     pub offset: [f32; 2],
@@ -330,6 +362,11 @@ pub struct ZoneInstance {
     pub points: Vec<[f32; 2]>,
     #[serde(default, skip_serializing_if = "option_unlock_rule_is_none_or_empty")]
     pub unlock: Option<UnlockRule>,
+    #[serde(
+        default,
+        skip_serializing_if = "option_transition_target_is_none_or_empty"
+    )]
+    pub transition: Option<TransitionTarget>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -422,6 +459,10 @@ fn is_false(value: &bool) -> bool {
 
 fn option_unlock_rule_is_none_or_empty(value: &Option<UnlockRule>) -> bool {
     value.as_ref().is_none_or(UnlockRule::is_empty)
+}
+
+fn option_transition_target_is_none_or_empty(value: &Option<TransitionTarget>) -> bool {
+    value.as_ref().is_none_or(TransitionTarget::is_empty)
 }
 
 fn is_zero_i32(value: &i32) -> bool {

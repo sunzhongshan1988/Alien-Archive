@@ -3,7 +3,7 @@ use runtime::{Button, Camera2d, InputState, Renderer, SceneCommand, collision::r
 
 use crate::{
     player::Player,
-    world::{MapEntity, MapEntityKind, World},
+    world::{MapEntity, MapEntityKind, MapZone, World},
 };
 
 use super::{
@@ -63,6 +63,12 @@ impl OverworldScene {
             rewards::pickup_reward_for_entity(entity).is_some()
                 && rects_overlap(self.player.rect(), entity.rect)
         })
+    }
+
+    fn overlapping_transition_zone(&self) -> Option<&MapZone> {
+        self.world
+            .zones("MapTransition")
+            .find(|zone| rects_overlap(self.player.rect(), zone.bounds))
     }
 
     fn try_collect_pickup(&mut self, ctx: &mut GameContext) -> bool {
@@ -152,15 +158,25 @@ impl Scene for OverworldScene {
                     return Ok(SceneCommand::None);
                 }
 
-                ctx.facility_spawn_id = Some(FACILITY_ENTRY_SPAWN.to_owned());
-                ctx.facility_player_position = None;
-                let target_map = ctx
-                    .facility_map_path
-                    .clone()
-                    .unwrap_or_else(|| FACILITY_MAP.to_owned());
-                ctx.log_scene_transition(SceneId::Facility, &target_map);
-                ctx.request_save();
-                return Ok(SceneCommand::Switch(SceneId::Facility));
+                let scene_id = ctx.apply_map_transition(
+                    entrance.transition.as_ref(),
+                    SceneId::Facility,
+                    FACILITY_MAP,
+                    FACILITY_ENTRY_SPAWN,
+                );
+                return Ok(SceneCommand::Switch(scene_id));
+            }
+        }
+
+        if let Some(zone) = self.overlapping_transition_zone() {
+            if ctx.is_unlock_rule_satisfied(zone.unlock.as_ref()) {
+                let scene_id = ctx.apply_map_transition(
+                    zone.transition.as_ref(),
+                    SceneId::Facility,
+                    FACILITY_MAP,
+                    FACILITY_ENTRY_SPAWN,
+                );
+                return Ok(SceneCommand::Switch(scene_id));
             }
         }
 

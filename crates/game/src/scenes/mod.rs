@@ -17,7 +17,7 @@ use runtime::{Button, Camera2d, InputState, Renderer, SceneCommand, Vec2};
 use std::{collections::HashSet, path::PathBuf};
 
 use crate::save::{CodexSave, InventorySave, MeterSave, SaveData, SaveVec2, WorldSave};
-use crate::world::MapUnlockRule;
+use crate::world::{MapTransitionTarget, MapUnlockRule};
 
 use facility_scene::FacilityScene;
 use game_menu_scene::GameMenuScene;
@@ -497,6 +497,42 @@ impl GameContext {
             Language::English => format!("Destination: {map_path}"),
         };
         self.push_activity_log(LOG_CATEGORY_UNLOCK, title, detail);
+    }
+
+    pub fn apply_map_transition(
+        &mut self,
+        transition: Option<&MapTransitionTarget>,
+        default_scene: SceneId,
+        default_map: &str,
+        default_spawn: &str,
+    ) -> SceneId {
+        let scene_id = transition
+            .and_then(|transition| transition.scene.as_deref())
+            .map(scene_id_from_transition_key)
+            .unwrap_or(default_scene);
+        let map_path = transition
+            .and_then(|transition| transition.map_path.clone())
+            .unwrap_or_else(|| default_map.to_owned());
+        let spawn_id = transition
+            .and_then(|transition| transition.spawn_id.clone())
+            .unwrap_or_else(|| default_spawn.to_owned());
+
+        match scene_id {
+            SceneId::Facility => {
+                self.facility_map_path = Some(map_path.clone());
+                self.facility_spawn_id = Some(spawn_id);
+                self.facility_player_position = None;
+            }
+            _ => {
+                self.overworld_map_path = Some(map_path.clone());
+                self.overworld_spawn_id = Some(spawn_id);
+                self.overworld_player_position = None;
+            }
+        }
+
+        self.log_scene_transition(scene_id, &map_path);
+        self.request_save();
+        scene_id
     }
 
     fn log_item_used(&mut self, item_id: &str, meter_id: &str, amount: u32) {
@@ -1186,6 +1222,13 @@ fn scene_id_from_save_key(value: &str) -> SceneId {
     }
 }
 
+fn scene_id_from_transition_key(value: &str) -> SceneId {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "facility" => SceneId::Facility,
+        _ => SceneId::Overworld,
+    }
+}
+
 fn position_changed(previous: Option<SaveVec2>, current: Vec2) -> bool {
     let Some(previous) = previous else {
         return true;
@@ -1356,6 +1399,31 @@ mod tests {
         assert!(ctx.is_unlock_rule_satisfied(Some(&codex_rule)));
         assert!(ctx.is_unlock_rule_satisfied(Some(&item_rule)));
         assert!(!ctx.is_unlock_rule_satisfied(Some(&missing_item_rule)));
+    }
+
+    #[test]
+    fn map_transition_target_updates_runtime_destination() {
+        let mut ctx = GameContext::default();
+        let transition = MapTransitionTarget {
+            scene: Some("Facility".to_owned()),
+            map_path: Some("assets/data/maps/facility_custom.ron".to_owned()),
+            spawn_id: Some("east_entry".to_owned()),
+        };
+
+        let scene_id = ctx.apply_map_transition(
+            Some(&transition),
+            SceneId::Overworld,
+            "assets/data/maps/overworld_landing_site.ron",
+            "player_start",
+        );
+
+        assert_eq!(scene_id, SceneId::Facility);
+        assert_eq!(
+            ctx.facility_map_path.as_deref(),
+            Some("assets/data/maps/facility_custom.ron")
+        );
+        assert_eq!(ctx.facility_spawn_id.as_deref(), Some("east_entry"));
+        assert!(ctx.facility_player_position.is_none());
     }
 
     #[test]

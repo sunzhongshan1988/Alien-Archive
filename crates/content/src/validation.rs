@@ -233,6 +233,9 @@ pub fn validate_map_with_codex(
                 entity.id
             )));
         }
+        if let Some(transition) = &entity.transition {
+            validate_transition_target("entity", &entity.id, transition, &mut issues);
+        }
     }
 
     for cell in &document.layers.collision {
@@ -269,6 +272,18 @@ pub fn validate_map_with_codex(
         }
         if let Some(unlock) = &zone.unlock {
             validate_unlock_rule("zone", &zone.id, unlock, codex, &mut issues);
+        }
+        if zone.zone_type == "MapTransition" {
+            if let Some(transition) = &zone.transition {
+                validate_transition_target("zone", &zone.id, transition, &mut issues);
+            } else {
+                issues.push(MapValidationIssue::warning(format!(
+                    "zone {} is MapTransition but has no transition target",
+                    zone.id
+                )));
+            }
+        } else if let Some(transition) = &zone.transition {
+            validate_transition_target("zone", &zone.id, transition, &mut issues);
         }
     }
 
@@ -321,6 +336,63 @@ fn validate_unlock_rule(
         issues.push(MapValidationIssue::warning(format!(
             "{owner} {id} unlock locked_message is empty"
         )));
+    }
+}
+
+fn validate_transition_target(
+    owner: &str,
+    id: &str,
+    transition: &crate::TransitionTarget,
+    issues: &mut Vec<MapValidationIssue>,
+) {
+    let scene = transition
+        .scene
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let map_path = transition
+        .map_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let spawn_id = transition
+        .spawn_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    if scene.is_none() && map_path.is_none() && spawn_id.is_none() {
+        issues.push(MapValidationIssue::warning(format!(
+            "{owner} {id} has transition data but no scene, map_path, or spawn_id"
+        )));
+    }
+
+    if let Some(scene) = scene {
+        let normalized = scene.to_ascii_lowercase();
+        if !matches!(
+            normalized.as_str(),
+            "overworld" | "world" | "facility" | "mainmenu" | "main_menu" | "main-menu"
+        ) {
+            issues.push(MapValidationIssue::warning(format!(
+                "{owner} {id} transition scene {scene} is not a known runtime scene"
+            )));
+        }
+    }
+
+    if let Some(map_path) = map_path {
+        if !map_path.ends_with(".ron") {
+            issues.push(MapValidationIssue::warning(format!(
+                "{owner} {id} transition map_path {map_path} does not point to a RON map"
+            )));
+        }
+    }
+
+    if let Some(spawn_id) = spawn_id {
+        if spawn_id.chars().any(char::is_whitespace) {
+            issues.push(MapValidationIssue::warning(format!(
+                "{owner} {id} transition spawn_id {spawn_id} contains whitespace"
+            )));
+        }
     }
 }
 
@@ -656,6 +728,40 @@ mod tests {
         assert!(issues.iter().any(|issue| {
             issue.severity == MapValidationSeverity::Warning
                 && issue.message.contains("unlock data but no requires")
+        }));
+    }
+
+    #[test]
+    fn warns_when_transition_target_has_bad_fields() {
+        let mut document = MapDocument::new_landing_site();
+        document.place_entity("ow_ruin_door", "Door", 2.0, 2.0);
+        document.layers.entities[0].transition = Some(crate::TransitionTarget {
+            scene: Some("UnknownScene".to_owned()),
+            map_path: Some("assets/data/maps/facility.txt".to_owned()),
+            spawn_id: Some("bad spawn".to_owned()),
+        });
+        let database = test_database(vec![test_asset(
+            "ow_ruin_door",
+            AssetKind::Entity,
+            LayerKind::Entities,
+            Some("Door"),
+            None,
+        )]);
+
+        let issues = validate_map(&document, &database);
+
+        assert!(issues.iter().any(|issue| {
+            issue.severity == MapValidationSeverity::Warning
+                && issue.message.contains("not a known runtime scene")
+        }));
+        assert!(issues.iter().any(|issue| {
+            issue.severity == MapValidationSeverity::Warning
+                && issue.message.contains("does not point to a RON map")
+        }));
+        assert!(issues.iter().any(|issue| {
+            issue.severity == MapValidationSeverity::Warning
+                && issue.message.contains("spawn_id")
+                && issue.message.contains("contains whitespace")
         }));
     }
 

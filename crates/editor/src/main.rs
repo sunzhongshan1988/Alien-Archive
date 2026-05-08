@@ -2841,6 +2841,14 @@ impl EditorApp {
                         self.codex_database.as_ref(),
                         &mut changed,
                     );
+                    let transition_id = format!("entity_transition_{}", instance.id);
+                    draw_transition_target_editor(
+                        ui,
+                        "转场目标",
+                        &transition_id,
+                        &mut instance.transition,
+                        &mut changed,
+                    );
                     changed |= ui
                         .add(
                             egui::DragValue::new(&mut instance.x)
@@ -2898,6 +2906,14 @@ impl EditorApp {
                         &codex_id_options,
                         &item_id_options,
                         self.codex_database.as_ref(),
+                        &mut changed,
+                    );
+                    let transition_id = format!("zone_transition_{}", zone.id);
+                    draw_transition_target_editor(
+                        ui,
+                        "转场目标",
+                        &transition_id,
+                        &mut zone.transition,
                         &mut changed,
                     );
                     next_selection.id = zone.id.clone();
@@ -3970,6 +3986,7 @@ impl EditorApp {
             zone_type: "Trigger".to_owned(),
             points: self.zone_draft_points.clone(),
             unlock: None,
+            transition: None,
         });
         self.zone_draft_points.clear();
         self.set_single_selection(Some(SelectedItem {
@@ -6313,6 +6330,75 @@ fn draw_unlock_rule_editor(
         ui.colored_label(THEME_WARNING, "已启用但没有条件；运行时会视为未上锁。");
     } else {
         ui.colored_label(THEME_ACCENT_STRONG, "运行时会保存并检查这些解锁条件。");
+    }
+}
+
+fn draw_transition_target_editor(
+    ui: &mut egui::Ui,
+    label: &str,
+    id_prefix: &str,
+    transition: &mut Option<content::TransitionTarget>,
+    changed: &mut bool,
+) {
+    const SCENE_OPTIONS: &[&str] = &["Overworld", "Facility"];
+
+    ui.separator();
+    ui.horizontal(|ui| {
+        ui.label(label);
+        let mut enabled = transition.is_some();
+        if ui.checkbox(&mut enabled, "启用").changed() {
+            if enabled {
+                *transition = Some(content::TransitionTarget::default());
+            } else {
+                *transition = None;
+            }
+            *changed = true;
+        }
+    });
+
+    let Some(target) = transition.as_mut() else {
+        ui.colored_label(
+            THEME_MUTED_TEXT,
+            "无转场目标；入口/出口会使用运行时默认目的地。",
+        );
+        return;
+    };
+
+    let mut scene = target.scene.clone().unwrap_or_default();
+    let scene_options = SCENE_OPTIONS
+        .iter()
+        .map(|value| (*value).to_owned())
+        .collect::<Vec<_>>();
+    if labeled_text_edit_with_options(
+        ui,
+        "目标场景",
+        format!("{id_prefix}_scene"),
+        &mut scene,
+        &scene_options,
+    ) {
+        set_optional_string(&mut target.scene, scene);
+        *changed = true;
+    }
+
+    let mut map_path = target.map_path.clone().unwrap_or_default();
+    if labeled_text_edit(ui, "目标地图", &mut map_path) {
+        set_optional_string(&mut target.map_path, map_path);
+        *changed = true;
+    }
+
+    let mut spawn_id = target.spawn_id.clone().unwrap_or_default();
+    if labeled_text_edit(ui, "出生点", &mut spawn_id) {
+        set_optional_string(&mut target.spawn_id, spawn_id);
+        *changed = true;
+    }
+
+    if target.scene.is_none() && target.map_path.is_none() && target.spawn_id.is_none() {
+        ui.colored_label(
+            THEME_WARNING,
+            "已启用但没有目标字段；运行时会继续使用默认目的地。",
+        );
+    } else {
+        ui.colored_label(THEME_ACCENT_STRONG, "运行时会优先使用这些转场目标字段。");
     }
 }
 
