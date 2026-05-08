@@ -1,6 +1,9 @@
-use crate::MenuCommand;
 #[cfg(target_os = "macos")]
-use crate::{LayerKind, ToolKind};
+use content::LayerKind;
+
+use crate::app::commands::MenuCommand;
+#[cfg(target_os = "macos")]
+use crate::tools::ToolKind;
 
 #[cfg(target_os = "macos")]
 pub const NATIVE_MENU_ENABLED: bool = true;

@@ -1,6 +1,7 @@
 mod app;
 mod asset_registry;
 mod assets;
+mod canvas;
 mod native_menu;
 mod tools;
 mod ui;
@@ -15,10 +16,21 @@ use std::{
 };
 
 use app::{
-    config::{EditorConfig, load_editor_config, save_editor_config},
-    maps::{
-        MapListEntry, display_project_path, maps_dir, project_relative_path, project_root,
-        scan_map_entries,
+    commands::MenuCommand,
+    config::{load_editor_config, save_editor_config},
+    maps::{display_project_path, maps_dir, project_relative_path, project_root, scan_map_entries},
+    model::{
+        DEFAULT_ENTITY_TYPES, DEFAULT_UNLOCK_ITEM_IDS, launch_scene_for_mode, load_codex_database,
+        validation_summary,
+    },
+    outliner::{
+        EDITOR_KNOWN_ZONE_TYPES, OUTLINER_GROUPS, outliner_entry, outliner_matches,
+        unlock_search_text, zone_focus_world,
+    },
+    state::{
+        ClipboardItem, EditorApp, LayerUiState, LeftSidebarTab, MoveOrigin, MultiMoveDrag,
+        NewMapDraft, OutlinerBadge, OutlinerEntry, ResizeDrag, SelectedItem, SelectionMarquee,
+        ZoneVertexDrag, default_layer_states,
     },
 };
 use asset_registry::{AssetEntry, AssetRegistry};
@@ -27,6 +39,7 @@ use assets::{
     compact_asset_label, image_dimensions, infer_asset_draft_from_path, infer_tile_footprint,
     load_thumbnail,
 };
+use canvas::rendering::{draw_grid, paint_transformed_image, zone_colors};
 use content::{
     AnchorKind, AssetDatabase, AssetKind, CodexDatabase, DEFAULT_ASSET_DB_PATH,
     DEFAULT_CODEX_DB_PATH, DEFAULT_MAP_PATH, InstanceRect, LayerKind, MapDocument,
@@ -34,9 +47,7 @@ use content::{
 };
 use eframe::egui::{
     self, Color32, Context as EguiContext, Key, Modifiers, Pos2, Rect, Sense, Shape, Stroke,
-    StrokeKind, TextureHandle, Vec2,
-    epaint::{Mesh, Vertex},
-    vec2,
+    StrokeKind, Vec2, vec2,
 };
 use tools::ToolKind;
 use ui::theme::*;
@@ -45,41 +56,6 @@ use ui::toolbar::{
     toolbar_tool_button,
 };
 use util::{geometry::*, ids::*, sanitize::*};
-
-#[allow(dead_code)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum MenuCommand {
-    NewMap,
-    OpenMapDialog,
-    OpenSelectedMap,
-    RefreshMaps,
-    Save,
-    SaveAs,
-    SaveAndRun,
-    DeleteMap,
-    RevertMap,
-    Undo,
-    Redo,
-    Copy,
-    Paste,
-    Duplicate,
-    DeleteSelection,
-    ToggleGrid,
-    ToggleCollision,
-    ToggleEntityBounds,
-    ToggleZones,
-    ToggleZoneLabels,
-    ResetView,
-    ValidateMap,
-    SetLayer(LayerKind),
-    SetTool(ToolKind),
-    AddAsset,
-    EditSelectedAsset,
-    RemoveSelectedAsset,
-    SaveAssetDatabase,
-    ShowUnregisteredAssets,
-    ReloadAssetDatabase,
-}
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
@@ -94,216 +70,6 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(|cc| Ok(Box::new(EditorApp::new(cc)))),
     )
-}
-
-#[derive(Clone, Copy, Debug)]
-struct LayerUiState {
-    visible: bool,
-    locked: bool,
-}
-
-impl Default for LayerUiState {
-    fn default() -> Self {
-        Self {
-            visible: true,
-            locked: false,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-enum ClipboardItem {
-    Ground(content::TileInstance),
-    Decal(content::ObjectInstance),
-    Object(content::ObjectInstance),
-    Entity(content::EntityInstance),
-    Zone(content::ZoneInstance),
-}
-
-#[derive(Clone, Debug)]
-struct NewMapDraft {
-    id: String,
-    mode: String,
-    width: u32,
-    height: u32,
-    tile_size: u32,
-    spawn_id: String,
-    spawn_x: f32,
-    spawn_y: f32,
-}
-
-impl Default for NewMapDraft {
-    fn default() -> Self {
-        let document = MapDocument::new_landing_site();
-        let spawn = document
-            .spawns
-            .first()
-            .cloned()
-            .unwrap_or(content::SpawnPoint {
-                id: "player_start".to_owned(),
-                x: 4.0,
-                y: 4.0,
-            });
-        Self {
-            id: document.id,
-            mode: document.mode,
-            width: document.width,
-            height: document.height,
-            tile_size: document.tile_size,
-            spawn_id: spawn.id,
-            spawn_x: spawn.x,
-            spawn_y: spawn.y,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-struct ResizeDrag {
-    selection: SelectedItem,
-}
-
-#[derive(Clone, Debug)]
-struct ZoneVertexDrag {
-    zone_id: String,
-    vertex_index: usize,
-}
-
-#[derive(Clone, Debug)]
-struct SelectionMarquee {
-    start: Pos2,
-    current: Pos2,
-    additive: bool,
-}
-
-#[derive(Clone, Debug)]
-struct MultiMoveDrag {
-    start: [f32; 2],
-    origins: Vec<MoveOrigin>,
-}
-
-#[derive(Clone, Debug)]
-enum MoveOrigin {
-    Ground {
-        selection: SelectedItem,
-        x: i32,
-        y: i32,
-    },
-    ObjectLike {
-        selection: SelectedItem,
-        x: f32,
-        y: f32,
-    },
-    Zone {
-        selection: SelectedItem,
-        points: Vec<[f32; 2]>,
-    },
-}
-
-impl MoveOrigin {
-    fn layer(&self) -> LayerKind {
-        match self {
-            Self::Ground { selection, .. }
-            | Self::ObjectLike { selection, .. }
-            | Self::Zone { selection, .. } => selection.layer,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct SelectedItem {
-    layer: LayerKind,
-    id: String,
-}
-
-impl SelectedItem {
-    fn label(&self) -> String {
-        format!("{}:{}", self.layer.zh_label(), self.id)
-    }
-}
-
-#[derive(Clone, Debug)]
-struct OutlinerBadge {
-    label: &'static str,
-    color: Color32,
-}
-
-#[derive(Clone, Debug)]
-struct OutlinerEntry {
-    group: &'static str,
-    label: String,
-    detail: String,
-    search_text: String,
-    selection: Option<SelectedItem>,
-    focus_world: Vec2,
-    badges: Vec<OutlinerBadge>,
-}
-
-struct EditorApp {
-    native_menu: native_menu::NativeMenu,
-    project_root: PathBuf,
-    map_path: PathBuf,
-    map_entries: Vec<MapListEntry>,
-    selected_map_path: PathBuf,
-    pending_open_path: Option<PathBuf>,
-    open_confirm_path: Option<PathBuf>,
-    delete_confirm_path: Option<PathBuf>,
-    config: EditorConfig,
-    save_as_id: String,
-    dirty: bool,
-    registry: AssetRegistry,
-    asset_database: AssetDatabase,
-    asset_db_dirty: bool,
-    codex_database: Option<CodexDatabase>,
-    codex_db_status: String,
-    show_asset_dialog: bool,
-    show_unregistered_assets: bool,
-    asset_scan_root: PathBuf,
-    asset_editing_id: Option<String>,
-    asset_draft: AssetDraft,
-    document: MapDocument,
-    undo_stack: Vec<MapDocument>,
-    redo_stack: Vec<MapDocument>,
-    clipboard: Vec<ClipboardItem>,
-    selected_asset: Option<String>,
-    selected_item: Option<SelectedItem>,
-    selected_items: Vec<SelectedItem>,
-    active_layer: LayerKind,
-    layer_states: HashMap<LayerKind, LayerUiState>,
-    tool: ToolKind,
-    ground_footprint_w: i32,
-    ground_footprint_h: i32,
-    collision_brush_w: i32,
-    collision_brush_h: i32,
-    rectangle_erase_mode: bool,
-    asset_search: String,
-    outliner_search: String,
-    asset_kind_filter: Option<AssetKind>,
-    show_grid: bool,
-    show_collision: bool,
-    show_entity_bounds: bool,
-    show_zones: bool,
-    show_left_sidebar: bool,
-    show_right_sidebar: bool,
-    show_new_map_dialog: bool,
-    show_validation_panel: bool,
-    new_map_draft: NewMapDraft,
-    validation_issues: Vec<MapValidationIssue>,
-    last_autosave: Instant,
-    rectangle_drag_start: Option<[i32; 2]>,
-    rectangle_drag_current: Option<[i32; 2]>,
-    lock_aspect_ratio: bool,
-    resize_drag: Option<ResizeDrag>,
-    selection_marquee: Option<SelectionMarquee>,
-    multi_move_drag: Option<MultiMoveDrag>,
-    zone_draft_points: Vec<[f32; 2]>,
-    zone_vertex_drag: Option<ZoneVertexDrag>,
-    show_zone_labels: bool,
-    pan: Vec2,
-    zoom: f32,
-    pending_focus_world: Option<Vec2>,
-    mouse_tile: Option<[i32; 2]>,
-    thumbnails: HashMap<String, TextureHandle>,
-    status: String,
 }
 
 impl EditorApp {
@@ -370,6 +136,7 @@ impl EditorApp {
             show_entity_bounds: false,
             show_zones: true,
             show_left_sidebar: true,
+            active_left_tab: LeftSidebarTab::Assets,
             show_right_sidebar: true,
             show_new_map_dialog: false,
             show_validation_panel: false,
@@ -1897,14 +1664,6 @@ impl EditorApp {
     }
 
     fn draw_asset_panel(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.heading("资源库");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("<").on_hover_text("收起左侧栏").clicked() {
-                    self.show_left_sidebar = false;
-                }
-            });
-        });
         ui.small(format!("{} 个 metadata 素材", self.registry.assets().len()));
         ui.add(
             egui::TextEdit::singleline(&mut self.asset_search)
@@ -2065,9 +1824,33 @@ impl EditorApp {
         self.status = format!("Selected {}", asset.id);
     }
 
-    fn draw_layer_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("图层");
+    fn draw_left_sidebar(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            for tab in LeftSidebarTab::ALL {
+                ui.selectable_value(&mut self.active_left_tab, tab, tab.label());
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("<").on_hover_text("收起左侧栏").clicked() {
+                    self.show_left_sidebar = false;
+                }
+            });
+        });
         ui.separator();
+
+        match self.active_left_tab {
+            LeftSidebarTab::Assets => {
+                egui::ScrollArea::vertical().show(ui, |ui| self.draw_asset_panel(ui));
+            }
+            LeftSidebarTab::Layers => {
+                self.draw_layer_panel(ui);
+            }
+            LeftSidebarTab::Outliner => {
+                egui::ScrollArea::vertical().show(ui, |ui| self.draw_outliner_panel(ui));
+            }
+        }
+    }
+
+    fn draw_layer_panel(&mut self, ui: &mut egui::Ui) {
         for layer in LayerKind::ALL {
             let count = self.layer_item_count(layer);
             ui.horizontal(|ui| {
@@ -2084,8 +1867,6 @@ impl EditorApp {
     }
 
     fn draw_outliner_panel(&mut self, ui: &mut egui::Ui) {
-        ui.separator();
-        ui.heading("Outliner");
         ui.add(
             egui::TextEdit::singleline(&mut self.outliner_search)
                 .hint_text("搜索 id / asset / type / codex / tag")
@@ -5731,19 +5512,10 @@ impl eframe::App for EditorApp {
         egui::Panel::top("top_bar").show_inside(ui, |ui| self.draw_top_bar(ui));
         egui::Panel::bottom("status_bar").show_inside(ui, |ui| self.draw_status_bar(ui));
         if self.show_left_sidebar {
-            egui::Panel::left("asset_panel")
+            egui::Panel::left("left_sidebar")
                 .resizable(true)
-                .default_size(280.0)
-                .show_inside(ui, |ui| {
-                    egui::ScrollArea::vertical().show(ui, |ui| self.draw_asset_panel(ui));
-                });
-            egui::Panel::left("layer_panel")
-                .resizable(true)
-                .default_size(260.0)
-                .show_inside(ui, |ui| {
-                    self.draw_layer_panel(ui);
-                    egui::ScrollArea::vertical().show(ui, |ui| self.draw_outliner_panel(ui));
-                });
+                .default_size(320.0)
+                .show_inside(ui, |ui| self.draw_left_sidebar(ui));
         } else {
             egui::Panel::left("left_sidebar_collapsed")
                 .resizable(false)
@@ -5782,111 +5554,6 @@ impl eframe::App for EditorApp {
     }
 }
 
-fn draw_grid(
-    painter: &egui::Painter,
-    clip_rect: Rect,
-    map_rect: Rect,
-    width: u32,
-    height: u32,
-    tile_size: f32,
-) {
-    if tile_size < 4.0 {
-        return;
-    }
-
-    let stroke = Stroke::new(
-        1.0,
-        Color32::from_rgba_unmultiplied(
-            THEME_MUTED_TEXT.r(),
-            THEME_MUTED_TEXT.g(),
-            THEME_MUTED_TEXT.b(),
-            34,
-        ),
-    );
-    let clipped = map_rect.intersect(clip_rect);
-    if clipped.is_negative() {
-        return;
-    }
-
-    for x in 0..=width {
-        let screen_x = map_rect.min.x + x as f32 * tile_size;
-        if screen_x < clip_rect.left() || screen_x > clip_rect.right() {
-            continue;
-        }
-        painter.line_segment(
-            [
-                Pos2::new(screen_x, clipped.top()),
-                Pos2::new(screen_x, clipped.bottom()),
-            ],
-            stroke,
-        );
-    }
-
-    for y in 0..=height {
-        let screen_y = map_rect.min.y + y as f32 * tile_size;
-        if screen_y < clip_rect.top() || screen_y > clip_rect.bottom() {
-            continue;
-        }
-        painter.line_segment(
-            [
-                Pos2::new(clipped.left(), screen_y),
-                Pos2::new(clipped.right(), screen_y),
-            ],
-            stroke,
-        );
-    }
-}
-
-fn default_layer_states() -> HashMap<LayerKind, LayerUiState> {
-    LayerKind::ALL
-        .into_iter()
-        .map(|layer| (layer, LayerUiState::default()))
-        .collect()
-}
-
-fn paint_transformed_image(
-    painter: &egui::Painter,
-    texture_id: egui::TextureId,
-    rect: Rect,
-    flip_x: bool,
-    rotation: i32,
-    tint: Color32,
-) {
-    let center = rect.center();
-    let half_size = rect.size() * 0.5;
-    let rotation = (normalize_rotation(rotation) as f32).to_radians();
-    let cos = rotation.cos();
-    let sin = rotation.sin();
-    let corners = [
-        vec2(-half_size.x, -half_size.y),
-        vec2(half_size.x, -half_size.y),
-        vec2(half_size.x, half_size.y),
-        vec2(-half_size.x, half_size.y),
-    ];
-    let [uv_left, uv_right] = if flip_x { [1.0, 0.0] } else { [0.0, 1.0] };
-    let uvs = [
-        Pos2::new(uv_left, 0.0),
-        Pos2::new(uv_right, 0.0),
-        Pos2::new(uv_right, 1.0),
-        Pos2::new(uv_left, 1.0),
-    ];
-
-    let mut mesh = Mesh::with_texture(texture_id);
-    for (corner, uv) in corners.into_iter().zip(uvs) {
-        let rotated = vec2(
-            corner.x * cos - corner.y * sin,
-            corner.x * sin + corner.y * cos,
-        );
-        mesh.vertices.push(Vertex {
-            pos: center + rotated,
-            uv,
-            color: tint,
-        });
-    }
-    mesh.indices.extend([0, 1, 2, 0, 2, 3]);
-    painter.add(Shape::mesh(mesh));
-}
-
 fn anchor_label(anchor: AnchorKind) -> &'static str {
     match anchor {
         AnchorKind::TopLeft => "左上",
@@ -5901,122 +5568,6 @@ fn snap_label(snap: SnapMode) -> &'static str {
         SnapMode::HalfGrid => "半格",
         SnapMode::Free => "自由",
     }
-}
-
-fn load_codex_database(project_root: &std::path::Path) -> (Option<CodexDatabase>, String) {
-    let path = project_root.join(DEFAULT_CODEX_DB_PATH);
-    match CodexDatabase::load(&path) {
-        Ok(database) => {
-            let count = database.entries().len();
-            (Some(database), format!("Codex 数据已加载：{count} 个条目"))
-        }
-        Err(error) => {
-            eprintln!("codex database load failed: {error:?}");
-            (
-                None,
-                format!(
-                    "Codex 数据读取失败 {}：{error:#}",
-                    display_project_path(project_root, &path)
-                ),
-            )
-        }
-    }
-}
-
-fn launch_scene_for_mode(mode: &str) -> &'static str {
-    if mode.eq_ignore_ascii_case("facility") {
-        "facility"
-    } else {
-        "overworld"
-    }
-}
-
-const DEFAULT_ENTITY_TYPES: &[&str] = &[
-    "Decoration",
-    "ScanTarget",
-    "FacilityEntrance",
-    "FacilityExit",
-    "Door",
-];
-
-const DEFAULT_UNLOCK_ITEM_IDS: &[&str] = &[
-    "ruin_key",
-    "scanner_tool",
-    "artifact_core",
-    "data_shard",
-    "energy_cell",
-    "alien_crystal_sample",
-    "bio_sample_vial",
-    "scrap_part",
-    "metal_fragment",
-    "glow_fungus_sample",
-];
-
-const OUTLINER_GROUPS: &[&str] = &["Spawns", "Entities", "Objects", "Decals", "Zones", "Ground"];
-const EDITOR_KNOWN_ZONE_TYPES: &[&str] = &["ScanArea", "MapTransition", "NoSpawn", "CameraBounds"];
-
-fn outliner_entry(
-    group: &'static str,
-    label: String,
-    detail: String,
-    selection: Option<SelectedItem>,
-    focus_world: Vec2,
-    badges: Vec<OutlinerBadge>,
-    search_text: String,
-) -> OutlinerEntry {
-    let badge_text = badges
-        .iter()
-        .map(|badge| badge.label)
-        .collect::<Vec<_>>()
-        .join(" ");
-    OutlinerEntry {
-        group,
-        label: label.clone(),
-        detail: detail.clone(),
-        search_text: [label, detail, search_text, badge_text]
-            .join(" ")
-            .to_ascii_lowercase(),
-        selection,
-        focus_world,
-        badges,
-    }
-}
-
-fn outliner_matches(entry: &OutlinerEntry, search: &str) -> bool {
-    search
-        .split_whitespace()
-        .all(|term| entry.search_text.contains(term))
-}
-
-fn unlock_search_text(unlock: Option<&UnlockRule>) -> String {
-    let Some(unlock) = unlock else {
-        return String::new();
-    };
-
-    [
-        unlock.requires_codex_id.as_deref().unwrap_or_default(),
-        unlock.requires_item_id.as_deref().unwrap_or_default(),
-        unlock.locked_message.as_deref().unwrap_or_default(),
-    ]
-    .join(" ")
-}
-
-fn zone_focus_world(zone: &content::ZoneInstance, tile_size: f32) -> Vec2 {
-    if zone.points.is_empty() {
-        return vec2(0.0, 0.0);
-    }
-    let mut min = vec2(f32::INFINITY, f32::INFINITY);
-    let mut max = vec2(f32::NEG_INFINITY, f32::NEG_INFINITY);
-    for point in &zone.points {
-        min.x = min.x.min(point[0]);
-        min.y = min.y.min(point[1]);
-        max.x = max.x.max(point[0]);
-        max.y = max.y.max(point[1]);
-    }
-    vec2(
-        (min.x + max.x) * 0.5 * tile_size,
-        (min.y + max.y) * 0.5 * tile_size,
-    )
 }
 
 fn scan_badge(asset: &AssetEntry) -> Option<(&'static str, Color32)> {
@@ -6186,41 +5737,6 @@ fn layer_shortcut(layer: LayerKind) -> &'static str {
         LayerKind::Entities => "4",
         LayerKind::Collision => "5",
         LayerKind::Zones => "6",
-    }
-}
-
-fn zone_colors(zone_type: &str) -> (Color32, Color32) {
-    match zone_type {
-        "ScanArea" => (
-            Color32::from_rgb(156, 166, 126),
-            Color32::from_rgba_unmultiplied(156, 166, 126, 34),
-        ),
-        "MapTransition" => (
-            THEME_WARNING,
-            Color32::from_rgba_unmultiplied(
-                THEME_WARNING.r(),
-                THEME_WARNING.g(),
-                THEME_WARNING.b(),
-                34,
-            ),
-        ),
-        "NoSpawn" => (
-            THEME_ERROR,
-            Color32::from_rgba_unmultiplied(THEME_ERROR.r(), THEME_ERROR.g(), THEME_ERROR.b(), 34),
-        ),
-        "CameraBounds" => (
-            Color32::from_rgb(152, 156, 126),
-            Color32::from_rgba_unmultiplied(152, 156, 126, 34),
-        ),
-        _ => (
-            THEME_ACCENT,
-            Color32::from_rgba_unmultiplied(
-                THEME_ACCENT.r(),
-                THEME_ACCENT.g(),
-                THEME_ACCENT.b(),
-                34,
-            ),
-        ),
     }
 }
 
@@ -6584,16 +6100,4 @@ fn entity_rect_editor(
             )
             .changed();
     });
-}
-
-fn validation_summary(issues: &[MapValidationIssue]) -> String {
-    let errors = issues
-        .iter()
-        .filter(|issue| issue.severity == MapValidationSeverity::Error)
-        .count();
-    let warnings = issues
-        .iter()
-        .filter(|issue| issue.severity == MapValidationSeverity::Warning)
-        .count();
-    format!("校验结果：{errors} 个错误，{warnings} 个警告")
 }
