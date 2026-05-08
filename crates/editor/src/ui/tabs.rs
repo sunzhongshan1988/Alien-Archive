@@ -1,8 +1,8 @@
-use eframe::egui::{self, Sense, Stroke, StrokeKind, Vec2, vec2};
+use eframe::egui::{self, Sense, Stroke, Vec2, vec2};
 
 use crate::ui::theme::{
-    THEME_ACCENT_STRONG, THEME_APP_BG, THEME_BORDER, THEME_MUTED_TEXT, THEME_PANEL_BG,
-    THEME_PANEL_BG_SOFT, THEME_TEXT,
+    THEME_ACCENT_STRONG, THEME_BORDER, THEME_MUTED_TEXT, THEME_PANEL_BG, THEME_PANEL_BG_SOFT,
+    THEME_TEXT,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -55,34 +55,23 @@ impl EditorTabs {
 
 fn draw_tab(ui: &mut egui::Ui, size: Vec2, label: &str, selected: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-    let fill = if selected {
-        THEME_PANEL_BG
-    } else if response.hovered() {
+    let fill = if response.hovered() {
         THEME_PANEL_BG_SOFT
     } else {
-        THEME_APP_BG
+        THEME_PANEL_BG
     };
 
     ui.painter().rect_filled(rect, 0.0, fill);
-    if selected {
-        ui.painter().rect_stroke(
-            rect,
-            0.0,
-            Stroke::new(1.0, THEME_BORDER),
-            StrokeKind::Inside,
-        );
-    }
     ui.painter().line_segment(
         [rect.left_bottom(), rect.right_bottom()],
-        Stroke::new(
-            if selected { 2.0 } else { 1.0 },
-            if selected {
-                THEME_ACCENT_STRONG
-            } else {
-                THEME_BORDER
-            },
-        ),
+        Stroke::new(1.0, THEME_BORDER),
     );
+    if selected {
+        ui.painter().line_segment(
+            [rect.left_bottom(), rect.right_bottom()],
+            Stroke::new(2.0, THEME_ACCENT_STRONG),
+        );
+    }
     ui.painter().text(
         rect.center(),
         egui::Align2::CENTER_CENTER,

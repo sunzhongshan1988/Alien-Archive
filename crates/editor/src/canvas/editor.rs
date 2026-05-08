@@ -759,13 +759,25 @@ impl EditorApp {
             .get(asset_id)
             .map(|asset| self.clamped_tile_footprint_at(asset, x, y))
             .unwrap_or_else(|| self.clamped_ground_footprint_at(x, y));
+        let paint_asset_id = self.ground_brush_asset_for(asset_id, x, y);
         for yy in y..y + height {
             for xx in x..x + width {
                 self.document.erase_at(LayerKind::Ground, xx, yy);
             }
         }
         self.document
-            .place_tile_sized(asset_id, x, y, width, height);
+            .place_tile_sized(&paint_asset_id, x, y, width, height);
+    }
+
+    fn ground_brush_asset_for(&self, asset_id: &str, x: i32, y: i32) -> String {
+        if !self.terrain_variation {
+            return asset_id.to_owned();
+        }
+
+        TerrainRules::from_assets(self.registry.assets())
+            .center_variant_for(asset_id, x, y)
+            .map(|choice| choice.asset_id)
+            .unwrap_or_else(|| asset_id.to_owned())
     }
 
     pub(crate) fn paint_collision_brush(&mut self, x: i32, y: i32) {

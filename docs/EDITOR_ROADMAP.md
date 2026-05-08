@@ -305,7 +305,10 @@ Godot 的 TileSet property painting 对我们很有参考价值：
 - 预览会提示素材类型/默认层与当前图层不匹配、图像超出地图边界等摆放风险，减少保存后再跑验证才发现的问题。
 - Terrain / Autotile 第一版已接入：地表工具栏新增“自动接边”，刷地、矩形填充、地表擦除和油漆桶填充后会重算受影响区域周围的同族地形。
 - 第一版规则由素材 id/tag 推断 terrain family 与 center/edge/corner 变体；如果只登记了一个方向的 edge/corner，会用旋转复用该变体；没有变体时安全回退到 center，不会破坏当前素材库。
-- 下一步继续 P1：Variation 权重和随机绘制，目标是减少大面积重复纹理。
+- 已生成并裁切一组临时地表素材：`tiles/generated` 下新增 88 张 128x128 tile，覆盖 sand、rock、ruin、scorch 和 transition 五组，原始大图保留为 `terrain_sheet_2026_05_08.png` 方便以后重裁。
+- 自动接边规则已调整为保留当前 center 变体；同一 terrain family 下多个中心 tile 不会在重算时被折回第一个素材。
+- Variation 随机绘制第一版已接入：地表工具栏新增“随机变体”，刷地、矩形填充和油漆桶会按坐标稳定选择同族 center 素材，避免大面积重复纹理；素材 tag 可用 `variation_weight` / `weight` 调整权重。
+- 下一步继续 P1：Pattern / Stamp，目标是把一片地表和对象组合保存成可复用盖章。
 
 ### 2026-05-07
 
