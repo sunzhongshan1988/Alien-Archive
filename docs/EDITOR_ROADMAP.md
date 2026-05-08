@@ -51,10 +51,26 @@
 - 层面板：按层显示/隐藏、锁定、选择当前层。
 - Inspector：地图属性、资产属性、单选实例属性、多选属性、碰撞/实体/区域相关属性。
 - 验证：能检查空地图 id、无效尺寸、越界、重复 id、未知资产、资产类型/默认层不匹配、实体类型为空、scale 非法、区域点数过少等。
+- UI 组件层：`crates/editor/src/ui` 是 Alien Archive Editor 自己的组件层。`egui` 只作为底层 immediate-mode GUI，长期不要在业务面板里反复手写 tabs、toolbar button、property row 等常见控件。
+- 面板拆分：左侧 `资源库 / 图层 / 对象` 面板已经从 `main.rs` 移到 `crates/editor/src/panels.rs`，右侧 Inspector 已移到 `crates/editor/src/inspector.rs`，弹窗和素材草稿编辑已移到 `crates/editor/src/dialogs.rs`，入口文件只保留主布局调度。下一步继续拆 canvas。
 
 这个基础已经足够继续做内容，但如果进入长期地图生产，下面这些缺口会很快变成效率和质量问题。
 
 ## 主要缺口
+
+### P0：建立 Editor UI 组件库
+
+编辑器会长期迭代，不能每个面板都直接拼裸 `egui` 控件。约定如下：
+
+- `crates/editor/src/ui` 是专用设计系统层，不追求通用 GUI 框架，只服务 Alien Archive Editor。
+- 业务代码优先调用 `ui/*` 组件；只有临时验证或一次性布局才直接写裸 `egui::Button` / `selectable_value` / 自绘 painter。
+- 已有 `ui/tabs.rs`，用于 editor 风格 tab bar。左侧栏的 `资源库 / 图层 / 对象` 已使用它。
+- 已有 `ui/buttons.rs`、`ui/header.rs`、`ui/fields.rs`、`ui/search.rs`、`ui/tree.rs`、`ui/sections.rs`，分别承担紧凑按钮、面板标题、属性行、搜索框、对象列表行和 Inspector 分段。
+- 已有 `ui/asset_grid.rs`、`ui/badge.rs`、`ui/layer_row.rs`，资源缩略图/资源行、状态标签和图层行不再散落在业务面板里手写。
+- 已有 `ui/filter_bar.rs` 和 `ui/side_rail.rs`，资源类型筛选和折叠侧栏也走组件层。
+- 后续新增常见组件时先进入 `ui/`，例如更完整的 `asset_grid` 拖拽/多选变体、`panel_surface`、`splitter`。
+- 视觉风格集中走 `ui/theme.rs`，不要在业务代码里散落新的颜色常量。
+- 每次新增 UI 组件，要在 `crates/editor/src/ui/README.md` 里记录用途和使用约定。
 
 ### P0：先补游戏语义和防错
 
