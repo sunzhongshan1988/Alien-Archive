@@ -1,17 +1,13 @@
 use eframe::egui::{
-    self, Color32, Pos2, Rect, Response, RichText, Sense, Stroke, StrokeKind, TextureHandle, vec2,
+    self, Color32, Pos2, Rect, Response, Sense, Stroke, StrokeKind, TextureHandle, vec2,
 };
 
-use crate::ui::{
-    badge::status_badge,
-    theme::{THEME_ACCENT_DIM, THEME_ACCENT_STRONG, THEME_BORDER, THEME_PANEL_BG_SOFT, THEME_TEXT},
+use crate::ui::theme::{
+    THEME_ACCENT_DIM, THEME_ACCENT_STRONG, THEME_BORDER, THEME_PANEL_BG_SOFT, THEME_TEXT,
 };
 
 pub(crate) const ASSET_TILE_SIZE: egui::Vec2 = egui::Vec2::new(56.0, 64.0);
 const ASSET_THUMB_SIZE: egui::Vec2 = egui::Vec2::new(40.0, 40.0);
-const ASSET_LIST_ROW_HEIGHT: f32 = 60.0;
-const ASSET_LIST_CARD_HEIGHT: f32 = 54.0;
-const ASSET_LIST_CONTENT_HEIGHT: f32 = 24.0;
 
 pub(crate) fn asset_grid_columns(ui: &egui::Ui) -> usize {
     (ui.available_width() / ASSET_TILE_SIZE.x).floor().max(1.0) as usize
@@ -37,51 +33,6 @@ pub(crate) fn asset_tile(
         egui::TextStyle::Small.resolve(ui.style()),
         THEME_TEXT,
     );
-
-    response
-}
-
-pub(crate) fn asset_list_row(
-    ui: &mut egui::Ui,
-    selected: bool,
-    label: &str,
-    texture: Option<&TextureHandle>,
-    badge: Option<(&str, Color32)>,
-) -> Response {
-    let (rect, response) = ui.allocate_exact_size(
-        vec2(ui.available_width(), ASSET_LIST_ROW_HEIGHT),
-        Sense::click(),
-    );
-    let card_rect = Rect::from_min_max(rect.min, rect.max - vec2(0.0, 6.0));
-    paint_selectable_rect(ui, card_rect, selected, response.hovered(), 2.0);
-
-    let image_slot = Rect::from_min_size(
-        card_rect.min + vec2(8.0, (ASSET_LIST_CARD_HEIGHT - ASSET_THUMB_SIZE.y) * 0.5),
-        ASSET_THUMB_SIZE,
-    );
-    paint_thumbnail(ui, image_slot, texture);
-
-    let content_rect = Rect::from_min_max(
-        card_rect.min
-            + vec2(
-                60.0,
-                (ASSET_LIST_CARD_HEIGHT - ASSET_LIST_CONTENT_HEIGHT) * 0.5,
-            ),
-        card_rect.max
-            - vec2(
-                6.0,
-                (ASSET_LIST_CARD_HEIGHT - ASSET_LIST_CONTENT_HEIGHT) * 0.5,
-            ),
-    );
-    ui.scope_builder(egui::UiBuilder::new().max_rect(content_rect), |ui| {
-        ui.spacing_mut().item_spacing = vec2(6.0, 0.0);
-        ui.horizontal(|ui| {
-            if let Some((label, color)) = badge {
-                status_badge(ui, label, color);
-            }
-            ui.label(RichText::new(label).color(THEME_TEXT));
-        });
-    });
 
     response
 }

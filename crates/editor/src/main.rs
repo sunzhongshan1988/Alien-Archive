@@ -55,7 +55,7 @@ use eframe::egui::{
 };
 use terrain::{TerrainMask, TerrainRules};
 use tools::ToolKind;
-use ui::asset_grid::{asset_grid_columns, asset_list_row, asset_tile};
+use ui::asset_grid::{asset_grid_columns, asset_tile};
 use ui::buttons::editor_icon_button;
 use ui::fields::{property_options, property_text_edit};
 use ui::filter_bar::filter_bar;
@@ -1752,15 +1752,6 @@ fn snap_label(snap: SnapMode) -> &'static str {
         SnapMode::Grid => "网格",
         SnapMode::HalfGrid => "半格",
         SnapMode::Free => "自由",
-    }
-}
-
-fn scan_badge(asset: &AssetEntry) -> Option<(&'static str, Color32)> {
-    asset.codex_id.as_ref()?;
-    if asset.kind == AssetKind::Entity {
-        Some(("scan", THEME_ACCENT_STRONG))
-    } else {
-        Some(("codex", THEME_WARNING))
     }
 }
 

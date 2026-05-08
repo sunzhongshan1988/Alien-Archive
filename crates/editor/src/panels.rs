@@ -35,21 +35,14 @@ impl EditorApp {
                         .cloned()
                         .collect::<Vec<_>>();
 
-                    if category == "tiles" {
-                        self.draw_tile_asset_grid(ui, &assets);
-                        return;
-                    }
-
-                    for asset in assets {
-                        self.draw_asset_list_row(ui, &asset);
-                    }
+                    self.draw_asset_grid(ui, &category, &assets);
                 });
         }
     }
 
-    fn draw_tile_asset_grid(&mut self, ui: &mut egui::Ui, assets: &[AssetEntry]) {
+    fn draw_asset_grid(&mut self, ui: &mut egui::Ui, category: &str, assets: &[AssetEntry]) {
         let columns = asset_grid_columns(ui);
-        egui::Grid::new("tile_asset_grid")
+        egui::Grid::new(format!("asset_grid_{category}"))
             .num_columns(columns)
             .spacing(vec2(6.0, 6.0))
             .show(ui, |ui| {
@@ -71,27 +64,6 @@ impl EditorApp {
                     }
                 }
             });
-    }
-
-    fn draw_asset_list_row(&mut self, ui: &mut egui::Ui, asset: &AssetEntry) {
-        if self
-            .asset_kind_filter
-            .is_some_and(|kind| kind != asset.kind)
-        {
-            return;
-        }
-        let selected = self.selected_asset.as_deref() == Some(asset.id.as_str());
-        let response = asset_list_row(
-            ui,
-            selected,
-            &asset.id,
-            self.thumbnails.get(&asset.id),
-            scan_badge(asset),
-        );
-
-        if response.clicked() {
-            self.select_asset(asset);
-        }
     }
 
     fn select_asset(&mut self, asset: &AssetEntry) {
