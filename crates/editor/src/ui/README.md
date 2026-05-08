@@ -18,7 +18,6 @@
 - `asset_grid.rs`: reusable thumbnail tiles and list rows for asset-like collections.
 - `badge.rs`: compact colored status labels.
 - `fields.rs`: property rows and text/options fields for inspector-style forms.
-- `filter_bar.rs`: wrapped filter chips for enum/category filters.
 - `header.rs`: shared panel header row with a right-side action.
 - `layer_row.rs`: layer rows with active state, item count, visibility, and lock toggles.
 - `search.rs`: search input with built-in clear action.

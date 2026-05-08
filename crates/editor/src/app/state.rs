@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::PathBuf, time::Instant};
 
-use content::{self, AssetDatabase, AssetKind, CodexDatabase, LayerKind, MapDocument};
+use content::{self, AssetDatabase, CodexDatabase, LayerKind, MapDocument};
 use eframe::egui::{Color32, Pos2, TextureHandle, Vec2};
 
 use super::{config::EditorConfig, maps::MapListEntry};
@@ -208,7 +208,6 @@ pub(crate) struct EditorApp {
     pub(crate) rectangle_erase_mode: bool,
     pub(crate) asset_search: String,
     pub(crate) outliner_search: String,
-    pub(crate) asset_kind_filter: Option<AssetKind>,
     pub(crate) show_grid: bool,
     pub(crate) show_collision: bool,
     pub(crate) show_entity_bounds: bool,

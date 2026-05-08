@@ -58,7 +58,6 @@ use tools::ToolKind;
 use ui::asset_grid::{asset_grid_columns, asset_tile};
 use ui::buttons::editor_icon_button;
 use ui::fields::{property_options, property_text_edit};
-use ui::filter_bar::filter_bar;
 use ui::header::panel_header;
 use ui::layer_row::layer_row;
 use ui::search::search_field;
@@ -72,6 +71,8 @@ use ui::toolbar::{
 };
 use ui::tree::{TreeBadge, tree_row};
 use util::{geometry::*, ids::*, sanitize::*};
+
+const MENU_BAR_HEIGHT: f32 = 30.0;
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
@@ -148,7 +149,6 @@ impl EditorApp {
             rectangle_erase_mode: false,
             asset_search: String::new(),
             outliner_search: String::new(),
-            asset_kind_filter: None,
             show_grid: true,
             show_collision: true,
             show_entity_bounds: false,
@@ -1311,241 +1311,247 @@ impl EditorApp {
     }
 
     fn draw_menu_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.menu_button("文件", |ui| {
-                if ui.button("新建地图").clicked() {
-                    self.new_map_draft = NewMapDraft::default();
-                    self.show_new_map_dialog = true;
-                    ui.close();
-                }
-                if ui.button("打开...").clicked() {
-                    self.open_map_dialog();
-                    ui.close();
-                }
-                ui.menu_button("从列表打开", |ui| {
-                    for entry in self.map_entries.clone() {
-                        if ui.button(&entry.label).clicked() {
-                            self.selected_map_path = entry.path.clone();
-                            self.open_selected_map();
+        ui.allocate_ui_with_layout(
+            vec2(ui.available_width(), MENU_BAR_HEIGHT),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.set_height(MENU_BAR_HEIGHT);
+                ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
+                ui.menu_button("文件", |ui| {
+                    if ui.button("新建地图").clicked() {
+                        self.new_map_draft = NewMapDraft::default();
+                        self.show_new_map_dialog = true;
+                        ui.close();
+                    }
+                    if ui.button("打开...").clicked() {
+                        self.open_map_dialog();
+                        ui.close();
+                    }
+                    ui.menu_button("从列表打开", |ui| {
+                        for entry in self.map_entries.clone() {
+                            if ui.button(&entry.label).clicked() {
+                                self.selected_map_path = entry.path.clone();
+                                self.open_selected_map();
+                                ui.close();
+                            }
+                        }
+                        ui.separator();
+                        if ui.button("刷新列表").clicked() {
+                            self.refresh_map_entries();
                             ui.close();
                         }
+                    });
+                    ui.menu_button("最近地图", |ui| {
+                        if self.config.recent_maps.is_empty() {
+                            ui.label("暂无");
+                        }
+                        for recent in self.config.recent_maps.clone() {
+                            if ui.button(&recent).clicked() {
+                                let path = self.project_root.join(&recent);
+                                if self.dirty && path != self.map_path {
+                                    self.open_confirm_path = Some(path);
+                                } else {
+                                    self.open_map(path);
+                                }
+                                ui.close();
+                            }
+                        }
+                    });
+                    if ui.button("保存").clicked() {
+                        self.save_map();
+                        ui.close();
                     }
-                    ui.separator();
-                    if ui.button("刷新列表").clicked() {
-                        self.refresh_map_entries();
+                    if ui.button("保存并运行当前地图").clicked() {
+                        self.save_and_run_current_map();
+                        ui.close();
+                    }
+                    if ui.button("另存为").clicked() {
+                        self.save_map_as();
+                        ui.close();
+                    }
+                    if ui.button("删除地图").clicked() {
+                        self.delete_confirm_path = Some(self.selected_map_path.clone());
+                        ui.close();
+                    }
+                    if ui.button("还原").clicked() {
+                        if self.dirty {
+                            self.open_confirm_path = Some(self.map_path.clone());
+                        }
                         ui.close();
                     }
                 });
-                ui.menu_button("最近地图", |ui| {
-                    if self.config.recent_maps.is_empty() {
-                        ui.label("暂无");
-                    }
-                    for recent in self.config.recent_maps.clone() {
-                        if ui.button(&recent).clicked() {
-                            let path = self.project_root.join(&recent);
-                            if self.dirty && path != self.map_path {
-                                self.open_confirm_path = Some(path);
-                            } else {
-                                self.open_map(path);
-                            }
-                            ui.close();
-                        }
-                    }
-                });
-                if ui.button("保存").clicked() {
-                    self.save_map();
-                    ui.close();
-                }
-                if ui.button("保存并运行当前地图").clicked() {
-                    self.save_and_run_current_map();
-                    ui.close();
-                }
-                if ui.button("另存为").clicked() {
-                    self.save_map_as();
-                    ui.close();
-                }
-                if ui.button("删除地图").clicked() {
-                    self.delete_confirm_path = Some(self.selected_map_path.clone());
-                    ui.close();
-                }
-                if ui.button("还原").clicked() {
-                    if self.dirty {
-                        self.open_confirm_path = Some(self.map_path.clone());
-                    }
-                    ui.close();
-                }
-            });
 
-            ui.menu_button("编辑", |ui| {
-                if ui
-                    .add_enabled(!self.undo_stack.is_empty(), egui::Button::new("撤销"))
-                    .clicked()
-                {
-                    self.undo();
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(!self.redo_stack.is_empty(), egui::Button::new("重做"))
-                    .clicked()
-                {
-                    self.redo();
-                    ui.close();
-                }
-                ui.separator();
-                if ui.button("复制").clicked() {
-                    self.copy_selected_item();
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(!self.clipboard.is_empty(), egui::Button::new("粘贴"))
-                    .clicked()
-                {
-                    self.paste_clipboard();
-                    ui.close();
-                }
-                if ui.button("复制一份").clicked() {
-                    self.duplicate_selected_item();
-                    ui.close();
-                }
-                if ui.button("删除").clicked() {
-                    self.delete_current_selection();
-                    ui.close();
-                }
-            });
-
-            ui.menu_button("视图", |ui| {
-                ui.checkbox(&mut self.show_left_sidebar, "左侧栏");
-                ui.checkbox(&mut self.show_right_sidebar, "右侧栏");
-                ui.separator();
-                ui.checkbox(&mut self.show_grid, "网格");
-                ui.checkbox(&mut self.show_collision, "碰撞");
-                ui.checkbox(&mut self.show_entity_bounds, "实体边界");
-                ui.checkbox(&mut self.show_zones, "区域");
-                ui.checkbox(&mut self.show_zone_labels, "区域标签");
-                ui.separator();
-                if ui.button("重置视图").clicked() {
-                    self.pan = vec2(48.0, 48.0);
-                    self.zoom = 1.0;
-                    ui.close();
-                }
-            });
-
-            ui.menu_button("地图", |ui| {
-                if ui.button("校验地图").clicked() {
-                    self.validation_issues = self.validate_current_map();
-                    self.show_validation_panel = true;
-                    self.status = validation_summary(&self.validation_issues);
-                    ui.close();
-                }
-                if ui.button("保存并运行当前地图").clicked() {
-                    self.save_and_run_current_map();
-                    ui.close();
-                }
-                if ui.button("重新加载 Codex").clicked() {
-                    self.reload_codex_database();
-                    ui.close();
-                }
-                ui.label(format!(
-                    "{} / {}x{} / {}px",
-                    self.document.id,
-                    self.document.width,
-                    self.document.height,
-                    self.document.tile_size
-                ));
-            });
-
-            ui.menu_button("图层", |ui| {
-                for layer in LayerKind::ALL {
-                    ui.horizontal(|ui| {
-                        if ui
-                            .selectable_value(
-                                &mut self.active_layer,
-                                layer,
-                                format!("{} ({})", layer.zh_label(), layer_shortcut(layer)),
-                            )
-                            .clicked()
-                        {
-                            ui.close();
-                        }
-                        let state = self.layer_states.entry(layer).or_default();
-                        ui.checkbox(&mut state.visible, "显示");
-                        ui.checkbox(&mut state.locked, "锁定");
-                    });
-                }
-            });
-
-            ui.menu_button("工具", |ui| {
-                for tool in ToolKind::ALL {
+                ui.menu_button("编辑", |ui| {
                     if ui
-                        .selectable_label(self.tool == tool, tool.menu_label())
+                        .add_enabled(!self.undo_stack.is_empty(), egui::Button::new("撤销"))
                         .clicked()
                     {
-                        self.set_tool(tool);
+                        self.undo();
                         ui.close();
                     }
-                }
-            });
-
-            ui.menu_button("素材", |ui| {
-                let ctx = ui.ctx().clone();
-                if ui.button("添加素材").clicked() {
-                    self.open_add_asset_dialog();
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(
-                        self.selected_asset.is_some(),
-                        egui::Button::new("编辑当前素材"),
-                    )
-                    .clicked()
-                {
-                    if let Some(asset_id) = self.selected_asset.clone() {
-                        self.open_edit_asset_dialog(&asset_id);
+                    if ui
+                        .add_enabled(!self.redo_stack.is_empty(), egui::Button::new("重做"))
+                        .clicked()
+                    {
+                        self.redo();
+                        ui.close();
                     }
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(
-                        self.selected_asset.is_some(),
-                        egui::Button::new("移除当前素材"),
-                    )
-                    .clicked()
-                {
-                    self.delete_selected_asset_definition(&ctx);
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(self.asset_db_dirty, egui::Button::new("保存素材库"))
-                    .clicked()
-                {
-                    self.save_asset_database();
-                    ui.close();
-                }
-                if ui.button("未登记图片").clicked() {
-                    self.show_unregistered_assets = true;
-                    ui.close();
-                }
-                ui.separator();
-                if ui.button("重新扫描 Metadata").clicked() {
-                    self.reload_asset_database(&ctx);
-                    ui.close();
-                }
-                ui.label(format!(
-                    "{} 个素材{}",
-                    self.registry.assets().len(),
-                    if self.asset_db_dirty { " *" } else { "" }
-                ));
-            });
+                    ui.separator();
+                    if ui.button("复制").clicked() {
+                        self.copy_selected_item();
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(!self.clipboard.is_empty(), egui::Button::new("粘贴"))
+                        .clicked()
+                    {
+                        self.paste_clipboard();
+                        ui.close();
+                    }
+                    if ui.button("复制一份").clicked() {
+                        self.duplicate_selected_item();
+                        ui.close();
+                    }
+                    if ui.button("删除").clicked() {
+                        self.delete_current_selection();
+                        ui.close();
+                    }
+                });
 
-            ui.menu_button("帮助", |ui| {
-                ui.label("Cmd/Ctrl+S 保存");
-                ui.label("Cmd/Ctrl+Z 撤销 / Cmd/Ctrl+Shift+Z 重做");
-                ui.label("V/B/G/R/E/I/C/A/H/Z 切换工具");
-                ui.label("1-6 切换图层");
-                ui.label("空格拖拽平移，滚轮缩放");
-                ui.label("鼠标中键拖拽平移");
-            });
-        });
+                ui.menu_button("视图", |ui| {
+                    ui.checkbox(&mut self.show_left_sidebar, "左侧栏");
+                    ui.checkbox(&mut self.show_right_sidebar, "右侧栏");
+                    ui.separator();
+                    ui.checkbox(&mut self.show_grid, "网格");
+                    ui.checkbox(&mut self.show_collision, "碰撞");
+                    ui.checkbox(&mut self.show_entity_bounds, "实体边界");
+                    ui.checkbox(&mut self.show_zones, "区域");
+                    ui.checkbox(&mut self.show_zone_labels, "区域标签");
+                    ui.separator();
+                    if ui.button("重置视图").clicked() {
+                        self.pan = vec2(48.0, 48.0);
+                        self.zoom = 1.0;
+                        ui.close();
+                    }
+                });
+
+                ui.menu_button("地图", |ui| {
+                    if ui.button("校验地图").clicked() {
+                        self.validation_issues = self.validate_current_map();
+                        self.show_validation_panel = true;
+                        self.status = validation_summary(&self.validation_issues);
+                        ui.close();
+                    }
+                    if ui.button("保存并运行当前地图").clicked() {
+                        self.save_and_run_current_map();
+                        ui.close();
+                    }
+                    if ui.button("重新加载 Codex").clicked() {
+                        self.reload_codex_database();
+                        ui.close();
+                    }
+                    ui.label(format!(
+                        "{} / {}x{} / {}px",
+                        self.document.id,
+                        self.document.width,
+                        self.document.height,
+                        self.document.tile_size
+                    ));
+                });
+
+                ui.menu_button("图层", |ui| {
+                    for layer in LayerKind::ALL {
+                        ui.horizontal(|ui| {
+                            if ui
+                                .selectable_value(
+                                    &mut self.active_layer,
+                                    layer,
+                                    format!("{} ({})", layer.zh_label(), layer_shortcut(layer)),
+                                )
+                                .clicked()
+                            {
+                                ui.close();
+                            }
+                            let state = self.layer_states.entry(layer).or_default();
+                            ui.checkbox(&mut state.visible, "显示");
+                            ui.checkbox(&mut state.locked, "锁定");
+                        });
+                    }
+                });
+
+                ui.menu_button("工具", |ui| {
+                    for tool in ToolKind::ALL {
+                        if ui
+                            .selectable_label(self.tool == tool, tool.menu_label())
+                            .clicked()
+                        {
+                            self.set_tool(tool);
+                            ui.close();
+                        }
+                    }
+                });
+
+                ui.menu_button("素材", |ui| {
+                    let ctx = ui.ctx().clone();
+                    if ui.button("添加素材").clicked() {
+                        self.open_add_asset_dialog();
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.selected_asset.is_some(),
+                            egui::Button::new("编辑当前素材"),
+                        )
+                        .clicked()
+                    {
+                        if let Some(asset_id) = self.selected_asset.clone() {
+                            self.open_edit_asset_dialog(&asset_id);
+                        }
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.selected_asset.is_some(),
+                            egui::Button::new("移除当前素材"),
+                        )
+                        .clicked()
+                    {
+                        self.delete_selected_asset_definition(&ctx);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(self.asset_db_dirty, egui::Button::new("保存素材库"))
+                        .clicked()
+                    {
+                        self.save_asset_database();
+                        ui.close();
+                    }
+                    if ui.button("未登记图片").clicked() {
+                        self.show_unregistered_assets = true;
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button("重新扫描 Metadata").clicked() {
+                        self.reload_asset_database(&ctx);
+                        ui.close();
+                    }
+                    ui.label(format!(
+                        "{} 个素材{}",
+                        self.registry.assets().len(),
+                        if self.asset_db_dirty { " *" } else { "" }
+                    ));
+                });
+
+                ui.menu_button("帮助", |ui| {
+                    ui.label("Cmd/Ctrl+S 保存");
+                    ui.label("Cmd/Ctrl+Z 撤销 / Cmd/Ctrl+Shift+Z 重做");
+                    ui.label("V/B/G/R/E/I/C/A/H/Z 切换工具");
+                    ui.label("1-6 切换图层");
+                    ui.label("空格拖拽平移，滚轮缩放");
+                    ui.label("鼠标中键拖拽平移");
+                });
+            },
+        );
     }
 
     fn draw_tool_bar(&mut self, ui: &mut egui::Ui) {

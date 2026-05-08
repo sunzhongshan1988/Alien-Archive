@@ -4,40 +4,33 @@ impl EditorApp {
     fn draw_asset_panel(&mut self, ui: &mut egui::Ui) {
         ui.small(format!("{} 个 metadata 素材", self.registry.assets().len()));
         search_field(ui, &mut self.asset_search, "搜索 id / tag / path");
-        let filter_options = std::iter::once((None, "全部")).chain(
-            AssetKind::ALL
-                .into_iter()
-                .map(|kind| (Some(kind), kind.zh_label())),
-        );
-        filter_bar(ui, &mut self.asset_kind_filter, filter_options);
-        ui.separator();
-
         let search = self.asset_search.to_ascii_lowercase();
-        let categories = self
-            .registry
-            .categories()
-            .into_iter()
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
-        for category in categories {
-            egui::CollapsingHeader::new(category_label(&category))
-                .default_open(category == "tiles" || category == "props")
-                .show(ui, |ui| {
-                    let assets = self
-                        .registry
-                        .in_category(&category)
-                        .filter(|asset| {
-                            !self
-                                .asset_kind_filter
-                                .is_some_and(|kind| kind != asset.kind)
-                                && (search.is_empty() || asset_matches_search(asset, &search))
-                        })
-                        .cloned()
-                        .collect::<Vec<_>>();
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                let categories = self
+                    .registry
+                    .categories()
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>();
+                for category in categories {
+                    egui::CollapsingHeader::new(category_label(&category))
+                        .default_open(category == "tiles" || category == "props")
+                        .show(ui, |ui| {
+                            let assets = self
+                                .registry
+                                .in_category(&category)
+                                .filter(|asset| {
+                                    search.is_empty() || asset_matches_search(asset, &search)
+                                })
+                                .cloned()
+                                .collect::<Vec<_>>();
 
-                    self.draw_asset_grid(ui, &category, &assets);
-                });
-        }
+                            self.draw_asset_grid(ui, &category, &assets);
+                        });
+                }
+            });
     }
 
     fn draw_asset_grid(&mut self, ui: &mut egui::Ui, category: &str, assets: &[AssetEntry]) {
@@ -95,7 +88,7 @@ impl EditorApp {
 
         match self.active_left_tab {
             LeftSidebarTab::Assets => {
-                egui::ScrollArea::vertical().show(ui, |ui| self.draw_asset_panel(ui));
+                self.draw_asset_panel(ui);
             }
             LeftSidebarTab::Layers => {
                 self.draw_layer_panel(ui);

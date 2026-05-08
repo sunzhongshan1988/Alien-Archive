@@ -74,5 +74,16 @@ pub(crate) fn configure_editor_theme(ctx: &EguiContext) {
     style.spacing.item_spacing = vec2(8.0, 6.0);
     style.spacing.button_padding = vec2(8.0, 4.0);
     style.spacing.menu_margin = egui::Margin::same(8);
+    style.spacing.scroll.floating = true;
+    style.spacing.scroll.bar_width = 5.0;
+    style.spacing.scroll.floating_width = 3.0;
+    style.spacing.scroll.floating_allocated_width = 3.0;
+    style.spacing.scroll.foreground_color = false;
+    style.spacing.scroll.dormant_background_opacity = 0.0;
+    style.spacing.scroll.active_background_opacity = 0.08;
+    style.spacing.scroll.interact_background_opacity = 0.16;
+    style.spacing.scroll.dormant_handle_opacity = 0.32;
+    style.spacing.scroll.active_handle_opacity = 0.48;
+    style.spacing.scroll.interact_handle_opacity = 0.72;
     ctx.set_global_style(style);
 }
