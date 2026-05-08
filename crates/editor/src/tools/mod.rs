@@ -6,6 +6,7 @@ pub(crate) enum ToolKind {
     Rectangle,
     Erase,
     Eyedropper,
+    Stamp,
     Collision,
     Zone,
     Pan,
@@ -13,13 +14,14 @@ pub(crate) enum ToolKind {
 }
 
 impl ToolKind {
-    pub(crate) const ALL: [Self; 10] = [
+    pub(crate) const ALL: [Self; 11] = [
         Self::Select,
         Self::Brush,
         Self::Bucket,
         Self::Rectangle,
         Self::Erase,
         Self::Eyedropper,
+        Self::Stamp,
         Self::Collision,
         Self::Zone,
         Self::Pan,
@@ -34,6 +36,7 @@ impl ToolKind {
             Self::Rectangle => "矩形",
             Self::Erase => "橡皮",
             Self::Eyedropper => "吸管",
+            Self::Stamp => "盖章",
             Self::Collision => "碰撞",
             Self::Zone => "区域",
             Self::Pan => "平移",
@@ -49,6 +52,7 @@ impl ToolKind {
             Self::Rectangle => "R",
             Self::Erase => "E",
             Self::Eyedropper => "I",
+            Self::Stamp => "S",
             Self::Collision => "C",
             Self::Zone => "A",
             Self::Pan => "H",

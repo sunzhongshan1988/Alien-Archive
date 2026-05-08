@@ -31,6 +31,38 @@ pub(crate) enum ClipboardItem {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) enum StampItem {
+    Ground(content::TileInstance),
+    Decal(content::ObjectInstance),
+    Object(content::ObjectInstance),
+    Entity(content::EntityInstance),
+}
+
+impl StampItem {
+    pub(crate) fn layer(&self) -> LayerKind {
+        match self {
+            Self::Ground(_) => LayerKind::Ground,
+            Self::Decal(_) => LayerKind::Decals,
+            Self::Object(_) => LayerKind::Objects,
+            Self::Entity(_) => LayerKind::Entities,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct StampPattern {
+    pub(crate) width: i32,
+    pub(crate) height: i32,
+    pub(crate) items: Vec<StampItem>,
+}
+
+impl StampPattern {
+    pub(crate) fn item_count(&self) -> usize {
+        self.items.len()
+    }
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct NewMapDraft {
     pub(crate) id: String,
     pub(crate) mode: String,
@@ -83,6 +115,12 @@ pub(crate) struct SelectionMarquee {
     pub(crate) start: Pos2,
     pub(crate) current: Pos2,
     pub(crate) additive: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct StampCaptureDrag {
+    pub(crate) start: [i32; 2],
+    pub(crate) current: [i32; 2],
 }
 
 #[derive(Clone, Debug)]
@@ -193,6 +231,7 @@ pub(crate) struct EditorApp {
     pub(crate) undo_stack: Vec<MapDocument>,
     pub(crate) redo_stack: Vec<MapDocument>,
     pub(crate) clipboard: Vec<ClipboardItem>,
+    pub(crate) stamp_pattern: Option<StampPattern>,
     pub(crate) selected_asset: Option<String>,
     pub(crate) selected_item: Option<SelectedItem>,
     pub(crate) selected_items: Vec<SelectedItem>,
@@ -221,6 +260,7 @@ pub(crate) struct EditorApp {
     pub(crate) last_autosave: Instant,
     pub(crate) rectangle_drag_start: Option<[i32; 2]>,
     pub(crate) rectangle_drag_current: Option<[i32; 2]>,
+    pub(crate) stamp_capture_drag: Option<StampCaptureDrag>,
     pub(crate) lock_aspect_ratio: bool,
     pub(crate) resize_drag: Option<ResizeDrag>,
     pub(crate) selection_marquee: Option<SelectionMarquee>,

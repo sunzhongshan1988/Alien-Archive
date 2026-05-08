@@ -1,4 +1,5 @@
 use std::{
+    cmp::Ordering,
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
@@ -50,6 +51,39 @@ impl Map {
     }
 
     pub fn draw(&self, renderer: &mut dyn Renderer) {
+        self.draw_ground(renderer);
+        self.draw_decals(renderer);
+
+        for drawable in self.sorted_depth_drawables() {
+            drawable.draw(renderer);
+        }
+    }
+
+    pub fn draw_with_actor(
+        &self,
+        renderer: &mut dyn Renderer,
+        actor_depth_y: f32,
+        draw_actor: impl FnOnce(&mut dyn Renderer),
+    ) {
+        self.draw_ground(renderer);
+        self.draw_decals(renderer);
+
+        let actor_key = DepthKey::new(actor_depth_y, 0);
+        let mut draw_actor = Some(draw_actor);
+
+        for drawable in self.sorted_depth_drawables() {
+            if draw_actor.is_some() && actor_key.cmp(&drawable.depth_key()) == Ordering::Less {
+                draw_actor.take().expect("actor draw should exist")(renderer);
+            }
+            drawable.draw(renderer);
+        }
+
+        if let Some(draw_actor) = draw_actor {
+            draw_actor(renderer);
+        }
+    }
+
+    fn draw_ground(&self, renderer: &mut dyn Renderer) {
         for tile in &self.tiles {
             match &tile.visual {
                 MapVisual::Color(color) => renderer.draw_rect(tile.rect, *color),
@@ -64,8 +98,14 @@ impl Map {
                 }
             }
         }
+    }
 
-        let mut sprites = self.sprites.iter().collect::<Vec<_>>();
+    fn draw_decals(&self, renderer: &mut dyn Renderer) {
+        let mut sprites = self
+            .sprites
+            .iter()
+            .filter(|sprite| sprite.layer == MapSpriteLayer::Decal)
+            .collect::<Vec<_>>();
         sprites.sort_by(|left, right| {
             left.z_index
                 .cmp(&right.z_index)
@@ -80,30 +120,23 @@ impl Map {
                 sprite.rotation,
             );
         }
+    }
 
-        let mut entities = self.entities.iter().collect::<Vec<_>>();
-        entities.sort_by(|left, right| {
-            left.z_index.cmp(&right.z_index).then_with(|| {
-                left.sprite_rect
-                    .bottom()
-                    .total_cmp(&right.sprite_rect.bottom())
-            })
-        });
-        for entity in entities {
-            if entity.kind != MapEntityKind::PlayerSpawn {
-                if let Some(texture_id) = &entity.texture_id {
-                    renderer.draw_image_transformed(
-                        texture_id,
-                        entity.sprite_rect,
-                        Color::rgba(1.0, 1.0, 1.0, 1.0),
-                        entity.flip_x,
-                        entity.rotation,
-                    );
-                } else {
-                    renderer.draw_rect(entity.rect, entity.color);
-                }
-            }
-        }
+    fn sorted_depth_drawables(&self) -> Vec<DepthDrawable<'_>> {
+        let mut drawables = self
+            .sprites
+            .iter()
+            .filter(|sprite| sprite.layer == MapSpriteLayer::Object)
+            .map(DepthDrawable::Sprite)
+            .chain(
+                self.entities
+                    .iter()
+                    .filter(|entity| entity.kind != MapEntityKind::PlayerSpawn)
+                    .map(DepthDrawable::Entity),
+            )
+            .collect::<Vec<_>>();
+        drawables.sort_by(|left, right| left.depth_key().cmp(&right.depth_key()));
+        drawables
     }
 
     pub fn load_assets(&self, renderer: &mut dyn Renderer) -> Result<()> {
@@ -264,6 +297,7 @@ impl Map {
                 &registry,
                 &mut textures,
                 &mut sprites,
+                MapSpriteLayer::Decal,
                 origin,
                 tile_size,
                 decal,
@@ -274,6 +308,7 @@ impl Map {
                 &registry,
                 &mut textures,
                 &mut sprites,
+                MapSpriteLayer::Object,
                 origin,
                 tile_size,
                 object,
@@ -420,8 +455,76 @@ struct MapSprite {
     texture_id: String,
     rect: Rect,
     z_index: i32,
+    layer: MapSpriteLayer,
     flip_x: bool,
     rotation: i32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MapSpriteLayer {
+    Decal,
+    Object,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum DepthDrawable<'a> {
+    Sprite(&'a MapSprite),
+    Entity(&'a MapEntity),
+}
+
+impl DepthDrawable<'_> {
+    fn depth_key(self) -> DepthKey {
+        match self {
+            Self::Sprite(sprite) => DepthKey::new(sprite.rect.bottom(), sprite.z_index),
+            Self::Entity(entity) => DepthKey::new(entity.sprite_rect.bottom(), entity.z_index),
+        }
+    }
+
+    fn draw(self, renderer: &mut dyn Renderer) {
+        match self {
+            Self::Sprite(sprite) => renderer.draw_image_transformed(
+                &sprite.texture_id,
+                sprite.rect,
+                Color::rgba(1.0, 1.0, 1.0, 1.0),
+                sprite.flip_x,
+                sprite.rotation,
+            ),
+            Self::Entity(entity) => {
+                if let Some(texture_id) = &entity.texture_id {
+                    renderer.draw_image_transformed(
+                        texture_id,
+                        entity.sprite_rect,
+                        Color::rgba(1.0, 1.0, 1.0, 1.0),
+                        entity.flip_x,
+                        entity.rotation,
+                    );
+                } else {
+                    renderer.draw_rect(entity.rect, entity.color);
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct DepthKey {
+    y: f32,
+    z_index: i32,
+}
+
+impl DepthKey {
+    fn new(y: f32, z_index: i32) -> Self {
+        Self {
+            y: y + z_index as f32,
+            z_index,
+        }
+    }
+
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.y
+            .total_cmp(&other.y)
+            .then_with(|| self.z_index.cmp(&other.z_index))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -573,6 +676,7 @@ fn push_sprite(
     registry: &HashMap<String, OverworldAsset>,
     textures: &mut HashMap<String, PathBuf>,
     sprites: &mut Vec<MapSprite>,
+    layer: MapSpriteLayer,
     origin: Vec2,
     tile_size: f32,
     instance: EditorObjectInstance,
@@ -591,6 +695,7 @@ fn push_sprite(
             asset.anchor,
         ),
         z_index: instance.z_index,
+        layer,
         flip_x: instance.flip_x,
         rotation: instance.rotation,
     });
@@ -761,4 +866,96 @@ fn resolve_asset_path(path: &Path) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn actor_is_depth_sorted_between_world_objects() {
+        let map = Map {
+            tiles: Vec::new(),
+            sprites: vec![
+                sprite("front", 50.0, 0, MapSpriteLayer::Object),
+                sprite("decal", 100.0, 999, MapSpriteLayer::Decal),
+                sprite("rear", 0.0, 0, MapSpriteLayer::Object),
+            ],
+            entities: Vec::new(),
+            zones: Vec::new(),
+            collision_rects: Vec::new(),
+            textures: HashMap::new(),
+        };
+        let mut renderer = RecordingRenderer::default();
+
+        map.draw_with_actor(&mut renderer, 30.0, |renderer| {
+            renderer.draw_rect(Rect::new(Vec2::ZERO, Vec2::ZERO), Color::rgb(1.0, 0.0, 1.0));
+        });
+
+        assert_eq!(
+            renderer.commands,
+            ["decal", "rear", "actor", "front"],
+            "decals stay below, while actor joins the object Y-depth pass"
+        );
+    }
+
+    fn sprite(texture_id: &str, y: f32, z_index: i32, layer: MapSpriteLayer) -> MapSprite {
+        MapSprite {
+            texture_id: texture_id.to_owned(),
+            rect: Rect::new(Vec2::new(0.0, y), Vec2::new(10.0, 10.0)),
+            z_index,
+            layer,
+            flip_x: false,
+            rotation: 0,
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingRenderer {
+        commands: Vec<String>,
+    }
+
+    impl Renderer for RecordingRenderer {
+        fn load_texture(&mut self, _id: &str, _path: &Path) -> Result<()> {
+            Ok(())
+        }
+
+        fn load_texture_rgba(
+            &mut self,
+            _id: &str,
+            _width: u32,
+            _height: u32,
+            _rgba: &[u8],
+        ) -> Result<()> {
+            Ok(())
+        }
+
+        fn texture_size(&self, _id: &str) -> Option<Vec2> {
+            None
+        }
+
+        fn screen_size(&self) -> Vec2 {
+            Vec2::ZERO
+        }
+
+        fn set_camera(&mut self, _camera: runtime::Camera2d) {}
+
+        fn draw_rect(&mut self, _rect: Rect, _color: Color) {
+            self.commands.push("actor".to_owned());
+        }
+
+        fn draw_image(&mut self, texture_id: &str, _rect: Rect, _tint: Color) {
+            self.commands.push(texture_id.to_owned());
+        }
+
+        fn draw_image_region(
+            &mut self,
+            texture_id: &str,
+            _rect: Rect,
+            _source: Rect,
+            _tint: Color,
+        ) {
+            self.commands.push(texture_id.to_owned());
+        }
+    }
 }

@@ -34,7 +34,7 @@ use app::{
     state::{
         ClipboardItem, EditorApp, LayerUiState, LeftSidebarTab, MoveOrigin, MultiMoveDrag,
         NewMapDraft, OutlinerBadge, OutlinerEntry, ResizeDrag, SelectedItem, SelectionMarquee,
-        ZoneVertexDrag, default_layer_states,
+        StampCaptureDrag, StampItem, StampPattern, ZoneVertexDrag, default_layer_states,
     },
 };
 use asset_registry::{AssetEntry, AssetRegistry};
@@ -134,6 +134,7 @@ impl EditorApp {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             clipboard: Vec::new(),
+            stamp_pattern: None,
             selected_asset: None,
             selected_item: None,
             selected_items: Vec::new(),
@@ -162,6 +163,7 @@ impl EditorApp {
             last_autosave: Instant::now(),
             rectangle_drag_start: None,
             rectangle_drag_current: None,
+            stamp_capture_drag: None,
             lock_aspect_ratio: true,
             resize_drag: None,
             selection_marquee: None,
@@ -229,6 +231,7 @@ impl EditorApp {
         }
         if self.rectangle_drag_start.take().is_some()
             || self.rectangle_drag_current.take().is_some()
+            || self.stamp_capture_drag.take().is_some()
             || self.selection_marquee.take().is_some()
             || self.resize_drag.take().is_some()
             || self.multi_move_drag.take().is_some()
@@ -308,6 +311,9 @@ impl EditorApp {
             }
             if input.key_pressed(Key::I) {
                 self.set_tool(ToolKind::Eyedropper);
+            }
+            if input.key_pressed(Key::S) {
+                self.set_tool(ToolKind::Stamp);
             }
             if input.key_pressed(Key::C) {
                 self.set_tool(ToolKind::Collision);
@@ -1544,7 +1550,7 @@ impl EditorApp {
                 ui.menu_button("帮助", |ui| {
                     ui.label("Cmd/Ctrl+S 保存");
                     ui.label("Cmd/Ctrl+Z 撤销 / Cmd/Ctrl+Shift+Z 重做");
-                    ui.label("V/B/G/R/E/I/C/A/H/Z 切换工具");
+                    ui.label("V/B/G/R/E/I/S/C/A/H/Z 切换工具");
                     ui.label("1-6 切换图层");
                     ui.label("空格拖拽平移，滚轮缩放");
                     ui.label("鼠标中键拖拽平移");
@@ -1626,6 +1632,36 @@ impl EditorApp {
                 ui.separator();
                 toolbar_centered(ui, vec2(86.0, 26.0), |ui| {
                     ui.checkbox(&mut self.rectangle_erase_mode, "矩形擦除");
+                });
+            }
+            if self.tool == ToolKind::Stamp {
+                ui.separator();
+                toolbar_label(ui, "Stamp");
+                if toolbar_command_button(ui, "从选择", 64.0)
+                    .on_hover_text("把当前多选对象生成临时 Stamp")
+                    .clicked()
+                {
+                    self.create_stamp_from_selection();
+                }
+                if ui
+                    .add_enabled(
+                        self.stamp_pattern.is_some(),
+                        egui::Button::new("清空").corner_radius(3.0),
+                    )
+                    .on_hover_text("清空当前临时 Stamp")
+                    .clicked()
+                {
+                    self.clear_stamp_pattern();
+                }
+                let stamp_text = self
+                    .stamp_pattern
+                    .as_ref()
+                    .map(|stamp| {
+                        format!("{}x{} / {}", stamp.width, stamp.height, stamp.item_count())
+                    })
+                    .unwrap_or_else(|| "拖拽框选".to_owned());
+                toolbar_centered(ui, vec2(92.0, 26.0), |ui| {
+                    ui.label(egui::RichText::new(stamp_text).color(THEME_MUTED_TEXT));
                 });
             }
 

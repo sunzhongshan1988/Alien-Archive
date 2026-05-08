@@ -1,6 +1,6 @@
 # Alien Archive 地图编辑器改进路线
 
-最后更新：2026-05-07
+最后更新：2026-05-09
 
 本文只讨论 `Alien Archive` 专用 Overworld 地图编辑器。当前方向仍然是：
 
@@ -294,7 +294,41 @@ Godot 的 TileSet property painting 对我们很有参考价值：
 4. Autosave 恢复界面。
 5. 大地图性能优化。
 
+## 素材生成和裁切规则
+
+后续继续用 AI 生成 Overworld 素材时，必须保留可复现的源图到素材库流程，不能只手工修几张最终 PNG：
+
+- 生成源图统一保存在 `assets/sprites/_sources/overworld/`，文件名带 pack 名和日期。
+- 最终 PNG 进入对应分类的 `assets/sprites/<category>/overworld/generated/`。
+- 每个 pack 保留 `<pack>_manifest.txt` 和 `<pack>_preview.png`，方便回查裁切结果。
+- 新素材必须登记进 `assets/data/assets/overworld_assets.ron`，并同步 `default_size` 到真实 PNG 尺寸。
+
+裁切时不要盲信整张图的固定等分网格。源图先做布局检查，再决定每一行/每一组的格子数量；如果某一行数量不同，要按行单独切，例如 Landing Site 贴花源图是 `6/6/6/7`，不是四行都按 6 列。
+
+宽道具、高交互物和容易跨格的素材，格子只负责定位大概归属，真正裁切要基于源图里非背景像素的联通区域边界：
+
+- 先用粗格子把素材分配到目标 id。
+- 对目标格里的非背景联通区域取整体 bbox，并加少量 padding。
+- 对 alpha bbox 再收紧一次，避免留下无意义透明边。
+- 按分类目标高度和最大宽度缩放；当前 Landing Site 验证值为：`props` 高 `72`、最大宽 `132`；`interactables` 高 `96`、最大宽 `132`；`decals` 高 `64`、最大宽 `132`。
+- chroma key 绿底要全图清理，不只 flood-fill 外部背景；物体内部孔洞也可能残留绿色。
+
+裁切后必须做这些检查：
+
+- manifest 条数、缺失路径、重复 id、生成 pack id 数量和分类计数。
+- 重新生成 pack preview，并肉眼检查偏移、截断、残留绿底和尺寸异常。
+- `overworld_assets.ron` 中的 `default_size` 与 PNG 实际尺寸一致。
+- 需要时启动 `target/debug/editor.exe`，确认 `target/editor-startup.stderr.log` 为空。
+
 ## 实施记录
+
+### 2026-05-09
+
+- 素材生产转入第一轮 Landing Site Starter Pack：生成并裁切 85 个 Overworld 可用素材，覆盖 structures、ruins、props、decals、flora、fauna、interactables 和 pickups。
+- 生成源图和裁切清单保存在 `assets/sprites/_sources/overworld/landing_site_pack_2026_05_09_*`；实际素材落在各分类的 `overworld/generated` 目录，并已登记进 `assets/data/assets/overworld_assets.ron`。
+- 已修正 Landing Site 生成素材裁切：贴花按 6/6/6/7 行布局重切，宽道具和高交互物改用源图联通区域边界裁切，并清掉内部残留 chroma key 绿底。
+- 已新增 Coherent Terrain Pack：`assets/sprites/_sources/overworld/coherent_terrain_pack_2026_05_09_*`，实际 tile 落在 `assets/sprites/tiles/overworld/generated`。这包不再混进旧 `sand/rock` family，而是使用 `ct_sand`、`ct_rock`、`ct_ruin`、`ct_scorch` 四个独立 terrain family；每个 family 有 6 个 center、1 个 `edge_n` 和 1 个 `corner_ne`，其余方向由 editor 自动旋转复用。
+- 当前素材库计数变为：tiles 142、decals 38、props 34、structures 19、ruins 15、flora 18、fauna 10、interactables 11、pickups 14。下一步地图生产优先用这些素材制作可复用 Stamp 场景块，而不是继续扩 editor 功能。
 
 ### 2026-05-08
 
@@ -308,7 +342,8 @@ Godot 的 TileSet property painting 对我们很有参考价值：
 - 已生成并裁切一组临时地表素材：`assets/sprites/tiles/overworld/generated` 下新增 88 张 128x128 tile，素材数据库里统一归到“地块”分类，覆盖 sand、rock、ruin、scorch 和 transition 五组；原始大图保留为 `terrain_sheet_2026_05_08.png` 方便以后重裁。
 - 自动接边规则已调整为保留当前 center 变体；同一 terrain family 下多个中心 tile 不会在重算时被折回第一个素材。
 - 普通地表画笔恢复为严格放置当前选中素材；随机变体不再默认介入刷地流程，后续如果需要应作为明确的 Random Brush / Stamp 模式单独实现。
-- 下一步继续 P1：Pattern / Stamp，目标是把一片地表和对象组合保存成可复用盖章。
+- Pattern / Stamp 第一版已接入：新增“盖章”工具，拖拽地图区域可捕获可见的地表、贴花、物件和实体为临时 Stamp；已有 Stamp 时点击地图会按相对坐标粘贴，地表保留原 tile / size / flip / rotation，不再经过随机变体。
+- Stamp 工具栏支持“从选择”生成临时 Stamp 和“清空”；第一版只做当前会话内临时 Stamp，下一步再补保存到预设库、旋转/翻转 Stamp、随机 Stamp 变体。
 
 ### 2026-05-07
 

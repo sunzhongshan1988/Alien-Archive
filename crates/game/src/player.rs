@@ -126,6 +126,10 @@ impl Player {
         );
     }
 
+    pub fn topdown_depth_y(&self) -> f32 {
+        self.topdown_collision_rect().bottom()
+    }
+
     fn set_topdown_animation(&mut self, animation: TopdownAnimation) {
         if self.topdown_animation != animation {
             self.topdown_animation = animation;

@@ -211,8 +211,10 @@ impl Scene for OverworldScene {
     }
 
     fn render(&mut self, ctx: &mut RenderContext<'_>) -> Result<()> {
-        self.world.draw(ctx.renderer);
-        self.player.draw_topdown(ctx.renderer);
+        self.world
+            .draw_with_actor(ctx.renderer, self.player.topdown_depth_y(), |renderer| {
+                self.player.draw_topdown(renderer);
+            });
         self.scan.draw(ctx.renderer)?;
         self.notice.draw(ctx.renderer)?;
         Ok(())

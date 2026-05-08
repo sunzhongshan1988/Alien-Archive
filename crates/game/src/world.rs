@@ -36,6 +36,16 @@ impl World {
         self.map.draw(renderer);
     }
 
+    pub fn draw_with_actor(
+        &self,
+        renderer: &mut dyn Renderer,
+        actor_depth_y: f32,
+        draw_actor: impl FnOnce(&mut dyn Renderer),
+    ) {
+        self.map
+            .draw_with_actor(renderer, actor_depth_y, draw_actor);
+    }
+
     pub fn load_assets(&self, renderer: &mut dyn Renderer) -> Result<()> {
         self.map.load_assets(renderer)
     }

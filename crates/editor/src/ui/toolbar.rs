@@ -89,6 +89,7 @@ fn tool_icon_uri(tool: ToolKind) -> &'static str {
         ToolKind::Rectangle => "bytes://editor/tools/rectangle.svg",
         ToolKind::Erase => "bytes://editor/tools/erase.svg",
         ToolKind::Eyedropper => "bytes://editor/tools/eyedropper.svg",
+        ToolKind::Stamp => "bytes://editor/tools/stamp.svg",
         ToolKind::Collision => "bytes://editor/tools/collision.svg",
         ToolKind::Zone => "bytes://editor/tools/zone.svg",
         ToolKind::Pan => "bytes://editor/tools/pan.svg",
@@ -127,6 +128,10 @@ pub(crate) fn configure_tool_icons(ctx: &EguiContext) {
         (
             "bytes://editor/tools/eyedropper.svg",
             include_str!("../../assets/icons/tools/eyedropper.svg"),
+        ),
+        (
+            "bytes://editor/tools/stamp.svg",
+            include_str!("../../assets/icons/tools/stamp.svg"),
         ),
         (
             "bytes://editor/tools/collision.svg",

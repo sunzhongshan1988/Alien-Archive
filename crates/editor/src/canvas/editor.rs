@@ -62,6 +62,7 @@ impl EditorApp {
             response.hover_pos(),
             ctx.input(|input| input.modifiers),
         );
+        self.draw_stamp_preview(rect, &painter, response.hover_pos());
         self.draw_rectangle_preview(rect, &painter);
         self.draw_zone_draft(rect, &painter, response.hover_pos());
         self.draw_selection_marquee(&painter);
@@ -198,6 +199,11 @@ impl EditorApp {
                 || response.dragged()
                 || response.drag_stopped()
                 || response.clicked()
+        } else if self.tool == ToolKind::Stamp {
+            response.drag_started()
+                || response.dragged()
+                || response.drag_stopped()
+                || response.clicked()
         } else if continuous_paint {
             primary_down && (response.hovered() || response.dragged())
         } else {
@@ -228,6 +234,11 @@ impl EditorApp {
 
         if self.tool == ToolKind::Rectangle {
             self.handle_rectangle_tool(response, tile_x, tile_y);
+            return;
+        }
+
+        if self.tool == ToolKind::Stamp {
+            self.handle_stamp_tool(response, tile_x, tile_y);
             return;
         }
 
@@ -621,6 +632,341 @@ impl EditorApp {
             self.rectangle_drag_start = None;
             self.rectangle_drag_current = None;
         }
+    }
+
+    pub(crate) fn handle_stamp_tool(
+        &mut self,
+        response: &egui::Response,
+        tile_x: i32,
+        tile_y: i32,
+    ) {
+        if response.drag_started() {
+            self.stamp_capture_drag = Some(StampCaptureDrag {
+                start: [tile_x, tile_y],
+                current: [tile_x, tile_y],
+            });
+            self.status = "拖拽框选 Stamp 区域".to_owned();
+            return;
+        }
+
+        if response.dragged() {
+            if let Some(drag) = &mut self.stamp_capture_drag {
+                drag.current = [tile_x, tile_y];
+                self.status = "拖拽框选 Stamp 区域".to_owned();
+            }
+            return;
+        }
+
+        if response.drag_stopped() {
+            if let Some(drag) = self.stamp_capture_drag.take() {
+                self.capture_stamp_from_tile_rect(drag.start, drag.current);
+            }
+            return;
+        }
+
+        if !response.clicked() {
+            return;
+        }
+
+        if self.stamp_pattern.is_none() {
+            self.status = "先用盖章工具拖拽框选一片地图生成 Stamp".to_owned();
+            return;
+        }
+
+        self.paste_stamp_at(tile_x, tile_y);
+    }
+
+    pub(crate) fn create_stamp_from_selection(&mut self) {
+        let selections = self.current_selection_list();
+        if selections.is_empty() {
+            self.status = "请先选择要做成 Stamp 的对象".to_owned();
+            return;
+        }
+
+        let items = selections
+            .iter()
+            .filter_map(|selection| self.stamp_item_for_selection(selection))
+            .collect::<Vec<_>>();
+        let Some(pattern) = self.normalized_stamp_pattern(items) else {
+            self.status = "当前选择不能生成 Stamp".to_owned();
+            return;
+        };
+
+        let count = pattern.item_count();
+        self.stamp_pattern = Some(pattern);
+        self.tool = ToolKind::Stamp;
+        self.status = format!("已从选择生成 Stamp：{} 个对象", count);
+    }
+
+    pub(crate) fn clear_stamp_pattern(&mut self) {
+        self.stamp_pattern = None;
+        self.stamp_capture_drag = None;
+        self.status = "已清空 Stamp".to_owned();
+    }
+
+    fn capture_stamp_from_tile_rect(&mut self, start: [i32; 2], end: [i32; 2]) {
+        let [min_x, min_y, max_x, max_y] = normalized_tile_rect(start, end);
+        let pattern = self.stamp_pattern_from_tile_rect(min_x, min_y, max_x, max_y);
+        if pattern.items.is_empty() {
+            self.status = "框选区域里没有可盖章对象".to_owned();
+            return;
+        }
+
+        let count = pattern.item_count();
+        let width = pattern.width;
+        let height = pattern.height;
+        self.stamp_pattern = Some(pattern);
+        self.status = format!("已生成 Stamp：{}x{}，{} 个对象", width, height, count);
+    }
+
+    fn stamp_pattern_from_tile_rect(
+        &self,
+        min_x: i32,
+        min_y: i32,
+        max_x: i32,
+        max_y: i32,
+    ) -> StampPattern {
+        let mut items = Vec::new();
+
+        if self.layer_state(LayerKind::Ground).visible {
+            for tile in &self.document.layers.ground {
+                if tile.x >= min_x && tile.x <= max_x && tile.y >= min_y && tile.y <= max_y {
+                    let mut tile = tile.clone();
+                    tile.x -= min_x;
+                    tile.y -= min_y;
+                    items.push(StampItem::Ground(tile));
+                }
+            }
+        }
+
+        if self.layer_state(LayerKind::Decals).visible {
+            for instance in &self.document.layers.decals {
+                if instance_anchor_in_rect(instance.x, instance.y, min_x, min_y, max_x, max_y) {
+                    let mut instance = instance.clone();
+                    instance.x -= min_x as f32;
+                    instance.y -= min_y as f32;
+                    items.push(StampItem::Decal(instance));
+                }
+            }
+        }
+
+        if self.layer_state(LayerKind::Objects).visible {
+            for instance in &self.document.layers.objects {
+                if instance_anchor_in_rect(instance.x, instance.y, min_x, min_y, max_x, max_y) {
+                    let mut instance = instance.clone();
+                    instance.x -= min_x as f32;
+                    instance.y -= min_y as f32;
+                    items.push(StampItem::Object(instance));
+                }
+            }
+        }
+
+        if self.layer_state(LayerKind::Entities).visible {
+            for instance in &self.document.layers.entities {
+                if instance_anchor_in_rect(instance.x, instance.y, min_x, min_y, max_x, max_y) {
+                    let mut instance = instance.clone();
+                    instance.x -= min_x as f32;
+                    instance.y -= min_y as f32;
+                    items.push(StampItem::Entity(instance));
+                }
+            }
+        }
+
+        StampPattern {
+            width: max_x - min_x + 1,
+            height: max_y - min_y + 1,
+            items,
+        }
+    }
+
+    fn stamp_item_for_selection(&self, selection: &SelectedItem) -> Option<StampItem> {
+        match self.clipboard_for_selection(selection)? {
+            ClipboardItem::Ground(tile) => Some(StampItem::Ground(tile)),
+            ClipboardItem::Decal(instance) => Some(StampItem::Decal(instance)),
+            ClipboardItem::Object(instance) => Some(StampItem::Object(instance)),
+            ClipboardItem::Entity(instance) => Some(StampItem::Entity(instance)),
+            ClipboardItem::Zone(_) => None,
+        }
+    }
+
+    fn normalized_stamp_pattern(&self, mut items: Vec<StampItem>) -> Option<StampPattern> {
+        let mut min_x = i32::MAX;
+        let mut min_y = i32::MAX;
+        let mut max_x = i32::MIN;
+        let mut max_y = i32::MIN;
+
+        for item in &items {
+            let [item_min_x, item_min_y, item_max_x, item_max_y] = stamp_item_bounds(item)?;
+            min_x = min_x.min(item_min_x);
+            min_y = min_y.min(item_min_y);
+            max_x = max_x.max(item_max_x);
+            max_y = max_y.max(item_max_y);
+        }
+
+        if min_x == i32::MAX || min_y == i32::MAX {
+            return None;
+        }
+
+        for item in &mut items {
+            offset_stamp_item(item, -min_x, -min_y);
+        }
+
+        Some(StampPattern {
+            width: (max_x - min_x).max(1),
+            height: (max_y - min_y).max(1),
+            items,
+        })
+    }
+
+    fn paste_stamp_at(&mut self, x: i32, y: i32) {
+        let Some(pattern) = self.stamp_pattern.clone() else {
+            self.status = "Stamp 为空".to_owned();
+            return;
+        };
+        if pattern
+            .items
+            .iter()
+            .all(|item| self.layer_state(item.layer()).locked)
+        {
+            self.status = "Stamp 涉及的图层都已锁定".to_owned();
+            return;
+        }
+
+        self.push_undo_snapshot();
+        self.clear_selection();
+        let mut next_selection = Vec::new();
+        let mut placed = 0usize;
+        let mut skipped = 0usize;
+
+        for item in pattern.items {
+            match item {
+                StampItem::Ground(mut tile) => {
+                    if self.layer_state(LayerKind::Ground).locked {
+                        skipped += 1;
+                        continue;
+                    }
+                    tile.x += x;
+                    tile.y += y;
+                    if tile.x < 0
+                        || tile.y < 0
+                        || tile.x >= self.document.width as i32
+                        || tile.y >= self.document.height as i32
+                    {
+                        skipped += 1;
+                        continue;
+                    }
+                    let width = tile.w.max(1).min(self.document.width as i32 - tile.x);
+                    let height = tile.h.max(1).min(self.document.height as i32 - tile.y);
+                    if width <= 0 || height <= 0 {
+                        skipped += 1;
+                        continue;
+                    }
+                    self.place_stamp_ground_tile(&tile, width, height);
+                    next_selection.push(SelectedItem {
+                        layer: LayerKind::Ground,
+                        id: ground_selection_id(tile.x, tile.y),
+                    });
+                    placed += 1;
+                }
+                StampItem::Decal(mut instance) => {
+                    if self.layer_state(LayerKind::Decals).locked {
+                        skipped += 1;
+                        continue;
+                    }
+                    instance.x += x as f32;
+                    instance.y += y as f32;
+                    if !self.map_position_in_bounds(instance.x, instance.y) {
+                        skipped += 1;
+                        continue;
+                    }
+                    instance.id = next_editor_object_id("decal", &self.document.layers.decals);
+                    let id = instance.id.clone();
+                    self.document.layers.decals.push(instance);
+                    next_selection.push(SelectedItem {
+                        layer: LayerKind::Decals,
+                        id,
+                    });
+                    placed += 1;
+                }
+                StampItem::Object(mut instance) => {
+                    if self.layer_state(LayerKind::Objects).locked {
+                        skipped += 1;
+                        continue;
+                    }
+                    instance.x += x as f32;
+                    instance.y += y as f32;
+                    if !self.map_position_in_bounds(instance.x, instance.y) {
+                        skipped += 1;
+                        continue;
+                    }
+                    instance.id = next_editor_object_id("obj", &self.document.layers.objects);
+                    let id = instance.id.clone();
+                    self.document.layers.objects.push(instance);
+                    next_selection.push(SelectedItem {
+                        layer: LayerKind::Objects,
+                        id,
+                    });
+                    placed += 1;
+                }
+                StampItem::Entity(mut instance) => {
+                    if self.layer_state(LayerKind::Entities).locked {
+                        skipped += 1;
+                        continue;
+                    }
+                    instance.x += x as f32;
+                    instance.y += y as f32;
+                    if !self.map_position_in_bounds(instance.x, instance.y) {
+                        skipped += 1;
+                        continue;
+                    }
+                    instance.id = next_editor_entity_id("ent", &self.document.layers.entities);
+                    let id = instance.id.clone();
+                    self.document.layers.entities.push(instance);
+                    next_selection.push(SelectedItem {
+                        layer: LayerKind::Entities,
+                        id,
+                    });
+                    placed += 1;
+                }
+            }
+        }
+
+        if placed == 0 {
+            self.status = "Stamp 没有可放置对象，可能越界或图层已锁定".to_owned();
+            return;
+        }
+
+        self.set_selection(next_selection);
+        self.mark_dirty();
+        self.status = if skipped > 0 {
+            format!("Stamp 已放置 {} 个对象，跳过 {}", placed, skipped)
+        } else {
+            format!("Stamp 已放置 {} 个对象", placed)
+        };
+    }
+
+    fn place_stamp_ground_tile(&mut self, tile: &content::TileInstance, width: i32, height: i32) {
+        for yy in tile.y..tile.y + height {
+            for xx in tile.x..tile.x + width {
+                self.document.erase_at(LayerKind::Ground, xx, yy);
+            }
+        }
+        self.document
+            .place_tile_sized(&tile.asset, tile.x, tile.y, width, height);
+        if let Some(target) = self
+            .document
+            .layers
+            .ground
+            .iter_mut()
+            .find(|target| target.x == tile.x && target.y == tile.y)
+        {
+            target.flip_x = tile.flip_x;
+            target.rotation = tile.rotation;
+        }
+    }
+
+    fn map_position_in_bounds(&self, x: f32, y: f32) -> bool {
+        x >= 0.0 && y >= 0.0 && x < self.document.width as f32 && y < self.document.height as f32
     }
 
     pub(crate) fn handle_zone_tool(
@@ -2425,6 +2771,166 @@ impl EditorApp {
         }
     }
 
+    pub(crate) fn draw_stamp_preview(
+        &self,
+        canvas_rect: Rect,
+        painter: &egui::Painter,
+        hover_pos: Option<Pos2>,
+    ) {
+        if self.tool != ToolKind::Stamp {
+            return;
+        }
+
+        if let Some(drag) = &self.stamp_capture_drag {
+            let [min_x, min_y, max_x, max_y] = normalized_tile_rect(drag.start, drag.current);
+            let rect = self.tile_screen_rect(
+                canvas_rect,
+                min_x,
+                min_y,
+                max_x - min_x + 1,
+                max_y - min_y + 1,
+            );
+            painter.rect_filled(
+                rect,
+                0.0,
+                Color32::from_rgba_unmultiplied(
+                    THEME_MULTI_SELECTION.r(),
+                    THEME_MULTI_SELECTION.g(),
+                    THEME_MULTI_SELECTION.b(),
+                    38,
+                ),
+            );
+            painter.rect_stroke(
+                rect,
+                0.0,
+                Stroke::new(2.0, THEME_MULTI_SELECTION),
+                StrokeKind::Inside,
+            );
+            self.draw_canvas_hover_label(
+                painter,
+                rect.right_top(),
+                THEME_MULTI_SELECTION,
+                "生成 Stamp",
+            );
+            return;
+        }
+
+        let Some(hover_pos) = hover_pos else {
+            return;
+        };
+        let Some([x, y]) = self.screen_to_tile(canvas_rect, hover_pos) else {
+            self.draw_canvas_hover_label(painter, hover_pos, THEME_ERROR, "地图外");
+            return;
+        };
+        let Some(pattern) = &self.stamp_pattern else {
+            self.draw_canvas_hover_label(painter, hover_pos, THEME_WARNING, "拖拽框选生成 Stamp");
+            return;
+        };
+
+        let warnings = self.stamp_warnings_at(pattern, x, y);
+        let color = if warnings.is_empty() {
+            THEME_ACCENT
+        } else {
+            THEME_WARNING
+        };
+        let tint = if warnings.is_empty() {
+            Color32::from_rgba_unmultiplied(255, 255, 255, 138)
+        } else {
+            Color32::from_rgba_unmultiplied(255, 232, 190, 122)
+        };
+
+        for item in &pattern.items {
+            match item {
+                StampItem::Ground(tile) => {
+                    let rect = self.tile_screen_rect(
+                        canvas_rect,
+                        x + tile.x,
+                        y + tile.y,
+                        tile.w.max(1),
+                        tile.h.max(1),
+                    );
+                    self.draw_asset_image_tinted(
+                        painter,
+                        &tile.asset,
+                        rect,
+                        tile.flip_x,
+                        tile.rotation,
+                        tint,
+                    );
+                }
+                StampItem::Decal(instance) | StampItem::Object(instance) => {
+                    if let Some(rect) = self.object_screen_rect_scaled(
+                        canvas_rect,
+                        &instance.asset,
+                        x as f32 + instance.x,
+                        y as f32 + instance.y,
+                        instance.scale_x,
+                        instance.scale_y,
+                    ) {
+                        self.draw_asset_image_tinted(
+                            painter,
+                            &instance.asset,
+                            rect,
+                            instance.flip_x,
+                            instance.rotation,
+                            tint,
+                        );
+                    }
+                }
+                StampItem::Entity(instance) => {
+                    if let Some(rect) = self.object_screen_rect_scaled(
+                        canvas_rect,
+                        &instance.asset,
+                        x as f32 + instance.x,
+                        y as f32 + instance.y,
+                        instance.scale_x,
+                        instance.scale_y,
+                    ) {
+                        self.draw_asset_image_tinted(
+                            painter,
+                            &instance.asset,
+                            rect,
+                            instance.flip_x,
+                            instance.rotation,
+                            tint,
+                        );
+                    }
+                }
+            }
+        }
+
+        let bounds = self.tile_screen_rect(canvas_rect, x, y, pattern.width, pattern.height);
+        self.paint_preview_rect(painter, bounds, color, !warnings.is_empty());
+        let label = if warnings.is_empty() {
+            format!("Stamp {} 个对象", pattern.item_count())
+        } else {
+            warnings.join("\n")
+        };
+        self.draw_canvas_hover_label(painter, bounds.right_top(), color, &label);
+    }
+
+    fn stamp_warnings_at(&self, pattern: &StampPattern, x: i32, y: i32) -> Vec<String> {
+        let mut warnings = Vec::new();
+        for layer in [
+            LayerKind::Ground,
+            LayerKind::Decals,
+            LayerKind::Objects,
+            LayerKind::Entities,
+        ] {
+            if pattern.items.iter().any(|item| item.layer() == layer)
+                && self.layer_state(layer).locked
+            {
+                warnings.push(format!("{} 已锁定", layer.zh_label()));
+            }
+        }
+        if x + pattern.width > self.document.width as i32
+            || y + pattern.height > self.document.height as i32
+        {
+            warnings.push("Stamp 超出地图边界，粘贴时会跳过越界对象".to_owned());
+        }
+        warnings
+    }
+
     fn draw_tile_brush_preview(
         &self,
         canvas_rect: Rect,
@@ -2784,6 +3290,18 @@ impl EditorApp {
                 .and_then(|selection| self.transform_for_selection(selection))
                 .map(|(flip_x, rotation)| format!("flip_x={}, rot={}deg", flip_x, rotation))
                 .unwrap_or_else(|| "-".to_owned());
+            let stamp = self
+                .stamp_pattern
+                .as_ref()
+                .map(|pattern| {
+                    format!(
+                        "{}x{} / {}",
+                        pattern.width,
+                        pattern.height,
+                        pattern.item_count()
+                    )
+                })
+                .unwrap_or_else(|| "-".to_owned());
             let dirty_marker = if self.dirty { "*" } else { "" };
             let current_file = format!(
                 "{}{}",
@@ -2808,6 +3326,8 @@ impl EditorApp {
                 self.ground_footprint_w.max(1),
                 self.ground_footprint_h.max(1)
             ));
+            ui.separator();
+            ui.label(format!("Stamp: {stamp}"));
             ui.separator();
             ui.label(format!("Zoom: {:.0}%", self.zoom * 100.0));
             ui.separator();
@@ -2905,4 +3425,57 @@ fn tile_contains_cell(tile: &content::TileInstance, x: i32, y: i32) -> bool {
     let width = tile.w.max(1);
     let height = tile.h.max(1);
     x >= tile.x && x < tile.x + width && y >= tile.y && y < tile.y + height
+}
+
+fn normalized_tile_rect(start: [i32; 2], end: [i32; 2]) -> [i32; 4] {
+    [
+        start[0].min(end[0]),
+        start[1].min(end[1]),
+        start[0].max(end[0]),
+        start[1].max(end[1]),
+    ]
+}
+
+fn instance_anchor_in_rect(x: f32, y: f32, min_x: i32, min_y: i32, max_x: i32, max_y: i32) -> bool {
+    let tile_x = x.floor() as i32;
+    let tile_y = y.floor() as i32;
+    tile_x >= min_x && tile_x <= max_x && tile_y >= min_y && tile_y <= max_y
+}
+
+fn stamp_item_bounds(item: &StampItem) -> Option<[i32; 4]> {
+    Some(match item {
+        StampItem::Ground(tile) => [
+            tile.x,
+            tile.y,
+            tile.x + tile.w.max(1),
+            tile.y + tile.h.max(1),
+        ],
+        StampItem::Decal(instance) | StampItem::Object(instance) => {
+            let x = instance.x.floor() as i32;
+            let y = instance.y.floor() as i32;
+            [x, y, x + 1, y + 1]
+        }
+        StampItem::Entity(instance) => {
+            let x = instance.x.floor() as i32;
+            let y = instance.y.floor() as i32;
+            [x, y, x + 1, y + 1]
+        }
+    })
+}
+
+fn offset_stamp_item(item: &mut StampItem, dx: i32, dy: i32) {
+    match item {
+        StampItem::Ground(tile) => {
+            tile.x += dx;
+            tile.y += dy;
+        }
+        StampItem::Decal(instance) | StampItem::Object(instance) => {
+            instance.x += dx as f32;
+            instance.y += dy as f32;
+        }
+        StampItem::Entity(instance) => {
+            instance.x += dx as f32;
+            instance.y += dy as f32;
+        }
+    }
 }
