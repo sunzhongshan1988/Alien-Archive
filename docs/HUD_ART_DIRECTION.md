@@ -1,18 +1,18 @@
 # Alien Archive HUD 素材说明
 
-最后更新：2026-05-08
+最后更新：2026-05-09
 
 ## 当前方向
 
-HUD 改成更正常的一体化游戏面板：
+HUD 改成更紧凑的外勤扫描面板：
 
-- 左上统一面板：人物状态、时间、天气集成在 `hud_player_panel_1.png` 里，圆形头像单独读取 `hud_player_avatar.png`。
-- 底部快捷栏：仍保留单独的快捷栏底座和槽位 overlay。
-- 动态内容由代码绘制：状态条填充、时间、天气文字、快捷栏数字、数量、物品图标。
+- 左上状态面板：由运行时代码绘制硬边框、扫描头像框、头像下方时间/天气读数槽和 4 条细状态槽，基准尺寸为 312x96。
+- 底部快捷栏：改为运行时代码绘制的 6 个独立小槽，不再使用整张快捷栏底座背景。
+- 动态内容由代码绘制：状态条填充、时间、天气文字、快捷栏数量、物品图标。
 
 视觉风格继续贴近现有菜单素材：深蓝黑金属底、多层硬边框、青色发光描边、少量琥珀色角标。
 
-## 运行时读取的 5 张
+## 运行时读取的可选贴图
 
 目录固定为：
 
@@ -20,14 +20,10 @@ HUD 改成更正常的一体化游戏面板：
 assets/images/ui/hud/
 ```
 
-当前只保留这 5 张：
+当前左上面板和底部快捷栏都不再需要整张大底图；运行时只读取头像贴图，缺失时使用代码 fallback：
 
 ```txt
-hud_player_panel_1.png      # 一体化状态 / 时间 / 天气面板，当前 1064x592
-hud_player_avatar.png       # HUD 圆形头像贴图，当前 256x256
-hud_quickbar_dock.png       # 底部快捷栏底座，当前 1024x240
-hud_quick_slot_empty.png    # 普通快捷槽，当前 146x146
-hud_quick_slot_selected.png # 选中快捷槽高亮，当前 154x154
+hud_player_avatar.png       # HUD 小头像贴图，建议 256x256
 ```
 
 ## 代码绘制范围
@@ -35,14 +31,15 @@ hud_quick_slot_selected.png # 选中快捷槽高亮，当前 154x154
 这些不要烘焙进素材：
 
 - 生命、体力、外骨骼、负重的彩色填充。
-- 时间和天气文字。
-- 快捷栏数字键。
-- 物品数量。
+- 时间和天气文字，排在头像下方的环境读数槽内。
+- 左上状态面板底框、角标、扫描头像框。
+- 快捷栏槽位底框和选中高亮。
+- 物品数量，使用纯文字，不加徽章背景和边框。
 - 物品图标。
+- 快捷栏不显示数字键提示，也不显示选中物品名提示。
 
 ## 注意
 
-- `hud_player_panel_1.png` 当前已经裁成真实 HUD 面板，运行时代码按整张图读取；后续不要再保留大面积黑边留白。
-- `hud_player_avatar.png` 由运行时代码塞进左侧头像框，后续只换同名文件即可。
-- 后续如果重新裁图，文件名保持不变即可。
-- 如果 `hud_player_panel_1.png` 的内部布局大改，需要同步调整 `crates/game/src/scenes/field_hud.rs` 里的源坐标。
+- `hud_player_avatar.png` 由运行时代码塞进左侧小头像框，后续只换同名文件即可。
+- 快捷栏布局现在集中在 `QUICKBAR_SLOT_SIZE`、`QUICKBAR_SLOT_GAP`、`quickbar_slot_at_position` 和 `draw_quick_slot_frame` 中。
+- 左上状态面板布局现在集中在 `crates/game/src/scenes/field_hud.rs` 的 `PLAYER_PANEL_BASE_SIZE`、`draw_compact_status_panel_frame` 和状态/ meter 坐标中。

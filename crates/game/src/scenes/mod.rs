@@ -28,7 +28,7 @@ use pause_scene::PauseScene;
 use profile_scene::ProfileScene;
 
 use debug_overlay::{DebugOverlay, SceneDebugSnapshot};
-use field_hud::FieldHud;
+use field_hud::{FieldHud, quickbar_slot_at_position};
 
 const AUTOSAVE_INTERVAL: f32 = 5.0;
 const STAMINA_MOVE_DRAIN_PER_SECOND: f32 = 2.0;
@@ -1161,6 +1161,15 @@ fn is_field_scene(scene_id: SceneId) -> bool {
 }
 
 fn handle_quickbar_input(ctx: &mut GameContext, input: &InputState) {
+    if input.mouse_left_just_pressed() {
+        if let Some(position) = input.cursor_position() {
+            if let Some(index) = quickbar_slot_at_position(input.screen_size(), position) {
+                ctx.select_quickbar_slot(index);
+                return;
+            }
+        }
+    }
+
     for (index, button) in [
         Button::QuickSlot1,
         Button::QuickSlot2,

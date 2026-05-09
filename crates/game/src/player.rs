@@ -5,8 +5,12 @@ use runtime::{Color, InputState, Rect, Renderer, Vec2, collision::rects_overlap}
 
 const PLAYER_SPEED: f32 = 260.0;
 const PLAYER_SIZE: Vec2 = Vec2::new(32.0, 46.0);
-const PLAYER_TOPDOWN_COLLISION_SIZE: Vec2 = Vec2::new(24.0, 30.0);
 const PLAYER_SPRITE_SIZE: Vec2 = Vec2::new(72.0, 72.0);
+const PLAYER_TOPDOWN_COLLISION_SIZE: Vec2 = Vec2::new(24.0, 18.0);
+const PLAYER_TOPDOWN_COLLISION_OFFSET: Vec2 = Vec2::new(
+    -PLAYER_TOPDOWN_COLLISION_SIZE.x * 0.5,
+    PLAYER_SPRITE_SIZE.y * 0.5 - PLAYER_TOPDOWN_COLLISION_SIZE.y - 4.0,
+);
 const TOPDOWN_ANIMATION_FPS: f32 = 6.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -168,19 +172,26 @@ impl Player {
             }
 
             if delta.x > 0.0 {
-                self.position.x = solid.origin.x - player_rect.size.x * 0.5;
+                self.position.x = solid.origin.x
+                    - PLAYER_TOPDOWN_COLLISION_OFFSET.x
+                    - PLAYER_TOPDOWN_COLLISION_SIZE.x;
             } else if delta.x < 0.0 {
-                self.position.x = solid.right() + player_rect.size.x * 0.5;
+                self.position.x = solid.right() - PLAYER_TOPDOWN_COLLISION_OFFSET.x;
             } else if delta.y > 0.0 {
-                self.position.y = solid.origin.y - player_rect.size.y * 0.5;
+                self.position.y = solid.origin.y
+                    - PLAYER_TOPDOWN_COLLISION_OFFSET.y
+                    - PLAYER_TOPDOWN_COLLISION_SIZE.y;
             } else if delta.y < 0.0 {
-                self.position.y = solid.bottom() + player_rect.size.y * 0.5;
+                self.position.y = solid.bottom() - PLAYER_TOPDOWN_COLLISION_OFFSET.y;
             }
         }
     }
 
     fn topdown_collision_rect(&self) -> Rect {
-        centered_rect(self.position, PLAYER_TOPDOWN_COLLISION_SIZE)
+        Rect::new(
+            self.position + PLAYER_TOPDOWN_COLLISION_OFFSET,
+            PLAYER_TOPDOWN_COLLISION_SIZE,
+        )
     }
 }
 
@@ -315,7 +326,12 @@ mod tests {
 
         assert_eq!(
             player.position,
-            Vec2::new(solid.origin.x - PLAYER_TOPDOWN_COLLISION_SIZE.x * 0.5, 0.0)
+            Vec2::new(
+                solid.origin.x
+                    - PLAYER_TOPDOWN_COLLISION_OFFSET.x
+                    - PLAYER_TOPDOWN_COLLISION_SIZE.x,
+                0.0
+            )
         );
     }
 
@@ -328,8 +344,34 @@ mod tests {
 
         assert_eq!(
             player.position.x,
-            solid.origin.x - PLAYER_TOPDOWN_COLLISION_SIZE.x * 0.5
+            solid.origin.x - PLAYER_TOPDOWN_COLLISION_OFFSET.x - PLAYER_TOPDOWN_COLLISION_SIZE.x
         );
         assert!(player.position.y > 0.0);
+    }
+
+    #[test]
+    fn topdown_collision_uses_feet_not_visual_head() {
+        let head_only_solid = Rect::new(Vec2::new(-12.0, -76.0), Vec2::new(24.0, 16.0));
+        let mut player = Player::new(Vec2::ZERO);
+
+        player.update_topdown_movement(0.2, Vec2::new(0.0, -1.0), [head_only_solid], 1.0);
+
+        assert!(
+            player.position.y < -40.0,
+            "visual head overlap should not block topdown movement"
+        );
+    }
+
+    #[test]
+    fn topdown_collision_blocks_when_feet_reach_solid() {
+        let foot_solid = Rect::new(Vec2::new(-12.0, -24.0), Vec2::new(24.0, 16.0));
+        let mut player = Player::new(Vec2::ZERO);
+
+        player.update_topdown_movement(0.2, Vec2::new(0.0, -1.0), [foot_solid], 1.0);
+
+        assert_eq!(
+            player.position.y,
+            foot_solid.bottom() - PLAYER_TOPDOWN_COLLISION_OFFSET.y
+        );
     }
 }
