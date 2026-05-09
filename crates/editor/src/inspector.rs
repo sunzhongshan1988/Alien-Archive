@@ -369,6 +369,7 @@ impl EditorApp {
                     changed |= ui
                         .add(egui::DragValue::new(&mut instance.z_index).prefix("层级 "))
                         .changed();
+                    entity_rect_editor(ui, "遮挡/排序范围", &mut instance.depth_rect, &mut changed);
                     entity_rect_editor(ui, "碰撞范围", &mut instance.collision_rect, &mut changed);
                     entity_rect_editor(
                         ui,
@@ -400,73 +401,86 @@ impl EditorApp {
                             }
                             changed = true;
                         }
+                        if ui.button("设为碰撞区域").clicked() {
+                            zone.zone_type = "CollisionArea".to_owned();
+                            zone.surface = None;
+                            changed = true;
+                        }
+                        if ui.button("设为碰撞线").clicked() {
+                            zone.zone_type = "CollisionLine".to_owned();
+                            zone.surface = None;
+                            changed = true;
+                        }
                         if ui.button("设为转场").clicked() {
                             zone.zone_type = "MapTransition".to_owned();
-                            changed = true;
-                        }
-                    });
-
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        ui.label("可走表面");
-                        if zone.surface.is_none() && ui.button("添加").clicked() {
-                            zone.surface = Some(content::WalkSurfaceRule::default());
-                            if zone.zone_type == "Trigger" {
-                                zone.zone_type = "WalkSurface".to_owned();
-                            }
-                            changed = true;
-                        }
-                        if zone.surface.is_some() && ui.button("清除").clicked() {
                             zone.surface = None;
                             changed = true;
                         }
                     });
-                    if let Some(surface) = &mut zone.surface {
-                        let mut surface_id = surface.surface_id.clone().unwrap_or_default();
-                        if labeled_text_edit(ui, "Surface ID", &mut surface_id) {
-                            set_optional_string(&mut surface.surface_id, surface_id);
-                            changed = true;
+
+                    if zone.zone_type == "WalkSurface" || zone.surface.is_some() {
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            ui.label("可走表面");
+                            if zone.surface.is_none() && ui.button("添加").clicked() {
+                                zone.surface = Some(content::WalkSurfaceRule::default());
+                                if zone.zone_type == "Trigger" {
+                                    zone.zone_type = "WalkSurface".to_owned();
+                                }
+                                changed = true;
+                            }
+                            if zone.surface.is_some() && ui.button("清除").clicked() {
+                                zone.surface = None;
+                                changed = true;
+                            }
+                        });
+                        if let Some(surface) = &mut zone.surface {
+                            let mut surface_id = surface.surface_id.clone().unwrap_or_default();
+                            if labeled_text_edit(ui, "Surface ID", &mut surface_id) {
+                                set_optional_string(&mut surface.surface_id, surface_id);
+                                changed = true;
+                            }
+                            egui::ComboBox::from_label("表面类型")
+                                .selected_text(surface.kind.zh_label())
+                                .show_ui(ui, |ui| {
+                                    changed |= ui
+                                        .selectable_value(
+                                            &mut surface.kind,
+                                            content::WalkSurfaceKind::Platform,
+                                            "台面 / 平台",
+                                        )
+                                        .changed();
+                                    changed |= ui
+                                        .selectable_value(
+                                            &mut surface.kind,
+                                            content::WalkSurfaceKind::Ramp,
+                                            "斜坡入口 / 出口",
+                                        )
+                                        .changed();
+                                });
+                            changed |= ui
+                                .checkbox(&mut surface.constrain_movement, "限制在同一表面区域内")
+                                .changed();
+                            changed |= ui
+                                .add(
+                                    egui::DragValue::new(&mut surface.z_index)
+                                        .range(-256..=256)
+                                        .prefix("表面层级 "),
+                                )
+                                .changed();
+                            changed |= ui
+                                .add(
+                                    egui::DragValue::new(&mut surface.depth_offset)
+                                        .range(-512.0..=512.0)
+                                        .speed(1.0)
+                                        .prefix("深度偏移 "),
+                                )
+                                .changed();
+                            ui.colored_label(
+                                THEME_MUTED_TEXT,
+                                "圆台顶面和斜坡填同一个 Surface ID；只有斜坡入口能从地面切入台面。",
+                            );
                         }
-                        egui::ComboBox::from_label("表面类型")
-                            .selected_text(surface.kind.zh_label())
-                            .show_ui(ui, |ui| {
-                                changed |= ui
-                                    .selectable_value(
-                                        &mut surface.kind,
-                                        content::WalkSurfaceKind::Platform,
-                                        "台面 / 平台",
-                                    )
-                                    .changed();
-                                changed |= ui
-                                    .selectable_value(
-                                        &mut surface.kind,
-                                        content::WalkSurfaceKind::Ramp,
-                                        "斜坡入口 / 出口",
-                                    )
-                                    .changed();
-                            });
-                        changed |= ui
-                            .checkbox(&mut surface.constrain_movement, "限制在同一表面区域内")
-                            .changed();
-                        changed |= ui
-                            .add(
-                                egui::DragValue::new(&mut surface.z_index)
-                                    .range(-256..=256)
-                                    .prefix("表面层级 "),
-                            )
-                            .changed();
-                        changed |= ui
-                            .add(
-                                egui::DragValue::new(&mut surface.depth_offset)
-                                    .range(-512.0..=512.0)
-                                    .speed(1.0)
-                                    .prefix("深度偏移 "),
-                            )
-                            .changed();
-                        ui.colored_label(
-                            THEME_MUTED_TEXT,
-                            "圆台顶面和斜坡填同一个 Surface ID；只有斜坡入口能从地面切入台面。",
-                        );
                     }
 
                     let unlock_id = format!("zone_unlock_{}", zone.id);

@@ -18,6 +18,7 @@ pub(crate) struct AssetDraft {
     pub(crate) default_size: [f32; 2],
     pub(crate) footprint: [i32; 2],
     pub(crate) default_collision_rect: Option<InstanceRect>,
+    pub(crate) default_depth_rect: Option<InstanceRect>,
     pub(crate) default_interaction_rect: Option<InstanceRect>,
     pub(crate) anchor: AnchorKind,
     pub(crate) snap: SnapMode,
@@ -37,6 +38,7 @@ impl Default for AssetDraft {
             default_size: [72.0, 72.0],
             footprint: [1, 1],
             default_collision_rect: None,
+            default_depth_rect: None,
             default_interaction_rect: None,
             anchor: AnchorKind::BottomCenter,
             snap: SnapMode::Grid,
@@ -60,6 +62,7 @@ impl AssetDraft {
                 .footprint
                 .unwrap_or_else(|| infer_tile_footprint(entry.default_size, 32).unwrap_or([1, 1])),
             default_collision_rect: entry.default_collision_rect,
+            default_depth_rect: entry.default_depth_rect,
             default_interaction_rect: entry.default_interaction_rect,
             anchor: entry.anchor,
             snap: entry.snap,
@@ -88,6 +91,9 @@ impl AssetDraft {
             )
             .then_some(self.default_collision_rect)
             .flatten(),
+            default_depth_rect: matches!(self.kind, AssetKind::Object | AssetKind::Entity)
+                .then_some(self.default_depth_rect)
+                .flatten(),
             default_interaction_rect: (self.kind == AssetKind::Entity)
                 .then_some(self.default_interaction_rect)
                 .flatten(),

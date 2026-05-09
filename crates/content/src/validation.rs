@@ -271,10 +271,15 @@ pub fn validate_map_with_codex(
                 zone.id, zone.zone_type
             )));
         }
-        if zone.points.len() < 3 {
+        let min_zone_points = if zone.zone_type == "CollisionLine" {
+            2
+        } else {
+            3
+        };
+        if zone.points.len() < min_zone_points {
             issues.push(MapValidationIssue::warning(format!(
-                "zone {} has fewer than three points",
-                zone.id
+                "zone {} has fewer than {} points",
+                zone.id, min_zone_points
             )));
         }
         if zone.zone_type == "WalkSurface" && zone.surface.is_none() {
@@ -327,6 +332,8 @@ const KNOWN_ZONE_TYPES: &[&str] = &[
     "NoSpawn",
     "CameraBounds",
     "WalkSurface",
+    "CollisionArea",
+    "CollisionLine",
 ];
 
 fn validate_unlock_rule(
@@ -838,6 +845,33 @@ mod tests {
         );
     }
 
+    #[test]
+    fn validates_collision_line_zone_with_two_points() {
+        let mut document = MapDocument::new_landing_site();
+        document.layers.zones.push(ZoneInstance {
+            id: "cliff_edge".to_owned(),
+            zone_type: "CollisionLine".to_owned(),
+            points: vec![[1.0, 1.0], [4.0, 1.0]],
+            surface: None,
+            unlock: None,
+            transition: None,
+        });
+        let database = test_database(Vec::new());
+
+        let issues = validate_map(&document, &database);
+
+        assert!(
+            issues
+                .iter()
+                .all(|issue| !issue.message.contains("unknown zone_type"))
+        );
+        assert!(
+            issues
+                .iter()
+                .all(|issue| !issue.message.contains("fewer than"))
+        );
+    }
+
     fn test_database(assets: Vec<AssetDefinition>) -> AssetDatabase {
         let mut database = AssetDatabase {
             mode: "Overworld".to_owned(),
@@ -874,6 +908,7 @@ mod tests {
             default_size: [32.0, 32.0],
             footprint: (kind == AssetKind::Tile).then_some([1, 1]),
             default_collision_rect: None,
+            default_depth_rect: None,
             default_interaction_rect: None,
             anchor: AnchorKind::TopLeft,
             snap: SnapMode::Grid,

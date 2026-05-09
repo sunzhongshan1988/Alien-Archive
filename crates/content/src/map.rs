@@ -145,6 +145,7 @@ impl MapDocument {
             scale_y: 1.0,
             z_index: 0,
             collision_rect: None,
+            depth_rect: None,
             flip_x: false,
             rotation: 0,
         });
@@ -162,6 +163,7 @@ impl MapDocument {
             scale_y: 1.0,
             z_index: 0,
             collision_rect: None,
+            depth_rect: None,
             flip_x: false,
             rotation: 0,
         });
@@ -180,6 +182,7 @@ impl MapDocument {
             scale_y: 1.0,
             z_index: 0,
             collision_rect: None,
+            depth_rect: None,
             interaction_rect: None,
             unlock: None,
             transition: None,
@@ -293,6 +296,8 @@ pub struct ObjectInstance {
     pub z_index: i32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collision_rect: Option<InstanceRect>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depth_rect: Option<InstanceRect>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub flip_x: bool,
     #[serde(default, skip_serializing_if = "is_zero_i32")]
@@ -314,6 +319,8 @@ pub struct EntityInstance {
     pub z_index: i32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collision_rect: Option<InstanceRect>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depth_rect: Option<InstanceRect>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interaction_rect: Option<InstanceRect>,
     #[serde(default, skip_serializing_if = "option_unlock_rule_is_none_or_empty")]

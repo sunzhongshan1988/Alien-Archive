@@ -146,6 +146,8 @@ pub struct AssetDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_collision_rect: Option<InstanceRect>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_depth_rect: Option<InstanceRect>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_interaction_rect: Option<InstanceRect>,
     pub anchor: AnchorKind,
     pub snap: SnapMode,

@@ -2067,6 +2067,7 @@ fn object_instance_editor(
     changed |= ui
         .add(egui::DragValue::new(&mut instance.z_index).prefix("层级 "))
         .changed();
+    entity_rect_editor(ui, "遮挡/排序范围", &mut instance.depth_rect, &mut changed);
     if collision_enabled {
         entity_rect_editor(ui, "碰撞覆盖", &mut instance.collision_rect, &mut changed);
     }

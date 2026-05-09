@@ -1145,7 +1145,7 @@ impl EditorApp {
 
         let point = self.snapped_zone_position(raw_pos, modifiers);
         if response.double_clicked() {
-            if self.zone_draft_points.len() >= 3 {
+            if self.zone_draft_points.len() >= 2 {
                 self.finish_zone_draft();
             }
             return;
@@ -1161,21 +1161,26 @@ impl EditorApp {
         self.zone_draft_points.push(point);
         self.active_layer = LayerKind::Zones;
         self.status = format!(
-            "区域点 {}（默认 1/4 格，Shift 半格，Alt 自由，双击完成）",
+            "区域点 {}（2 点生成碰撞线，3 点以上生成区域；双击完成）",
             self.zone_draft_points.len()
         );
     }
 
     pub(crate) fn finish_zone_draft(&mut self) {
-        if self.zone_draft_points.len() < 3 {
-            self.status = "区域至少需要 3 个点".to_owned();
+        if self.zone_draft_points.len() < 2 {
+            self.status = "区域/线至少需要 2 个点".to_owned();
             return;
         }
         self.push_undo_snapshot();
         let id = next_editor_zone_id("zone", &self.document.layers.zones);
+        let zone_type = if self.zone_draft_points.len() == 2 {
+            "CollisionLine"
+        } else {
+            "Trigger"
+        };
         self.document.layers.zones.push(content::ZoneInstance {
             id: id.clone(),
-            zone_type: "Trigger".to_owned(),
+            zone_type: zone_type.to_owned(),
             points: self.zone_draft_points.clone(),
             surface: None,
             unlock: None,
@@ -1187,7 +1192,11 @@ impl EditorApp {
             id,
         }));
         self.mark_dirty();
-        self.status = "区域已创建".to_owned();
+        self.status = if zone_type == "CollisionLine" {
+            "碰撞线已创建".to_owned()
+        } else {
+            "区域已创建".to_owned()
+        };
     }
 
     pub(crate) fn apply_rectangle_tool(&mut self, start: [i32; 2], end: [i32; 2]) {
@@ -2564,11 +2573,17 @@ impl EditorApp {
             if points.len() < 2 {
                 continue;
             }
-            painter.add(Shape::convex_polygon(
-                points.clone(),
-                fill_color,
-                Stroke::new(1.5, stroke_color),
-            ));
+            if zone.zone_type == "CollisionLine" {
+                for pair in points.windows(2) {
+                    painter.line_segment([pair[0], pair[1]], Stroke::new(3.0, stroke_color));
+                }
+            } else {
+                painter.add(Shape::convex_polygon(
+                    points.clone(),
+                    fill_color,
+                    Stroke::new(1.5, stroke_color),
+                ));
+            }
             if self.show_zone_labels {
                 let center = polygon_screen_center(&points);
                 painter.text(

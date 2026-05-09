@@ -387,7 +387,12 @@ impl EditorApp {
                     color: THEME_WARNING,
                 });
             }
-            if zone.points.len() < 3 {
+            let min_zone_points = if zone.zone_type == "CollisionLine" {
+                2
+            } else {
+                3
+            };
+            if zone.points.len() < min_zone_points {
                 badges.push(OutlinerBadge {
                     label: "few points",
                     color: THEME_WARNING,

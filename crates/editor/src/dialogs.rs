@@ -325,6 +325,15 @@ impl EditorApp {
                 &mut changed,
             );
         }
+        if matches!(self.asset_draft.kind, AssetKind::Object | AssetKind::Entity) {
+            let mut changed = false;
+            entity_rect_editor(
+                ui,
+                "默认遮挡/排序模板",
+                &mut self.asset_draft.default_depth_rect,
+                &mut changed,
+            );
+        }
         if self.asset_draft.kind == AssetKind::Entity {
             let mut changed = false;
             entity_rect_editor(

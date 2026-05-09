@@ -10,6 +10,7 @@ use content::{
     AnchorKind, AssetDatabase, DEFAULT_ASSET_DB_PATH, InstanceRect, MapDocument as EditorMapFile,
     ObjectInstance as EditorObjectInstance, TransitionTarget, UnlockRule,
     WalkSurfaceKind as EditorWalkSurfaceKind, WalkSurfaceRule as EditorWalkSurfaceRule,
+    ZoneInstance as EditorZoneInstance,
 };
 use image::{RgbaImage, imageops};
 use runtime::{Color, Rect, Renderer, Vec2, collision::rects_overlap};
@@ -18,6 +19,9 @@ use serde::Deserialize;
 const GROUND_CACHE_CHUNK_TILES: u32 = 32;
 const MAP_TEXTURE_ATLAS_WIDTH: u32 = 2048;
 const MAP_TEXTURE_ATLAS_PADDING: u32 = 2;
+const DEFAULT_OBJECT_DEPTH_INSET_TILES: f32 = 0.5;
+const COLLISION_LINE_WIDTH_TILES: f32 = 0.25;
+const COLLISION_LINE_SAMPLE_STEP_TILES: f32 = COLLISION_LINE_WIDTH_TILES * 0.5;
 
 #[derive(Clone, Debug)]
 pub struct Map {
@@ -346,6 +350,7 @@ impl Map {
                     rect: Rect::new(position, size),
                     collision_rect: None,
                     sprite_rect: Rect::new(position, size),
+                    depth_y: Rect::new(position, size).bottom(),
                     color: color_from(entity.color),
                     solid: entity.solid,
                     z_index: 0,
@@ -480,6 +485,7 @@ impl Map {
                 rect: centered_rect(position, Vec2::new(tile_size, tile_size)),
                 collision_rect: None,
                 sprite_rect: centered_rect(position, Vec2::new(tile_size, tile_size)),
+                depth_y: position.y,
                 color: Color::rgba(0.0, 0.0, 0.0, 0.0),
                 solid: false,
                 z_index: 0,
@@ -513,6 +519,14 @@ impl Map {
                 .collision_rect
                 .or(asset.default_collision_rect)
                 .map(|rect| instance_rect_to_world(origin, tile_size, entity.x, entity.y, rect));
+            let depth_y = entity
+                .depth_rect
+                .or(asset.default_depth_rect)
+                .or(entity.collision_rect)
+                .or(asset.default_collision_rect)
+                .map(|rect| instance_rect_to_world(origin, tile_size, entity.x, entity.y, rect))
+                .map(|rect| rect.bottom())
+                .unwrap_or_else(|| fallback_object_depth_y(sprite_rect, tile_size));
             let kind = map_entity_kind(&entity.entity_type);
             let codex_id = asset.codex_id.clone();
             let unlock = MapUnlockRule::from_content(entity.unlock.clone())
@@ -524,6 +538,7 @@ impl Map {
                 rect: hit_rect,
                 collision_rect,
                 sprite_rect,
+                depth_y,
                 color: Color::rgba(0.65, 0.35, 1.0, 0.75),
                 solid: false,
                 z_index: entity.z_index,
@@ -542,6 +557,14 @@ impl Map {
         if texture_atlas.is_some() {
             textures.clear();
         }
+
+        collision_rects.extend(collision_rects_from_zones(
+            &file.layers.zones,
+            origin,
+            tile_size,
+            file.width,
+            file.height,
+        ));
 
         let zones = file
             .layers
@@ -985,6 +1008,7 @@ struct MapSprite {
     source: Option<Rect>,
     rect: Rect,
     z_index: i32,
+    depth_y: f32,
     layer: MapSpriteLayer,
     flip_x: bool,
     rotation: i32,
@@ -1005,8 +1029,8 @@ enum DepthDrawable<'a> {
 impl DepthDrawable<'_> {
     fn depth_key(self) -> DepthKey {
         match self {
-            Self::Sprite(sprite) => DepthKey::new(sprite.rect.bottom(), sprite.z_index),
-            Self::Entity(entity) => DepthKey::new(entity.sprite_rect.bottom(), entity.z_index),
+            Self::Sprite(sprite) => DepthKey::new(sprite.depth_y, sprite.z_index),
+            Self::Entity(entity) => DepthKey::new(entity.depth_y, entity.z_index),
         }
     }
 
@@ -1069,6 +1093,7 @@ pub struct MapEntity {
     pub rect: Rect,
     pub collision_rect: Option<Rect>,
     sprite_rect: Rect,
+    depth_y: f32,
     pub color: Color,
     pub solid: bool,
     z_index: i32,
@@ -1235,6 +1260,7 @@ struct OverworldAsset {
     path: PathBuf,
     default_size: Vec2,
     default_collision_rect: Option<InstanceRect>,
+    default_depth_rect: Option<InstanceRect>,
     default_interaction_rect: Option<InstanceRect>,
     anchor: AnchorKind,
     codex_id: Option<String>,
@@ -1266,16 +1292,26 @@ fn push_sprite(
         .with_context(|| format!("unknown object asset {}", instance.asset))?;
     textures.insert(asset.id.clone(), asset.path.clone());
     let anchor = object_anchor_to_world(origin, tile_size, instance.x, instance.y, asset.anchor);
+    let sprite_rect = anchored_rect(
+        anchor,
+        scaled_size(asset.default_size, instance.scale_x, instance.scale_y),
+        asset.anchor,
+    );
+    let depth_y = instance
+        .depth_rect
+        .or(asset.default_depth_rect)
+        .or(instance.collision_rect)
+        .or(asset.default_collision_rect)
+        .map(|rect| instance_rect_to_world(origin, tile_size, instance.x, instance.y, rect))
+        .map(|rect| rect.bottom())
+        .unwrap_or_else(|| fallback_object_depth_y(sprite_rect, tile_size));
 
     sprites.push(MapSprite {
         texture_id: asset.id.clone(),
         source: None,
-        rect: anchored_rect(
-            anchor,
-            scaled_size(asset.default_size, instance.scale_x, instance.scale_y),
-            asset.anchor,
-        ),
+        rect: sprite_rect,
         z_index: instance.z_index,
+        depth_y,
         layer,
         flip_x: instance.flip_x,
         rotation: instance.rotation,
@@ -1349,6 +1385,158 @@ fn instance_rect_to_world(
         ),
         Vec2::new(rect.size[0] * tile_size, rect.size[1] * tile_size),
     )
+}
+
+fn collision_rects_from_zones(
+    zones: &[EditorZoneInstance],
+    origin: Vec2,
+    tile_size: f32,
+    map_width: u32,
+    map_height: u32,
+) -> Vec<Rect> {
+    zones
+        .iter()
+        .flat_map(|zone| match zone.zone_type.as_str() {
+            "CollisionArea" => collision_area_rects(zone, origin, tile_size, map_width, map_height),
+            "CollisionLine" => collision_line_rects(zone, origin, tile_size, map_width, map_height),
+            _ => Vec::new(),
+        })
+        .collect()
+}
+
+fn collision_area_rects(
+    zone: &EditorZoneInstance,
+    origin: Vec2,
+    tile_size: f32,
+    map_width: u32,
+    map_height: u32,
+) -> Vec<Rect> {
+    if zone.points.len() < 3 {
+        return Vec::new();
+    }
+
+    let points = zone_tile_points(zone);
+    let bounds = bounds_for_points(&points);
+    let min_x = bounds.origin.x.floor().max(0.0) as i32;
+    let max_x = bounds.right().ceil().min(map_width as f32) as i32;
+    let min_y = bounds.origin.y.floor().max(0.0) as i32;
+    let max_y = bounds.bottom().ceil().min(map_height as f32) as i32;
+    let mut rects = Vec::new();
+
+    for y in min_y..max_y {
+        let mut run_start = None::<i32>;
+        for x in min_x..max_x {
+            let center = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
+            let solid = polygon_contains_point(&points, center);
+            if solid && run_start.is_none() {
+                run_start = Some(x);
+            } else if !solid && run_start.is_some() {
+                push_tile_collision_rect(
+                    &mut rects,
+                    origin,
+                    tile_size,
+                    run_start.take().unwrap(),
+                    y,
+                    x,
+                    y + 1,
+                );
+            }
+        }
+        if let Some(start) = run_start {
+            push_tile_collision_rect(&mut rects, origin, tile_size, start, y, max_x, y + 1);
+        }
+    }
+
+    rects
+}
+
+fn collision_line_rects(
+    zone: &EditorZoneInstance,
+    origin: Vec2,
+    tile_size: f32,
+    map_width: u32,
+    map_height: u32,
+) -> Vec<Rect> {
+    if zone.points.len() < 2 {
+        return Vec::new();
+    }
+
+    let points = zone_tile_points(zone);
+    let half_width = COLLISION_LINE_WIDTH_TILES * 0.5;
+    let mut rects = Vec::new();
+    for pair in points.windows(2) {
+        let start = pair[0];
+        let end = pair[1];
+        let segment = Vec2::new(end.x - start.x, end.y - start.y);
+        let length = (segment.x * segment.x + segment.y * segment.y).sqrt();
+        if length <= f32::EPSILON {
+            continue;
+        }
+
+        let steps = (length / COLLISION_LINE_SAMPLE_STEP_TILES).ceil().max(1.0) as i32;
+        for step in 0..=steps {
+            let t = step as f32 / steps as f32;
+            let point = Vec2::new(start.x + segment.x * t, start.y + segment.y * t);
+            let left = (point.x - half_width).clamp(0.0, map_width as f32);
+            let top = (point.y - half_width).clamp(0.0, map_height as f32);
+            let right = (point.x + half_width).clamp(0.0, map_width as f32);
+            let bottom = (point.y + half_width).clamp(0.0, map_height as f32);
+            if right > left && bottom > top {
+                rects.push(tile_rect_to_world(
+                    origin,
+                    tile_size,
+                    left,
+                    top,
+                    right - left,
+                    bottom - top,
+                ));
+            }
+        }
+    }
+
+    rects
+}
+
+fn zone_tile_points(zone: &EditorZoneInstance) -> Vec<Vec2> {
+    zone.points
+        .iter()
+        .map(|point| Vec2::new(point[0], point[1]))
+        .collect()
+}
+
+fn push_tile_collision_rect(
+    rects: &mut Vec<Rect>,
+    origin: Vec2,
+    tile_size: f32,
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+) {
+    if right <= left || bottom <= top {
+        return;
+    }
+    rects.push(tile_rect_to_world(
+        origin,
+        tile_size,
+        left as f32,
+        top as f32,
+        (right - left) as f32,
+        (bottom - top) as f32,
+    ));
+}
+
+fn tile_rect_to_world(origin: Vec2, tile_size: f32, x: f32, y: f32, w: f32, h: f32) -> Rect {
+    Rect::new(
+        Vec2::new(origin.x + x * tile_size, origin.y + y * tile_size),
+        Vec2::new(w * tile_size, h * tile_size),
+    )
+}
+
+fn fallback_object_depth_y(sprite_rect: Rect, tile_size: f32) -> f32 {
+    let max_inset = (sprite_rect.size.y * 0.35).max(0.0);
+    let inset = (tile_size * DEFAULT_OBJECT_DEPTH_INSET_TILES).min(max_inset);
+    sprite_rect.bottom() - inset
 }
 
 fn bounds_for_points(points: &[Vec2]) -> Rect {
@@ -1452,6 +1640,7 @@ fn scan_overworld_assets() -> Result<HashMap<String, OverworldAsset>> {
                     path: resolve_asset_path(&project_root.join(asset.path)),
                     default_size: Vec2::new(asset.default_size[0], asset.default_size[1]),
                     default_collision_rect: asset.default_collision_rect,
+                    default_depth_rect: asset.default_depth_rect,
                     default_interaction_rect: asset.default_interaction_rect,
                     anchor: asset.anchor,
                     codex_id: asset.codex_id,
@@ -1517,6 +1706,95 @@ mod tests {
             renderer.commands,
             ["decal", "rear", "actor", "front"],
             "decals stay below, while actor joins the object Y-depth pass"
+        );
+    }
+
+    #[test]
+    fn object_depth_line_delays_cover_until_actor_feet_enter_body() {
+        let mut body = sprite("body", 0.0, 0, MapSpriteLayer::Object);
+        body.rect = Rect::new(Vec2::new(0.0, 0.0), Vec2::new(64.0, 100.0));
+        body.depth_y = 60.0;
+
+        let map = Map {
+            tiles: Vec::new(),
+            sprites: vec![body],
+            entities: Vec::new(),
+            zones: Vec::new(),
+            collision_rects: Vec::new(),
+            ground_cache: None,
+            textures: HashMap::new(),
+            texture_atlas: None,
+        };
+        let mut renderer = RecordingRenderer::default();
+
+        map.draw_with_actor(&mut renderer, 80.0, |renderer| {
+            renderer.draw_rect(Rect::new(Vec2::ZERO, Vec2::ZERO), Color::rgb(1.0, 0.0, 1.0));
+        });
+        assert_eq!(
+            renderer.commands,
+            ["body", "actor"],
+            "actor stays in front while its feet are below the object's body depth line"
+        );
+
+        renderer.commands.clear();
+        map.draw_with_actor(&mut renderer, 50.0, |renderer| {
+            renderer.draw_rect(Rect::new(Vec2::ZERO, Vec2::ZERO), Color::rgb(1.0, 0.0, 1.0));
+        });
+        assert_eq!(
+            renderer.commands,
+            ["actor", "body"],
+            "object covers the actor only after the actor feet cross into its body depth line"
+        );
+    }
+
+    #[test]
+    fn fallback_object_depth_y_is_inset_from_visual_bottom() {
+        let rect = Rect::new(Vec2::new(0.0, 0.0), Vec2::new(64.0, 100.0));
+
+        assert_eq!(fallback_object_depth_y(rect, 32.0), 84.0);
+    }
+
+    #[test]
+    fn collision_area_zone_rasterizes_to_solid_rect_rows() {
+        let zone = EditorZoneInstance {
+            id: "mesa_wall".to_owned(),
+            zone_type: "CollisionArea".to_owned(),
+            points: vec![[1.0, 1.0], [3.0, 1.0], [3.0, 3.0], [1.0, 3.0]],
+            surface: None,
+            unlock: None,
+            transition: None,
+        };
+
+        let rects = collision_area_rects(&zone, Vec2::new(-64.0, -64.0), 32.0, 4, 4);
+
+        assert_eq!(
+            rects,
+            vec![
+                Rect::new(Vec2::new(-32.0, -32.0), Vec2::new(64.0, 32.0)),
+                Rect::new(Vec2::new(-32.0, 0.0), Vec2::new(64.0, 32.0)),
+            ]
+        );
+    }
+
+    #[test]
+    fn collision_line_zone_creates_thin_barrier_rects() {
+        let zone = EditorZoneInstance {
+            id: "cliff_edge".to_owned(),
+            zone_type: "CollisionLine".to_owned(),
+            points: vec![[1.0, 1.0], [3.0, 1.0]],
+            surface: None,
+            unlock: None,
+            transition: None,
+        };
+
+        let rects = collision_line_rects(&zone, Vec2::new(-64.0, -64.0), 32.0, 4, 4);
+
+        assert!(rects.len() > 2);
+        assert!(
+            rects
+                .iter()
+                .all(|rect| rect.size.x <= 8.0 && rect.size.y <= 8.0),
+            "collision line should create a thin sampled barrier"
         );
     }
 
@@ -1711,6 +1989,7 @@ mod tests {
             source: None,
             rect: Rect::new(Vec2::new(0.0, y), Vec2::new(10.0, 10.0)),
             z_index,
+            depth_y: y + 10.0,
             layer,
             flip_x: false,
             rotation: 0,
