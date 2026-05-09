@@ -1,20 +1,27 @@
 use std::sync::Arc;
 
 use eframe::egui::{
-    self, Color32, Context as EguiContext, Rect, Sense, StrokeKind, TextureOptions, Vec2, vec2,
+    self, Align2, Color32, Context as EguiContext, FontId, Rect, Sense, StrokeKind, TextureOptions,
+    Vec2, vec2,
 };
 
 use crate::ToolKind;
 use crate::ui::theme::{THEME_ACCENT_STRONG, THEME_MUTED_TEXT};
 
 pub(crate) const TOOLBAR_HEIGHT: f32 = 32.0;
+const TOOLBAR_CONTROL_HEIGHT: f32 = 26.0;
 const TOOL_BUTTON_SIZE: Vec2 = Vec2::new(34.0, 28.0);
 const TOOL_ICON_FALLBACK_URI: &str = "bytes://editor/tools/fallback.svg";
 
 pub(crate) fn toolbar_label(ui: &mut egui::Ui, text: &str) {
-    ui.add_sized(
-        [ui.spacing().interact_size.y.max(34.0), 26.0],
-        egui::Label::new(egui::RichText::new(text).color(THEME_MUTED_TEXT)),
+    let width = toolbar_label_width(text);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, TOOLBAR_CONTROL_HEIGHT), Sense::hover());
+    ui.painter().text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        text,
+        FontId::proportional(13.0),
+        THEME_MUTED_TEXT,
     );
 }
 
@@ -57,7 +64,15 @@ pub(crate) fn toolbar_tool_button(
 }
 
 pub(crate) fn toolbar_command_button(ui: &mut egui::Ui, text: &str, width: f32) -> egui::Response {
-    ui.add_sized([width, 26.0], egui::Button::new(text).corner_radius(3.0))
+    ui.add(
+        egui::Button::new(text)
+            .corner_radius(3.0)
+            .min_size(vec2(width, TOOLBAR_CONTROL_HEIGHT)),
+    )
+}
+
+fn toolbar_label_width(text: &str) -> f32 {
+    (text.chars().count() as f32 * 14.0 + 8.0).max(34.0)
 }
 
 fn draw_tool_icon(ui: &egui::Ui, tool: ToolKind, rect: Rect, color: Color32) {

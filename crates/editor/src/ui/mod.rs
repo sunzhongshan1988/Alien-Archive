@@ -1,5 +1,4 @@
 pub(crate) mod asset_grid;
-pub(crate) mod badge;
 pub(crate) mod buttons;
 pub(crate) mod fields;
 pub(crate) mod header;

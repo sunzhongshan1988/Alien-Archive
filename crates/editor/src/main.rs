@@ -73,6 +73,8 @@ use ui::tree::{TreeBadge, tree_row};
 use util::{geometry::*, ids::*, sanitize::*};
 
 const MENU_BAR_HEIGHT: f32 = 30.0;
+const MENU_BAR_BUTTON_HEIGHT: f32 = 24.0;
+const TOP_BAR_DIVIDER_HEIGHT: f32 = 1.0;
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
@@ -1372,9 +1374,10 @@ impl EditorApp {
     }
 
     fn draw_top_bar(&mut self, ui: &mut egui::Ui) {
+        ui.spacing_mut().item_spacing.y = 0.0;
         if !native_menu::NATIVE_MENU_ENABLED {
             self.draw_menu_bar(ui);
-            ui.separator();
+            draw_top_bar_divider(ui);
         }
         self.draw_tool_bar(ui);
     }
@@ -1386,7 +1389,9 @@ impl EditorApp {
             |ui| {
                 ui.set_height(MENU_BAR_HEIGHT);
                 ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
-                ui.menu_button("文件", |ui| {
+                ui.spacing_mut().button_padding = vec2(8.0, 0.0);
+                ui.spacing_mut().interact_size.y = MENU_BAR_BUTTON_HEIGHT;
+                menu_bar_button(ui, "文件", |ui| {
                     if ui.button("新建地图").clicked() {
                         self.new_map_draft = NewMapDraft::default();
                         self.show_new_map_dialog = true;
@@ -1450,7 +1455,7 @@ impl EditorApp {
                     }
                 });
 
-                ui.menu_button("编辑", |ui| {
+                menu_bar_button(ui, "编辑", |ui| {
                     if ui
                         .add_enabled(!self.undo_stack.is_empty(), egui::Button::new("撤销"))
                         .clicked()
@@ -1487,7 +1492,7 @@ impl EditorApp {
                     }
                 });
 
-                ui.menu_button("视图", |ui| {
+                menu_bar_button(ui, "视图", |ui| {
                     ui.checkbox(&mut self.show_left_sidebar, "左侧栏");
                     ui.checkbox(&mut self.show_right_sidebar, "右侧栏");
                     ui.separator();
@@ -1504,7 +1509,7 @@ impl EditorApp {
                     }
                 });
 
-                ui.menu_button("地图", |ui| {
+                menu_bar_button(ui, "地图", |ui| {
                     if ui.button("校验地图").clicked() {
                         self.validation_issues = self.validate_current_map();
                         self.show_validation_panel = true;
@@ -1528,7 +1533,7 @@ impl EditorApp {
                     ));
                 });
 
-                ui.menu_button("图层", |ui| {
+                menu_bar_button(ui, "图层", |ui| {
                     for layer in LayerKind::ALL {
                         ui.horizontal(|ui| {
                             if ui
@@ -1548,7 +1553,7 @@ impl EditorApp {
                     }
                 });
 
-                ui.menu_button("工具", |ui| {
+                menu_bar_button(ui, "工具", |ui| {
                     for tool in ToolKind::ALL {
                         if ui
                             .selectable_label(self.tool == tool, tool.menu_label())
@@ -1560,7 +1565,7 @@ impl EditorApp {
                     }
                 });
 
-                ui.menu_button("素材", |ui| {
+                menu_bar_button(ui, "素材", |ui| {
                     let ctx = ui.ctx().clone();
                     if ui.button("添加素材").clicked() {
                         self.open_add_asset_dialog();
@@ -1611,7 +1616,7 @@ impl EditorApp {
                     ));
                 });
 
-                ui.menu_button("帮助", |ui| {
+                menu_bar_button(ui, "帮助", |ui| {
                     ui.label("Cmd/Ctrl+S 保存");
                     ui.label("Cmd/Ctrl+Z 撤销 / Cmd/Ctrl+Shift+Z 重做");
                     ui.label("V/B/G/R/E/I/S/C/A/H/Z 切换工具");
@@ -1625,184 +1630,220 @@ impl EditorApp {
     }
 
     fn draw_tool_bar(&mut self, ui: &mut egui::Ui) {
-        ui.spacing_mut().item_spacing = vec2(6.0, 0.0);
-        ui.horizontal_centered(|ui| {
-            ui.set_height(TOOLBAR_HEIGHT);
-            toolbar_label(ui, "工具");
-            for tool in ToolKind::ALL {
-                if toolbar_tool_button(ui, self.tool == tool, tool).clicked() {
-                    self.set_tool(tool);
+        ui.allocate_ui_with_layout(
+            vec2(ui.available_width(), TOOLBAR_HEIGHT),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.spacing_mut().item_spacing = vec2(6.0, 0.0);
+                ui.spacing_mut().button_padding = vec2(8.0, 0.0);
+                ui.spacing_mut().interact_size.y = 26.0;
+                ui.set_height(TOOLBAR_HEIGHT);
+                toolbar_label(ui, "工具");
+                for tool in ToolKind::ALL {
+                    if toolbar_tool_button(ui, self.tool == tool, tool).clicked() {
+                        self.set_tool(tool);
+                    }
                 }
-            }
 
-            ui.separator();
-            toolbar_label(ui, "图层");
-            toolbar_centered(ui, vec2(96.0, 26.0), |ui| {
-                egui::ComboBox::from_id_salt("active_layer")
-                    .selected_text(self.active_layer.zh_label())
-                    .width(92.0)
-                    .show_ui(ui, |ui| {
-                        for layer in LayerKind::ALL {
-                            ui.selectable_value(&mut self.active_layer, layer, layer.zh_label());
-                        }
+                ui.separator();
+                toolbar_label(ui, "图层");
+                toolbar_centered(ui, vec2(96.0, 26.0), |ui| {
+                    egui::ComboBox::from_id_salt("active_layer")
+                        .selected_text(self.active_layer.zh_label())
+                        .width(92.0)
+                        .show_ui(ui, |ui| {
+                            for layer in LayerKind::ALL {
+                                ui.selectable_value(
+                                    &mut self.active_layer,
+                                    layer,
+                                    layer.zh_label(),
+                                );
+                            }
+                        });
+                });
+
+                if self.active_layer == LayerKind::Ground {
+                    ui.separator();
+                    toolbar_label(ui, "画笔尺寸");
+                    toolbar_centered(ui, vec2(54.0, 26.0), |ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut self.ground_footprint_w)
+                                .range(1..=self.document.width as i32)
+                                .speed(0.1)
+                                .prefix("W "),
+                        );
                     });
-            });
-
-            if self.active_layer == LayerKind::Ground {
-                ui.separator();
-                toolbar_label(ui, "画笔尺寸");
-                toolbar_centered(ui, vec2(54.0, 26.0), |ui| {
-                    ui.add(
-                        egui::DragValue::new(&mut self.ground_footprint_w)
-                            .range(1..=self.document.width as i32)
-                            .speed(0.1)
-                            .prefix("W "),
-                    );
-                });
-                toolbar_centered(ui, vec2(54.0, 26.0), |ui| {
-                    ui.add(
-                        egui::DragValue::new(&mut self.ground_footprint_h)
-                            .range(1..=self.document.height as i32)
-                            .speed(0.1)
-                            .prefix("H "),
-                    );
-                });
-                toolbar_centered(ui, vec2(86.0, 26.0), |ui| {
-                    ui.checkbox(&mut self.terrain_autotile, "自动接边")
-                })
-                .inner
-                .on_hover_text("刷地、矩形填充或擦除后，自动重算周围地形和跨材质 transition");
-                if toolbar_command_button(ui, "重算可见", 72.0)
-                    .on_hover_text("按当前画布视口重算地形边角和跨材质 transition")
-                    .clicked()
-                {
-                    self.recalc_visible_ground_command();
-                }
-                if toolbar_command_button(ui, "重算全图", 72.0)
-                    .on_hover_text("重算整张地图的地形边角和跨材质 transition")
-                    .clicked()
-                {
-                    self.recalc_all_ground_command();
-                }
-            } else if self.active_layer == LayerKind::Collision || self.tool == ToolKind::Collision
-            {
-                ui.separator();
-                toolbar_label(ui, "碰撞尺寸");
-                toolbar_centered(ui, vec2(54.0, 26.0), |ui| {
-                    ui.add(
-                        egui::DragValue::new(&mut self.collision_brush_w)
-                            .range(0.125..=self.document.width as f32)
-                            .speed(0.125)
-                            .prefix("W "),
-                    );
-                });
-                toolbar_centered(ui, vec2(54.0, 26.0), |ui| {
-                    ui.add(
-                        egui::DragValue::new(&mut self.collision_brush_h)
-                            .range(0.125..=self.document.height as f32)
-                            .speed(0.125)
-                            .prefix("H "),
-                    );
-                });
-            }
-            if self.tool == ToolKind::Rectangle {
-                ui.separator();
-                toolbar_centered(ui, vec2(86.0, 26.0), |ui| {
-                    ui.checkbox(&mut self.rectangle_erase_mode, "矩形擦除");
-                });
-            }
-            if self.tool == ToolKind::Stamp {
-                ui.separator();
-                toolbar_label(ui, "Stamp");
-                if toolbar_command_button(ui, "从选择", 64.0)
-                    .on_hover_text("把当前多选对象生成临时 Stamp")
-                    .clicked()
-                {
-                    self.create_stamp_from_selection();
-                }
-                if ui
-                    .add_enabled(
-                        self.stamp_pattern.is_some(),
-                        egui::Button::new("清空").corner_radius(3.0),
-                    )
-                    .on_hover_text("清空当前临时 Stamp")
-                    .clicked()
-                {
-                    self.clear_stamp_pattern();
-                }
-                let stamp_text = self
-                    .stamp_pattern
-                    .as_ref()
-                    .map(|stamp| {
-                        format!("{}x{} / {}", stamp.width, stamp.height, stamp.item_count())
+                    toolbar_centered(ui, vec2(54.0, 26.0), |ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut self.ground_footprint_h)
+                                .range(1..=self.document.height as i32)
+                                .speed(0.1)
+                                .prefix("H "),
+                        );
+                    });
+                    toolbar_centered(ui, vec2(86.0, 26.0), |ui| {
+                        ui.checkbox(&mut self.terrain_autotile, "自动接边")
                     })
-                    .unwrap_or_else(|| "拖拽框选".to_owned());
-                toolbar_centered(ui, vec2(92.0, 26.0), |ui| {
-                    ui.label(egui::RichText::new(stamp_text).color(THEME_MUTED_TEXT));
-                });
-            }
-
-            ui.separator();
-            if toolbar_command_button(ui, "运行地图", 68.0)
-                .on_hover_text("保存当前地图并启动游戏到第一个出生点")
-                .clicked()
-            {
-                self.save_and_run_current_map();
-            }
-            ui.separator();
-            if toolbar_command_button(ui, "水平翻转", 72.0).clicked() {
-                self.flip_selected_item();
-            }
-            if toolbar_command_button(ui, "左转", 48.0).clicked() {
-                self.rotate_selected_item(-90);
-            }
-            if toolbar_command_button(ui, "右转", 48.0).clicked() {
-                self.rotate_selected_item(90);
-            }
-            if toolbar_command_button(ui, "重置变换", 78.0).clicked() {
-                self.reset_selected_transform();
-            }
-
-            if let Some([mut width, mut height]) = self.ground_size_for_selection() {
-                ui.separator();
-                toolbar_label(ui, "选中地块");
-                let width_changed = toolbar_centered(ui, vec2(54.0, 26.0), |ui| {
-                    ui.add(
-                        egui::DragValue::new(&mut width)
-                            .range(1..=self.document.width as i32)
-                            .speed(0.1)
-                            .prefix("W "),
-                    )
-                    .changed()
-                })
-                .inner;
-                let height_changed = toolbar_centered(ui, vec2(54.0, 26.0), |ui| {
-                    ui.add(
-                        egui::DragValue::new(&mut height)
-                            .range(1..=self.document.height as i32)
-                            .speed(0.1)
-                            .prefix("H "),
-                    )
-                    .changed()
-                })
-                .inner;
-                if width_changed || height_changed {
-                    self.set_ground_size_for_selection(width, height);
+                    .inner
+                    .on_hover_text("刷地、矩形填充或擦除后，自动重算周围地形和跨材质 transition");
+                    if toolbar_command_button(ui, "重算可见", 72.0)
+                        .on_hover_text("按当前画布视口重算地形边角和跨材质 transition")
+                        .clicked()
+                    {
+                        self.recalc_visible_ground_command();
+                    }
+                    if toolbar_command_button(ui, "重算全图", 72.0)
+                        .on_hover_text("重算整张地图的地形边角和跨材质 transition")
+                        .clicked()
+                    {
+                        self.recalc_all_ground_command();
+                    }
+                } else if self.active_layer == LayerKind::Collision
+                    || self.tool == ToolKind::Collision
+                {
+                    ui.separator();
+                    toolbar_label(ui, "碰撞尺寸");
+                    toolbar_centered(ui, vec2(54.0, 26.0), |ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut self.collision_brush_w)
+                                .range(0.125..=self.document.width as f32)
+                                .speed(0.125)
+                                .prefix("W "),
+                        );
+                    });
+                    toolbar_centered(ui, vec2(54.0, 26.0), |ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut self.collision_brush_h)
+                                .range(0.125..=self.document.height as f32)
+                                .speed(0.125)
+                                .prefix("H "),
+                        );
+                    });
                 }
-            }
+                if self.tool == ToolKind::Rectangle {
+                    ui.separator();
+                    toolbar_centered(ui, vec2(86.0, 26.0), |ui| {
+                        ui.checkbox(&mut self.rectangle_erase_mode, "矩形擦除");
+                    });
+                }
+                if self.tool == ToolKind::Stamp {
+                    ui.separator();
+                    toolbar_label(ui, "Stamp");
+                    if toolbar_command_button(ui, "从选择", 64.0)
+                        .on_hover_text("把当前多选对象生成临时 Stamp")
+                        .clicked()
+                    {
+                        self.create_stamp_from_selection();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.stamp_pattern.is_some(),
+                            egui::Button::new("清空").corner_radius(3.0),
+                        )
+                        .on_hover_text("清空当前临时 Stamp")
+                        .clicked()
+                    {
+                        self.clear_stamp_pattern();
+                    }
+                    let stamp_text = self
+                        .stamp_pattern
+                        .as_ref()
+                        .map(|stamp| {
+                            format!("{}x{} / {}", stamp.width, stamp.height, stamp.item_count())
+                        })
+                        .unwrap_or_else(|| "拖拽框选".to_owned());
+                    toolbar_centered(ui, vec2(92.0, 26.0), |ui| {
+                        ui.label(egui::RichText::new(stamp_text).color(THEME_MUTED_TEXT));
+                    });
+                }
 
-            ui.separator();
-            toolbar_centered(ui, vec2(58.0, 26.0), |ui| {
-                ui.checkbox(&mut self.show_grid, "网格");
-            });
-            toolbar_centered(ui, vec2(58.0, 26.0), |ui| {
-                ui.checkbox(&mut self.show_collision, "碰撞");
-            });
-            toolbar_centered(ui, vec2(82.0, 26.0), |ui| {
-                ui.checkbox(&mut self.show_entity_bounds, "实体边界");
-            });
-        });
+                ui.separator();
+                if toolbar_command_button(ui, "运行地图", 68.0)
+                    .on_hover_text("保存当前地图并启动游戏到第一个出生点")
+                    .clicked()
+                {
+                    self.save_and_run_current_map();
+                }
+                ui.separator();
+                if toolbar_command_button(ui, "水平翻转", 72.0).clicked() {
+                    self.flip_selected_item();
+                }
+                if toolbar_command_button(ui, "左转", 48.0).clicked() {
+                    self.rotate_selected_item(-90);
+                }
+                if toolbar_command_button(ui, "右转", 48.0).clicked() {
+                    self.rotate_selected_item(90);
+                }
+                if toolbar_command_button(ui, "重置变换", 78.0).clicked() {
+                    self.reset_selected_transform();
+                }
+
+                if let Some([mut width, mut height]) = self.ground_size_for_selection() {
+                    ui.separator();
+                    toolbar_label(ui, "选中地块");
+                    let width_changed = toolbar_centered(ui, vec2(54.0, 26.0), |ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut width)
+                                .range(1..=self.document.width as i32)
+                                .speed(0.1)
+                                .prefix("W "),
+                        )
+                        .changed()
+                    })
+                    .inner;
+                    let height_changed = toolbar_centered(ui, vec2(54.0, 26.0), |ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut height)
+                                .range(1..=self.document.height as i32)
+                                .speed(0.1)
+                                .prefix("H "),
+                        )
+                        .changed()
+                    })
+                    .inner;
+                    if width_changed || height_changed {
+                        self.set_ground_size_for_selection(width, height);
+                    }
+                }
+
+                ui.separator();
+                toolbar_centered(ui, vec2(58.0, 26.0), |ui| {
+                    ui.checkbox(&mut self.show_grid, "网格");
+                });
+                toolbar_centered(ui, vec2(58.0, 26.0), |ui| {
+                    ui.checkbox(&mut self.show_collision, "碰撞");
+                });
+                toolbar_centered(ui, vec2(82.0, 26.0), |ui| {
+                    ui.checkbox(&mut self.show_entity_bounds, "实体边界");
+                });
+            },
+        );
     }
+}
+
+fn menu_bar_button<R>(
+    ui: &mut egui::Ui,
+    label: &str,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::Response {
+    let button = egui::Button::new(label)
+        .frame(false)
+        .min_size(vec2(menu_bar_button_width(label), MENU_BAR_BUTTON_HEIGHT));
+    let (response, _) =
+        egui::containers::menu::MenuButton::from_button(button).ui(ui, add_contents);
+    response
+}
+
+fn menu_bar_button_width(label: &str) -> f32 {
+    (label.chars().count() as f32 * 15.0 + 18.0).max(44.0)
+}
+
+fn draw_top_bar_divider(ui: &mut egui::Ui) {
+    let (rect, _) = ui.allocate_exact_size(
+        vec2(ui.available_width(), TOP_BAR_DIVIDER_HEIGHT),
+        Sense::hover(),
+    );
+    ui.painter().rect_filled(rect, 0.0, THEME_BORDER);
 }
 
 impl eframe::App for EditorApp {
