@@ -13,14 +13,29 @@ use super::{GameContext, Language, SceneId, inventory_scene};
 
 const QUICKBAR_SLOTS: usize = 6;
 
+const HUD_PLAYER_PANEL: &str = "hud.player_panel";
 const HUD_PLAYER_AVATAR: &str = "hud.player_avatar";
 
-const HUD_TEXTURES: &[(&str, &str)] = &[(
-    HUD_PLAYER_AVATAR,
-    "assets/images/ui/hud/hud_player_avatar.png",
-)];
+const HUD_TEXTURES: &[(&str, &str)] = &[
+    (
+        HUD_PLAYER_PANEL,
+        "assets/images/ui/hud/hud_player_panel.png",
+    ),
+    (
+        HUD_PLAYER_AVATAR,
+        "assets/images/ui/hud/hud_player_avatar.png",
+    ),
+];
 
-const PLAYER_PANEL_BASE_SIZE: Vec2 = Vec2::new(312.0, 96.0);
+const PLAYER_PANEL_SOURCE_SIZE: Vec2 = Vec2::new(1284.0, 576.0);
+const PLAYER_PANEL_BASE_SIZE: Vec2 = Vec2::new(428.0, 192.0);
+const PLAYER_PANEL_TIME_SOURCE: Rect = Rect::new(Vec2::new(184.0, 462.0), Vec2::new(166.0, 64.0));
+const PLAYER_PANEL_METER_SOURCES: [Rect; 4] = [
+    Rect::new(Vec2::new(704.0, 108.0), Vec2::new(458.0, 39.0)),
+    Rect::new(Vec2::new(704.0, 216.0), Vec2::new(458.0, 39.0)),
+    Rect::new(Vec2::new(704.0, 326.0), Vec2::new(458.0, 39.0)),
+    Rect::new(Vec2::new(704.0, 438.0), Vec2::new(458.0, 39.0)),
+];
 const QUICKBAR_SLOT_SIZE: f32 = 46.0;
 const QUICKBAR_SLOT_GAP: f32 = 8.0;
 const QUICKBAR_BASE_SIZE: Vec2 = Vec2::new(
@@ -113,11 +128,22 @@ impl FieldHud {
         ctx: &GameContext,
         layout: &HudLayout,
     ) {
-        draw_compact_status_panel_frame(renderer, viewport, layout.player_panel, layout.scale);
-        self.draw_profile_portrait(renderer, viewport, layout);
-        self.draw_status_text(renderer, viewport, layout);
-        self.draw_time_weather_text(renderer, viewport, layout);
-        self.draw_meter_fills(renderer, viewport, ctx, layout);
+        if draw_texture_rect(
+            renderer,
+            viewport,
+            HUD_PLAYER_PANEL,
+            layout.player_panel,
+            Color::rgba(1.0, 1.0, 1.0, 0.98),
+        ) {
+            self.draw_panel_time_weather_text(renderer, viewport, layout);
+            self.draw_panel_meter_fills(renderer, viewport, ctx, layout);
+        } else {
+            draw_compact_status_panel_frame(renderer, viewport, layout.player_panel, layout.scale);
+            self.draw_profile_portrait(renderer, viewport, layout);
+            self.draw_status_text(renderer, viewport, layout);
+            self.draw_time_weather_text(renderer, viewport, layout);
+            self.draw_meter_fills(renderer, viewport, ctx, layout);
+        }
     }
 
     fn draw_profile_portrait(
@@ -267,6 +293,26 @@ impl FieldHud {
         }
     }
 
+    fn draw_panel_time_weather_text(
+        &self,
+        renderer: &mut dyn Renderer,
+        viewport: Vec2,
+        layout: &HudLayout,
+    ) {
+        let slot = panel_source_rect(layout.player_panel, PLAYER_PANEL_TIME_SOURCE);
+
+        if let Some(time) = self.status_lines.get(1) {
+            draw_text_centered(
+                renderer,
+                time,
+                viewport,
+                slot.origin.x + slot.size.x * 0.5 + 2.0,
+                slot.origin.y - 1.0 * layout.scale + 3.0,
+                Color::rgba(0.42, 1.0, 1.0, 1.0),
+            );
+        }
+    }
+
     fn draw_meter_fills(
         &self,
         renderer: &mut dyn Renderer,
@@ -302,6 +348,35 @@ impl FieldHud {
                 meter_ratio(ctx, meter_id),
                 meter_color(meter_id),
                 if *meter_id == "load" { 6 } else { 10 },
+                layout.scale,
+            );
+        }
+    }
+
+    fn draw_panel_meter_fills(
+        &self,
+        renderer: &mut dyn Renderer,
+        viewport: Vec2,
+        ctx: &GameContext,
+        layout: &HudLayout,
+    ) {
+        for (index, meter_id) in COMPACT_METER_IDS.iter().enumerate() {
+            let mut rect =
+                panel_source_rect(layout.player_panel, PLAYER_PANEL_METER_SOURCES[index]);
+            rect.origin.x -= 1.0;
+            rect.origin.y += match index {
+                1 => 3.0,
+                2 => 5.0,
+                3 => 8.0,
+                _ => 0.0,
+            };
+            draw_panel_segmented_fill(
+                renderer,
+                viewport,
+                rect,
+                meter_ratio(ctx, meter_id),
+                meter_color(meter_id),
+                10,
                 layout.scale,
             );
         }
@@ -384,7 +459,8 @@ impl FieldHud {
                     line,
                     match index {
                         0 => 14.0,
-                        1 | 2 => 9.0,
+                        1 => 20.0,
+                        2 => 8.0,
                         _ => 12.0,
                     },
                 )
@@ -574,6 +650,53 @@ fn draw_segmented_fill(
     }
 }
 
+fn draw_panel_segmented_fill(
+    renderer: &mut dyn Renderer,
+    viewport: Vec2,
+    rect: Rect,
+    ratio: f32,
+    color: Color,
+    segments: usize,
+    scale: f32,
+) {
+    let segment_count = segments.max(1);
+    let gap = (3.0 * scale).max(1.0);
+    let cell_width =
+        ((rect.size.x - gap * (segment_count as f32 - 1.0)) / segment_count as f32).max(1.0);
+    let filled = (ratio.clamp(0.0, 1.0) * segment_count as f32).ceil() as usize;
+
+    for index in 0..segment_count {
+        let cell = Rect::new(
+            Vec2::new(
+                rect.origin.x + index as f32 * (cell_width + gap),
+                rect.origin.y,
+            ),
+            Vec2::new((cell_width - 2.0).max(1.0), (rect.size.y - 2.0).max(1.0)),
+        );
+        let is_filled = index < filled;
+        draw_screen_rect(
+            renderer,
+            viewport,
+            cell,
+            if is_filled {
+                color
+            } else {
+                Color::rgba(0.012, 0.014, 0.018, 0.92)
+            },
+        );
+        draw_screen_rect(
+            renderer,
+            viewport,
+            Rect::new(cell.origin, Vec2::new(cell.size.x, (2.0 * scale).max(1.0))),
+            if is_filled {
+                Color::rgba(0.92, 1.0, 1.0, color.a * 0.36)
+            } else {
+                Color::rgba(0.18, 0.22, 0.24, 0.62)
+            },
+        );
+    }
+}
+
 fn draw_compact_status_panel_frame(
     renderer: &mut dyn Renderer,
     viewport: Vec2,
@@ -710,6 +833,18 @@ fn quickbar_slot_rect(quickbar: Rect, index: usize) -> Rect {
             quickbar.origin.y + 6.0 * scale_x,
         ),
         Vec2::new(QUICKBAR_SLOT_SIZE * scale_x, QUICKBAR_SLOT_SIZE * scale_x),
+    )
+}
+
+fn panel_source_rect(panel: Rect, source: Rect) -> Rect {
+    let scale_x = panel.size.x / PLAYER_PANEL_SOURCE_SIZE.x;
+    let scale_y = panel.size.y / PLAYER_PANEL_SOURCE_SIZE.y;
+    Rect::new(
+        Vec2::new(
+            panel.origin.x + source.origin.x * scale_x,
+            panel.origin.y + source.origin.y * scale_y,
+        ),
+        Vec2::new(source.size.x * scale_x, source.size.y * scale_y),
     )
 }
 
