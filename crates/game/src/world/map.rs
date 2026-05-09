@@ -9,7 +9,7 @@ use anyhow::{Context, Result, bail};
 use content::{
     AnchorKind, AssetDatabase, DEFAULT_ASSET_DB_PATH, InstanceRect, MapDocument as EditorMapFile,
     ObjectInstance as EditorObjectInstance, TransitionTarget, UnlockRule,
-    WalkSurfaceRule as EditorWalkSurfaceRule,
+    WalkSurfaceKind as EditorWalkSurfaceKind, WalkSurfaceRule as EditorWalkSurfaceRule,
 };
 use image::{RgbaImage, imageops};
 use runtime::{Color, Rect, Renderer, Vec2, collision::rects_overlap};
@@ -239,12 +239,40 @@ impl Map {
     }
 
     pub fn walk_surface_at(&self, point: Vec2) -> Option<MapWalkSurface> {
+        self.walk_surface_at_filtered(point, |_| true)
+    }
+
+    pub fn walk_surface_entry_at(&self, point: Vec2) -> Option<MapWalkSurface> {
+        self.walk_surface_at_filtered(point, |surface| surface.kind == MapWalkSurfaceKind::Ramp)
+    }
+
+    pub fn walk_surface_for_id_at(&self, surface_id: &str, point: Vec2) -> Option<MapWalkSurface> {
+        self.walk_surface_at_filtered(point, |surface| surface.surface_id == surface_id)
+    }
+
+    pub fn walk_surface_contains(&self, surface_id: &str, point: Vec2) -> bool {
+        self.walk_surface_for_id_at(surface_id, point).is_some()
+    }
+
+    pub fn walk_surface_ramp_contains(&self, surface_id: &str, point: Vec2) -> bool {
+        self.walk_surface_at_filtered(point, |surface| {
+            surface.surface_id == surface_id && surface.kind == MapWalkSurfaceKind::Ramp
+        })
+        .is_some()
+    }
+
+    fn walk_surface_at_filtered(
+        &self,
+        point: Vec2,
+        mut include: impl FnMut(&MapWalkSurface) -> bool,
+    ) -> Option<MapWalkSurface> {
         self.zones
             .iter()
-            .filter_map(|zone| zone.surface.map(|surface| (zone, surface)))
+            .filter_map(|zone| zone.surface.as_ref().map(|surface| (zone, surface)))
+            .filter(|(_, surface)| include(surface))
             .filter(|(zone, _)| rect_contains_point(zone.bounds, point))
             .filter(|(zone, _)| polygon_contains_point(&zone.points, point))
-            .map(|(_, surface)| surface)
+            .map(|(_, surface)| surface.clone())
             .max_by(|left, right| {
                 left.z_index
                     .cmp(&right.z_index)
@@ -531,12 +559,13 @@ impl Map {
                     })
                     .collect::<Vec<_>>();
                 let bounds = bounds_for_points(&points);
+                let surface = MapWalkSurface::from_content(&zone.id, zone.surface);
                 MapZone {
                     id: zone.id,
                     zone_type: zone.zone_type,
                     points,
                     bounds,
-                    surface: MapWalkSurface::from_content(zone.surface),
+                    surface,
                     unlock: MapUnlockRule::from_content(zone.unlock),
                     transition: MapTransitionTarget::from_content(zone.transition),
                 }
@@ -1065,18 +1094,44 @@ pub struct MapZone {
     pub transition: Option<MapTransitionTarget>,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MapWalkSurface {
+    pub surface_id: String,
+    pub kind: MapWalkSurfaceKind,
+    pub constrain_movement: bool,
     pub z_index: i32,
     pub depth_offset: f32,
 }
 
 impl MapWalkSurface {
-    fn from_content(surface: Option<EditorWalkSurfaceRule>) -> Option<Self> {
+    fn from_content(zone_id: &str, surface: Option<EditorWalkSurfaceRule>) -> Option<Self> {
         surface.map(|surface| Self {
+            surface_id: surface
+                .surface_id
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| zone_id.to_owned()),
+            kind: MapWalkSurfaceKind::from_content(surface.kind),
+            constrain_movement: surface.constrain_movement,
             z_index: surface.z_index,
             depth_offset: surface.depth_offset,
         })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum MapWalkSurfaceKind {
+    #[default]
+    Platform,
+    Ramp,
+}
+
+impl MapWalkSurfaceKind {
+    fn from_content(kind: EditorWalkSurfaceKind) -> Self {
+        match kind {
+            EditorWalkSurfaceKind::Platform => Self::Platform,
+            EditorWalkSurfaceKind::Ramp => Self::Ramp,
+        }
     }
 }
 
@@ -1510,6 +1565,9 @@ mod tests {
                 ],
                 bounds: Rect::new(Vec2::ZERO, Vec2::new(10.0, 10.0)),
                 surface: Some(MapWalkSurface {
+                    surface_id: "platform_01".to_owned(),
+                    kind: MapWalkSurfaceKind::Platform,
+                    constrain_movement: true,
                     z_index: 48,
                     depth_offset: -8.0,
                 }),
@@ -1525,11 +1583,55 @@ mod tests {
         assert_eq!(
             map.walk_surface_at(Vec2::new(5.0, 5.0)),
             Some(MapWalkSurface {
+                surface_id: "platform_01".to_owned(),
+                kind: MapWalkSurfaceKind::Platform,
+                constrain_movement: true,
                 z_index: 48,
                 depth_offset: -8.0
             })
         );
         assert_eq!(map.walk_surface_at(Vec2::new(12.0, 5.0)), None);
+    }
+
+    #[test]
+    fn walk_surface_entry_requires_ramp_and_groups_by_surface_id() {
+        let map = Map {
+            tiles: Vec::new(),
+            sprites: Vec::new(),
+            entities: Vec::new(),
+            zones: vec![
+                surface_zone(
+                    "platform_top",
+                    "platform_01",
+                    MapWalkSurfaceKind::Platform,
+                    Vec2::new(0.0, 0.0),
+                    Vec2::new(10.0, 10.0),
+                ),
+                surface_zone(
+                    "platform_ramp",
+                    "platform_01",
+                    MapWalkSurfaceKind::Ramp,
+                    Vec2::new(10.0, 2.0),
+                    Vec2::new(6.0, 4.0),
+                ),
+            ],
+            collision_rects: Vec::new(),
+            ground_cache: None,
+            textures: HashMap::new(),
+            texture_atlas: None,
+        };
+
+        assert_eq!(map.walk_surface_entry_at(Vec2::new(5.0, 5.0)), None);
+        assert_eq!(
+            map.walk_surface_entry_at(Vec2::new(12.0, 4.0))
+                .map(|surface| surface.kind),
+            Some(MapWalkSurfaceKind::Ramp)
+        );
+        assert!(map.walk_surface_contains("platform_01", Vec2::new(5.0, 5.0)));
+        assert!(map.walk_surface_contains("platform_01", Vec2::new(12.0, 4.0)));
+        assert!(map.walk_surface_ramp_contains("platform_01", Vec2::new(12.0, 4.0)));
+        assert!(!map.walk_surface_ramp_contains("platform_01", Vec2::new(5.0, 5.0)));
+        assert!(!map.walk_surface_contains("platform_02", Vec2::new(12.0, 4.0)));
     }
 
     #[test]
@@ -1612,6 +1714,35 @@ mod tests {
             layer,
             flip_x: false,
             rotation: 0,
+        }
+    }
+
+    fn surface_zone(
+        id: &str,
+        surface_id: &str,
+        kind: MapWalkSurfaceKind,
+        origin: Vec2,
+        size: Vec2,
+    ) -> MapZone {
+        MapZone {
+            id: id.to_owned(),
+            zone_type: "WalkSurface".to_owned(),
+            points: vec![
+                origin,
+                Vec2::new(origin.x + size.x, origin.y),
+                Vec2::new(origin.x + size.x, origin.y + size.y),
+                Vec2::new(origin.x, origin.y + size.y),
+            ],
+            bounds: Rect::new(origin, size),
+            surface: Some(MapWalkSurface {
+                surface_id: surface_id.to_owned(),
+                kind,
+                constrain_movement: true,
+                z_index: 64,
+                depth_offset: 0.0,
+            }),
+            unlock: None,
+            transition: None,
         }
     }
 

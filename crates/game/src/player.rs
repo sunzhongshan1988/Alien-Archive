@@ -86,6 +86,7 @@ impl Player {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn update_topdown_with_speed(
         &mut self,
         dt: f32,
@@ -94,6 +95,23 @@ impl Player {
         speed_multiplier: f32,
     ) {
         self.update_topdown_movement(dt, input.movement(), solid_rects, speed_multiplier);
+    }
+
+    pub fn update_topdown_with_speed_and_constraint(
+        &mut self,
+        dt: f32,
+        input: &InputState,
+        solid_rects: impl IntoIterator<Item = Rect>,
+        speed_multiplier: f32,
+        can_stand_at: impl Fn(Vec2) -> bool,
+    ) {
+        self.update_topdown_movement_constrained(
+            dt,
+            input.movement(),
+            solid_rects,
+            speed_multiplier,
+            can_stand_at,
+        );
     }
 
     pub fn tick_animation(&mut self, dt: f32) {
@@ -146,6 +164,7 @@ impl Player {
         }
     }
 
+    #[allow(dead_code)]
     fn update_topdown_movement(
         &mut self,
         dt: f32,
@@ -153,21 +172,44 @@ impl Player {
         solid_rects: impl IntoIterator<Item = Rect>,
         speed_multiplier: f32,
     ) {
+        self.update_topdown_movement_constrained(
+            dt,
+            movement,
+            solid_rects,
+            speed_multiplier,
+            |_| true,
+        );
+    }
+
+    fn update_topdown_movement_constrained(
+        &mut self,
+        dt: f32,
+        movement: Vec2,
+        solid_rects: impl IntoIterator<Item = Rect>,
+        speed_multiplier: f32,
+        can_stand_at: impl Fn(Vec2) -> bool,
+    ) {
         let solid_rects = solid_rects.into_iter().collect::<Vec<_>>();
         let movement = movement.normalized();
         let delta = movement * PLAYER_SPEED * speed_multiplier.clamp(0.35, 1.25) * dt;
 
-        self.move_topdown_axis(Vec2::new(delta.x, 0.0), &solid_rects);
-        self.move_topdown_axis(Vec2::new(0.0, delta.y), &solid_rects);
+        self.move_topdown_axis(Vec2::new(delta.x, 0.0), &solid_rects, &can_stand_at);
+        self.move_topdown_axis(Vec2::new(0.0, delta.y), &solid_rects, &can_stand_at);
         self.set_topdown_animation(animation_for_movement(movement));
         self.tick_animation(dt);
     }
 
-    fn move_topdown_axis(&mut self, delta: Vec2, solid_rects: &[Rect]) {
+    fn move_topdown_axis(
+        &mut self,
+        delta: Vec2,
+        solid_rects: &[Rect],
+        can_stand_at: &impl Fn(Vec2) -> bool,
+    ) {
         if delta.length_squared() <= f32::EPSILON {
             return;
         }
 
+        let start = self.position;
         self.position += delta;
 
         for solid in solid_rects {
@@ -189,6 +231,10 @@ impl Player {
             } else if delta.y < 0.0 {
                 self.position.y = solid.bottom() - PLAYER_TOPDOWN_COLLISION_OFFSET.y;
             }
+        }
+
+        if !can_stand_at(self.topdown_feet_position()) {
+            self.position = start;
         }
     }
 
@@ -378,5 +424,20 @@ mod tests {
             player.position.y,
             foot_solid.bottom() - PLAYER_TOPDOWN_COLLISION_OFFSET.y
         );
+    }
+
+    #[test]
+    fn topdown_surface_constraint_uses_feet_position() {
+        let mut player = Player::new(Vec2::ZERO);
+
+        player.update_topdown_movement_constrained(
+            0.2,
+            Vec2::new(1.0, 0.0),
+            Vec::<Rect>::new(),
+            1.0,
+            |feet| feet.x <= 10.0,
+        );
+
+        assert_eq!(player.position.x, 0.0);
     }
 }

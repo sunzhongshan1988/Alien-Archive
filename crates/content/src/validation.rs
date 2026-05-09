@@ -282,11 +282,24 @@ pub fn validate_map_with_codex(
                 "zone {} is WalkSurface but has no surface settings",
                 zone.id
             )));
-        } else if zone.surface.is_some() && zone.zone_type != "WalkSurface" {
-            issues.push(MapValidationIssue::warning(format!(
-                "zone {} has walk surface data but zone_type is {}",
-                zone.id, zone.zone_type
-            )));
+        } else if let Some(surface) = &zone.surface {
+            let surface_id = surface
+                .surface_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            if zone.zone_type != "WalkSurface" {
+                issues.push(MapValidationIssue::warning(format!(
+                    "zone {} has walk surface data but zone_type is {}",
+                    zone.id, zone.zone_type
+                )));
+            }
+            if surface.kind == crate::WalkSurfaceKind::Ramp && surface_id.is_none() {
+                issues.push(MapValidationIssue::warning(format!(
+                    "zone {} is a WalkSurface ramp but has no surface_id; it will not connect to a platform",
+                    zone.id
+                )));
+            }
         }
         if let Some(unlock) = &zone.unlock {
             validate_unlock_rule("zone", &zone.id, unlock, codex, &mut issues);
@@ -541,7 +554,8 @@ fn validate_scale(
 mod tests {
     use crate::{
         AnchorKind, AssetDatabase, AssetDefinition, AssetKind, CodexDatabase, CodexEntry,
-        CollisionCell, LayerKind, MapDocument, SnapMode, UnlockRule, WalkSurfaceRule, ZoneInstance,
+        CollisionCell, LayerKind, MapDocument, SnapMode, UnlockRule, WalkSurfaceKind,
+        WalkSurfaceRule, ZoneInstance,
     };
 
     use super::*;
@@ -799,6 +813,9 @@ mod tests {
             zone_type: "WalkSurface".to_owned(),
             points: vec![[1.0, 1.0], [3.0, 1.0], [3.0, 3.0], [1.0, 3.0]],
             surface: Some(WalkSurfaceRule {
+                surface_id: Some("platform_01".to_owned()),
+                kind: WalkSurfaceKind::Platform,
+                constrain_movement: true,
                 z_index: 48,
                 depth_offset: -8.0,
             }),

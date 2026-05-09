@@ -98,6 +98,22 @@ impl World {
         self.map.walk_surface_at(point)
     }
 
+    pub fn walk_surface_entry_at(&self, point: Vec2) -> Option<MapWalkSurface> {
+        self.map.walk_surface_entry_at(point)
+    }
+
+    pub fn walk_surface_for_id_at(&self, surface_id: &str, point: Vec2) -> Option<MapWalkSurface> {
+        self.map.walk_surface_for_id_at(surface_id, point)
+    }
+
+    pub fn walk_surface_contains(&self, surface_id: &str, point: Vec2) -> bool {
+        self.map.walk_surface_contains(surface_id, point)
+    }
+
+    pub fn walk_surface_ramp_contains(&self, surface_id: &str, point: Vec2) -> bool {
+        self.map.walk_surface_ramp_contains(surface_id, point)
+    }
+
     pub fn codex_entities(&self) -> impl Iterator<Item = &MapEntity> + '_ {
         self.map
             .entities()

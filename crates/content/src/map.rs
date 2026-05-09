@@ -403,8 +403,14 @@ pub struct ZoneInstance {
     pub transition: Option<TransitionTarget>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct WalkSurfaceRule {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface_id: Option<String>,
+    #[serde(default, skip_serializing_if = "is_default_walk_surface_kind")]
+    pub kind: WalkSurfaceKind,
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub constrain_movement: bool,
     #[serde(default, skip_serializing_if = "is_zero_i32")]
     pub z_index: i32,
     #[serde(default, skip_serializing_if = "is_zero_f32")]
@@ -414,8 +420,39 @@ pub struct WalkSurfaceRule {
 impl Default for WalkSurfaceRule {
     fn default() -> Self {
         Self {
+            surface_id: None,
+            kind: WalkSurfaceKind::Platform,
+            constrain_movement: true,
             z_index: 64,
             depth_offset: 0.0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum WalkSurfaceKind {
+    Platform,
+    Ramp,
+}
+
+impl Default for WalkSurfaceKind {
+    fn default() -> Self {
+        Self::Platform
+    }
+}
+
+impl WalkSurfaceKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Platform => "Platform",
+            Self::Ramp => "Ramp",
+        }
+    }
+
+    pub fn zh_label(self) -> &'static str {
+        match self {
+            Self::Platform => "台面",
+            Self::Ramp => "斜坡入口",
         }
     }
 }
@@ -599,6 +636,14 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
+fn default_true() -> bool {
+    true
+}
+
 fn default_collision_size() -> [f32; 2] {
     [1.0, 1.0]
 }
@@ -629,6 +674,10 @@ fn is_zero_i32(value: &i32) -> bool {
 
 fn is_zero_f32(value: &f32) -> bool {
     floats_close(*value, 0.0)
+}
+
+fn is_default_walk_surface_kind(value: &WalkSurfaceKind) -> bool {
+    *value == WalkSurfaceKind::Platform
 }
 
 fn is_one_i32(value: &i32) -> bool {

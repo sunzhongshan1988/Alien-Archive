@@ -395,7 +395,14 @@ impl EditorApp {
             }
             if zone.surface.is_some() {
                 badges.push(OutlinerBadge {
-                    label: "surface",
+                    label: zone
+                        .surface
+                        .as_ref()
+                        .map(|surface| match surface.kind {
+                            content::WalkSurfaceKind::Platform => "platform",
+                            content::WalkSurfaceKind::Ramp => "ramp",
+                        })
+                        .unwrap_or("surface"),
                     color: THEME_ACCENT_STRONG,
                 });
             }
@@ -410,10 +417,32 @@ impl EditorApp {
                 });
             }
             let unlock_search = unlock_search_text(zone.unlock.as_ref());
+            let surface_search = zone
+                .surface
+                .as_ref()
+                .map(|surface| {
+                    format!(
+                        "{} {}",
+                        surface.surface_id.as_deref().unwrap_or_default(),
+                        surface.kind.label()
+                    )
+                })
+                .unwrap_or_default();
+            let detail = if let Some(surface) = &zone.surface {
+                format!(
+                    "{} | {} points | {} {}",
+                    zone.zone_type,
+                    zone.points.len(),
+                    surface.kind.zh_label(),
+                    surface.surface_id.as_deref().unwrap_or("-")
+                )
+            } else {
+                format!("{} | {} points", zone.zone_type, zone.points.len())
+            };
             entries.push(outliner_entry(
                 "Zones",
                 zone.id.clone(),
-                format!("{} | {} points", zone.zone_type, zone.points.len()),
+                detail,
                 Some(SelectedItem {
                     layer: LayerKind::Zones,
                     id: zone.id.clone(),
@@ -424,6 +453,7 @@ impl EditorApp {
                     zone.id.as_str(),
                     zone.zone_type.as_str(),
                     unlock_search.as_str(),
+                    surface_search.as_str(),
                 ]
                 .join(" "),
             ));

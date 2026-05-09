@@ -23,6 +23,7 @@ pub struct OverworldScene {
     player: Player,
     world: World,
     map_path: String,
+    active_walk_surface_id: Option<String>,
     camera: Camera2d,
     scan: ScanState,
     notice: NoticeState,
@@ -41,12 +42,16 @@ impl OverworldScene {
             ctx.overworld_player_position
                 .unwrap_or_else(|| world.player_spawn()),
         );
+        let active_walk_surface_id = world
+            .walk_surface_at(player.topdown_feet_position())
+            .map(|surface| surface.surface_id);
 
         Ok(Self {
             camera: Camera2d::follow_with_zoom(player.position, OVERWORLD_CAMERA_ZOOM),
             player,
             world,
             map_path,
+            active_walk_surface_id,
             scan: ScanState::default(),
             notice: NoticeState::default(),
         })
@@ -95,6 +100,21 @@ impl OverworldScene {
             .remove_entities_by_id(&ctx.collected_entity_ids_for_map(&self.map_path));
         self.notice.push_pickup(ctx.language, reward.item_id, added);
         true
+    }
+
+    fn refresh_active_walk_surface(&mut self) {
+        let feet = self.player.topdown_feet_position();
+
+        if let Some(surface_id) = self.active_walk_surface_id.clone() {
+            if self.world.walk_surface_contains(&surface_id, feet) {
+                return;
+            }
+            self.active_walk_surface_id = None;
+        }
+
+        if let Some(surface) = self.world.walk_surface_entry_at(feet) {
+            self.active_walk_surface_id = Some(surface.surface_id);
+        }
     }
 }
 
@@ -198,12 +218,34 @@ impl Scene for OverworldScene {
                 environment: FieldEnvironment::Overworld,
             },
         );
-        self.player.update_topdown_with_speed(
+        self.refresh_active_walk_surface();
+        let previous_feet = self.player.topdown_feet_position();
+        let active_surface_id = self.active_walk_surface_id.clone();
+        let world = &self.world;
+        let can_leave_active_surface = active_surface_id
+            .as_deref()
+            .is_some_and(|surface_id| world.walk_surface_ramp_contains(surface_id, previous_feet));
+        let active_surface_constrained = active_surface_id
+            .as_deref()
+            .and_then(|surface_id| world.walk_surface_for_id_at(surface_id, previous_feet))
+            .is_none_or(|surface| surface.constrain_movement);
+
+        self.player.update_topdown_with_speed_and_constraint(
             dt,
             input,
             self.world.solid_rects(),
             status.movement_speed_multiplier,
+            |feet| {
+                let Some(surface_id) = active_surface_id.as_deref() else {
+                    return true;
+                };
+                if !active_surface_constrained {
+                    return true;
+                }
+                world.walk_surface_contains(surface_id, feet) || can_leave_active_surface
+            },
         );
+        self.refresh_active_walk_surface();
         self.camera.position = self.player.position;
         ctx.record_world_location(SceneId::Overworld, &self.map_path, self.player.position);
 
@@ -212,12 +254,14 @@ impl Scene for OverworldScene {
 
     fn render(&mut self, ctx: &mut RenderContext<'_>) -> Result<()> {
         self.world.load_visible_ground_assets(ctx.renderer)?;
+        let feet = self.player.topdown_feet_position();
         let surface = self
-            .world
-            .walk_surface_at(self.player.topdown_feet_position());
-        let actor_depth_y =
-            self.player.topdown_depth_y() + surface.map_or(0.0, |surface| surface.depth_offset);
-        let actor_z_index = surface.map_or(0, |surface| surface.z_index);
+            .active_walk_surface_id
+            .as_deref()
+            .and_then(|surface_id| self.world.walk_surface_for_id_at(surface_id, feet));
+        let actor_depth_y = self.player.topdown_depth_y()
+            + surface.as_ref().map_or(0.0, |surface| surface.depth_offset);
+        let actor_z_index = surface.as_ref().map_or(0, |surface| surface.z_index);
         self.world.draw_with_actor_at_depth(
             ctx.renderer,
             actor_depth_y,

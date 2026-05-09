@@ -422,6 +422,32 @@ impl EditorApp {
                         }
                     });
                     if let Some(surface) = &mut zone.surface {
+                        let mut surface_id = surface.surface_id.clone().unwrap_or_default();
+                        if labeled_text_edit(ui, "Surface ID", &mut surface_id) {
+                            set_optional_string(&mut surface.surface_id, surface_id);
+                            changed = true;
+                        }
+                        egui::ComboBox::from_label("表面类型")
+                            .selected_text(surface.kind.zh_label())
+                            .show_ui(ui, |ui| {
+                                changed |= ui
+                                    .selectable_value(
+                                        &mut surface.kind,
+                                        content::WalkSurfaceKind::Platform,
+                                        "台面 / 平台",
+                                    )
+                                    .changed();
+                                changed |= ui
+                                    .selectable_value(
+                                        &mut surface.kind,
+                                        content::WalkSurfaceKind::Ramp,
+                                        "斜坡入口 / 出口",
+                                    )
+                                    .changed();
+                            });
+                        changed |= ui
+                            .checkbox(&mut surface.constrain_movement, "限制在同一表面区域内")
+                            .changed();
                         changed |= ui
                             .add(
                                 egui::DragValue::new(&mut surface.z_index)
@@ -439,7 +465,7 @@ impl EditorApp {
                             .changed();
                         ui.colored_label(
                             THEME_MUTED_TEXT,
-                            "人物脚底进入该区域后，会用这里的层级参与 Y 深度排序。",
+                            "圆台顶面和斜坡填同一个 Surface ID；只有斜坡入口能从地面切入台面。",
                         );
                     }
 
