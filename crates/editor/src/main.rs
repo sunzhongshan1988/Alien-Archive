@@ -53,7 +53,7 @@ use eframe::egui::{
     self, Color32, Context as EguiContext, Key, Modifiers, Pos2, Rect, Sense, Shape, Stroke,
     StrokeKind, Vec2, vec2,
 };
-use terrain::{TerrainMask, TerrainRules};
+use terrain::{TerrainNeighborFamilies, TerrainRules};
 use tools::ToolKind;
 use ui::asset_grid::{asset_grid_columns, asset_tile};
 use ui::buttons::editor_icon_button;
@@ -175,6 +175,7 @@ impl EditorApp {
             zoom: 1.0,
             pending_focus_world: None,
             mouse_tile: None,
+            last_canvas_rect: None,
             thumbnails: HashMap::new(),
             status: "Ready".to_owned(),
         };
@@ -589,14 +590,45 @@ impl EditorApp {
     }
 
     fn push_undo_snapshot(&mut self) {
-        if self.undo_stack.last() == Some(&self.document) {
+        self.push_undo_document(self.document.clone());
+    }
+
+    fn push_undo_document(&mut self, document: MapDocument) {
+        if self.undo_stack.last() == Some(&document) {
             return;
         }
-        self.undo_stack.push(self.document.clone());
+        self.undo_stack.push(document);
         if self.undo_stack.len() > 100 {
             self.undo_stack.remove(0);
         }
         self.redo_stack.clear();
+    }
+
+    fn recalc_visible_ground_command(&mut self) {
+        let Some(canvas_rect) = self.last_canvas_rect else {
+            self.status = "画布还未初始化，无法重算可见地形".to_owned();
+            return;
+        };
+        let before = self.document.clone();
+        let changed = self.recalc_visible_ground(canvas_rect);
+        self.finish_ground_recalc(before, changed, "可见区域");
+    }
+
+    fn recalc_all_ground_command(&mut self) {
+        let before = self.document.clone();
+        let changed = self.recalc_all_ground();
+        self.finish_ground_recalc(before, changed, "全图");
+    }
+
+    fn finish_ground_recalc(&mut self, before: MapDocument, changed: usize, scope: &str) {
+        if changed == 0 {
+            self.status = format!("{scope}地形无需更新");
+            return;
+        }
+
+        self.push_undo_document(before);
+        self.mark_dirty();
+        self.status = format!("已重算{scope}地形：{changed} 个地块更新");
     }
 
     fn undo(&mut self) {
@@ -1606,7 +1638,19 @@ impl EditorApp {
                     ui.checkbox(&mut self.terrain_autotile, "自动接边")
                 })
                 .inner
-                .on_hover_text("刷地、矩形填充或擦除后，自动重算周围同族地形素材");
+                .on_hover_text("刷地、矩形填充或擦除后，自动重算周围地形和跨材质 transition");
+                if toolbar_command_button(ui, "重算可见", 72.0)
+                    .on_hover_text("按当前画布视口重算地形边角和跨材质 transition")
+                    .clicked()
+                {
+                    self.recalc_visible_ground_command();
+                }
+                if toolbar_command_button(ui, "重算全图", 72.0)
+                    .on_hover_text("重算整张地图的地形边角和跨材质 transition")
+                    .clicked()
+                {
+                    self.recalc_all_ground_command();
+                }
             } else if self.active_layer == LayerKind::Collision || self.tool == ToolKind::Collision
             {
                 ui.separator();

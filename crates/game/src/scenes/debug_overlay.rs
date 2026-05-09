@@ -1,5 +1,5 @@
 use anyhow::Result;
-use runtime::{Camera2d, Color, Rect, Renderer, Vec2};
+use runtime::{Camera2d, Color, Rect, RenderStats, Renderer, Vec2};
 use rusttype::Font;
 
 use crate::{
@@ -79,7 +79,7 @@ impl DebugOverlay {
             return Ok(());
         }
 
-        let lines = debug_overlay_lines(ctx, snapshot);
+        let lines = debug_overlay_lines(ctx, snapshot, renderer.frame_stats());
         self.upload_lines(renderer, &lines)?;
 
         let viewport = renderer.screen_size();
@@ -156,7 +156,11 @@ impl DebugOverlay {
     }
 }
 
-pub(super) fn debug_overlay_lines(ctx: &GameContext, snapshot: &SceneDebugSnapshot) -> Vec<String> {
+pub(super) fn debug_overlay_lines(
+    ctx: &GameContext,
+    snapshot: &SceneDebugSnapshot,
+    render_stats: RenderStats,
+) -> Vec<String> {
     let scene = match snapshot.overlay_scene_name.as_deref() {
         Some(overlay) => format!(
             "scene: {:?} {} + {}",
@@ -186,6 +190,22 @@ pub(super) fn debug_overlay_lines(ctx: &GameContext, snapshot: &SceneDebugSnapsh
         map,
         format!("colliders: {collider_count}"),
         format!("scan target: {scan_target}"),
+        format!(
+            "render: commands {} rect {} image {} ground_chunks {}",
+            render_stats.queued_commands,
+            render_stats.rect_commands,
+            render_stats.image_commands,
+            render_stats.ground_chunk_commands
+        ),
+        format!(
+            "gpu submit: draw_calls {} batches r{} i{} buffers {} textures {} skipped {}",
+            render_stats.draw_calls,
+            render_stats.rect_batches,
+            render_stats.image_batches,
+            render_stats.vertex_buffers,
+            render_stats.loaded_textures,
+            render_stats.skipped_image_commands
+        ),
         format!(
             "save: {} dirty={} requested={} timer={:.1}s",
             ctx.save_path.display(),
@@ -260,10 +280,27 @@ mod tests {
                 Some("codex.test.target".to_owned()),
             );
 
-        let lines = debug_overlay_lines(&ctx, &snapshot);
+        let lines = debug_overlay_lines(
+            &ctx,
+            &snapshot,
+            RenderStats {
+                queued_commands: 12,
+                rect_commands: 3,
+                image_commands: 9,
+                ground_chunk_commands: 2,
+                skipped_image_commands: 1,
+                rect_batches: 2,
+                image_batches: 4,
+                draw_calls: 6,
+                vertex_buffers: 6,
+                loaded_textures: 10,
+            },
+        );
 
         assert!(lines.iter().any(|line| line.contains("dirty=true")));
         assert!(lines.iter().any(|line| line.contains("hp 86/100")));
+        assert!(lines.iter().any(|line| line.contains("ground_chunks 2")));
+        assert!(lines.iter().any(|line| line.contains("draw_calls 6")));
         assert!(
             lines
                 .iter()

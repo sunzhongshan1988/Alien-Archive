@@ -15,6 +15,8 @@ use runtime::{Color, Rect, Renderer, Vec2, collision::rects_overlap};
 use serde::Deserialize;
 
 const GROUND_CACHE_CHUNK_TILES: u32 = 32;
+const MAP_TEXTURE_ATLAS_WIDTH: u32 = 2048;
+const MAP_TEXTURE_ATLAS_PADDING: u32 = 2;
 
 #[derive(Clone, Debug)]
 pub struct Map {
@@ -25,6 +27,7 @@ pub struct Map {
     zones: Vec<MapZone>,
     collision_rects: Vec<Rect>,
     textures: HashMap<String, PathBuf>,
+    texture_atlas: Option<MapTextureAtlas>,
 }
 
 impl Map {
@@ -135,8 +138,10 @@ impl Map {
                 .then_with(|| left.rect.bottom().total_cmp(&right.rect.bottom()))
         });
         for sprite in sprites {
-            renderer.draw_image_transformed(
+            draw_texture_region(
+                renderer,
                 &sprite.texture_id,
+                sprite.source,
                 sprite.rect,
                 Color::rgba(1.0, 1.0, 1.0, 1.0),
                 sprite.flip_x,
@@ -168,6 +173,17 @@ impl Map {
     }
 
     pub fn load_assets(&self, renderer: &mut dyn Renderer) -> Result<()> {
+        if let Some(atlas) = &self.texture_atlas {
+            if renderer.texture_size(&atlas.texture_id).is_none() {
+                renderer.load_texture_rgba(
+                    &atlas.texture_id,
+                    atlas.width,
+                    atlas.height,
+                    &atlas.rgba,
+                )?;
+            }
+        }
+
         for (texture_id, path) in &self.textures {
             if renderer.texture_size(texture_id).is_none() {
                 renderer.load_texture(texture_id, path)?;
@@ -284,6 +300,7 @@ impl Map {
                     unlock,
                     transition: MapTransitionTarget::from_content(entity.transition),
                     texture_id: None,
+                    source: None,
                     flip_x: false,
                     rotation: 0,
                 }
@@ -298,6 +315,7 @@ impl Map {
             collision_rects: Vec::new(),
             ground_cache: None,
             textures: HashMap::new(),
+            texture_atlas: None,
         })
     }
 
@@ -416,6 +434,7 @@ impl Map {
                 unlock: None,
                 transition: None,
                 texture_id: None,
+                source: None,
                 flip_x: false,
                 rotation: 0,
             });
@@ -459,9 +478,15 @@ impl Map {
                 unlock,
                 transition: MapTransitionTarget::from_content(entity.transition),
                 texture_id: Some(asset.id.clone()),
+                source: None,
                 flip_x: entity.flip_x,
                 rotation: entity.rotation,
             });
+        }
+
+        let texture_atlas = build_texture_atlas(&file.id, &textures, &mut sprites, &mut entities)?;
+        if texture_atlas.is_some() {
+            textures.clear();
         }
 
         let zones = file
@@ -516,8 +541,137 @@ impl Map {
             collision_rects,
             ground_cache,
             textures,
+            texture_atlas,
         })
     }
+}
+
+#[derive(Clone, Debug)]
+struct MapTextureAtlas {
+    texture_id: String,
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+}
+
+struct AtlasEntry {
+    id: String,
+    image: RgbaImage,
+}
+
+fn build_texture_atlas(
+    map_id: &str,
+    textures: &HashMap<String, PathBuf>,
+    sprites: &mut [MapSprite],
+    entities: &mut [MapEntity],
+) -> Result<Option<MapTextureAtlas>> {
+    if textures.len() <= 1 {
+        return Ok(None);
+    }
+
+    let mut texture_paths = textures.iter().collect::<Vec<_>>();
+    texture_paths.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+    let mut entries = Vec::with_capacity(texture_paths.len());
+    for (id, path) in texture_paths {
+        let image = image::ImageReader::open(path)
+            .with_context(|| format!("failed to open map atlas image {}", path.display()))?
+            .decode()
+            .with_context(|| format!("failed to decode map atlas image {}", path.display()))?
+            .to_rgba8();
+        entries.push(AtlasEntry {
+            id: id.clone(),
+            image,
+        });
+    }
+
+    let widest = entries
+        .iter()
+        .map(|entry| entry.image.width())
+        .max()
+        .unwrap_or(1);
+    let atlas_width = MAP_TEXTURE_ATLAS_WIDTH.max(widest + MAP_TEXTURE_ATLAS_PADDING * 2);
+    let placements = pack_atlas_entries(&entries, atlas_width);
+    let atlas_height = placements
+        .values()
+        .map(|region| region.bottom().ceil() as u32 + MAP_TEXTURE_ATLAS_PADDING)
+        .max()
+        .unwrap_or(1)
+        .max(1);
+
+    let mut canvas = RgbaImage::new(atlas_width, atlas_height);
+    for entry in &entries {
+        let Some(region) = placements.get(&entry.id) else {
+            continue;
+        };
+        imageops::overlay(
+            &mut canvas,
+            &entry.image,
+            region.origin.x as i64,
+            region.origin.y as i64,
+        );
+    }
+
+    let atlas_id = format!("__map_texture_atlas_{}", texture_id_component(map_id));
+    for sprite in sprites {
+        if let Some(region) = placements.get(&sprite.texture_id) {
+            sprite.texture_id = atlas_id.clone();
+            sprite.source = Some(*region);
+        }
+    }
+    for entity in entities {
+        let Some(texture_id) = &mut entity.texture_id else {
+            continue;
+        };
+        if let Some(region) = placements.get(texture_id) {
+            *texture_id = atlas_id.clone();
+            entity.source = Some(*region);
+        }
+    }
+
+    Ok(Some(MapTextureAtlas {
+        texture_id: atlas_id,
+        width: atlas_width,
+        height: atlas_height,
+        rgba: canvas.into_raw(),
+    }))
+}
+
+fn pack_atlas_entries(entries: &[AtlasEntry], atlas_width: u32) -> HashMap<String, Rect> {
+    let mut placements = HashMap::new();
+    let mut x = MAP_TEXTURE_ATLAS_PADDING;
+    let mut y = MAP_TEXTURE_ATLAS_PADDING;
+    let mut row_height = 0;
+
+    for entry in entries {
+        let width = entry.image.width();
+        let height = entry.image.height();
+        if x > MAP_TEXTURE_ATLAS_PADDING
+            && x.saturating_add(width)
+                .saturating_add(MAP_TEXTURE_ATLAS_PADDING)
+                > atlas_width
+        {
+            x = MAP_TEXTURE_ATLAS_PADDING;
+            y = y
+                .saturating_add(row_height)
+                .saturating_add(MAP_TEXTURE_ATLAS_PADDING);
+            row_height = 0;
+        }
+
+        placements.insert(
+            entry.id.clone(),
+            Rect::new(
+                Vec2::new(x as f32, y as f32),
+                Vec2::new(width as f32, height as f32),
+            ),
+        );
+        x = x
+            .saturating_add(width)
+            .saturating_add(MAP_TEXTURE_ATLAS_PADDING);
+        row_height = row_height.max(height);
+    }
+
+    placements
 }
 
 #[derive(Clone, Debug)]
@@ -738,6 +892,22 @@ fn transform_ground_tile(
     }
 }
 
+fn draw_texture_region(
+    renderer: &mut dyn Renderer,
+    texture_id: &str,
+    source: Option<Rect>,
+    rect: Rect,
+    tint: Color,
+    flip_x: bool,
+    rotation: i32,
+) {
+    if let Some(source) = source {
+        renderer.draw_image_region_transformed(texture_id, rect, source, tint, flip_x, rotation);
+    } else {
+        renderer.draw_image_transformed(texture_id, rect, tint, flip_x, rotation);
+    }
+}
+
 #[derive(Clone, Debug)]
 struct MapTile {
     rect: Rect,
@@ -756,6 +926,7 @@ enum MapVisual {
 #[derive(Clone, Debug)]
 struct MapSprite {
     texture_id: String,
+    source: Option<Rect>,
     rect: Rect,
     z_index: i32,
     layer: MapSpriteLayer,
@@ -785,8 +956,10 @@ impl DepthDrawable<'_> {
 
     fn draw(self, renderer: &mut dyn Renderer) {
         match self {
-            Self::Sprite(sprite) => renderer.draw_image_transformed(
+            Self::Sprite(sprite) => draw_texture_region(
+                renderer,
                 &sprite.texture_id,
+                sprite.source,
                 sprite.rect,
                 Color::rgba(1.0, 1.0, 1.0, 1.0),
                 sprite.flip_x,
@@ -794,8 +967,10 @@ impl DepthDrawable<'_> {
             ),
             Self::Entity(entity) => {
                 if let Some(texture_id) = &entity.texture_id {
-                    renderer.draw_image_transformed(
+                    draw_texture_region(
+                        renderer,
                         texture_id,
+                        entity.source,
                         entity.sprite_rect,
                         Color::rgba(1.0, 1.0, 1.0, 1.0),
                         entity.flip_x,
@@ -846,6 +1021,7 @@ pub struct MapEntity {
     pub unlock: Option<MapUnlockRule>,
     pub transition: Option<MapTransitionTarget>,
     texture_id: Option<String>,
+    source: Option<Rect>,
     flip_x: bool,
     rotation: i32,
 }
@@ -995,6 +1171,7 @@ fn push_sprite(
 
     sprites.push(MapSprite {
         texture_id: asset.id.clone(),
+        source: None,
         rect: anchored_rect(
             anchor,
             scaled_size(asset.default_size, instance.scale_x, instance.scale_y),
@@ -1202,6 +1379,7 @@ mod tests {
             collision_rects: Vec::new(),
             ground_cache: None,
             textures: HashMap::new(),
+            texture_atlas: None,
         };
         let mut renderer = RecordingRenderer::default();
 
@@ -1248,9 +1426,49 @@ mod tests {
         );
     }
 
+    #[test]
+    fn texture_atlas_rewrites_sprite_sources() {
+        let dir =
+            std::env::temp_dir().join(format!("alien_archive_atlas_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("atlas temp dir should be created");
+        let left_path = dir.join("left.png");
+        let right_path = dir.join("right.png");
+        RgbaImage::new(4, 4)
+            .save(&left_path)
+            .expect("left test image should save");
+        RgbaImage::new(6, 5)
+            .save(&right_path)
+            .expect("right test image should save");
+
+        let mut textures = HashMap::new();
+        textures.insert("left".to_owned(), left_path);
+        textures.insert("right".to_owned(), right_path);
+        let mut sprites = vec![
+            sprite("left", 0.0, 0, MapSpriteLayer::Object),
+            sprite("right", 10.0, 0, MapSpriteLayer::Decal),
+        ];
+        let mut entities = Vec::new();
+
+        let atlas = build_texture_atlas("test map", &textures, &mut sprites, &mut entities)
+            .expect("atlas should build")
+            .expect("multiple textures should create an atlas");
+
+        assert_eq!(atlas.texture_id, "__map_texture_atlas_test_map");
+        assert!(atlas.width >= 12);
+        assert!(
+            sprites
+                .iter()
+                .all(|sprite| sprite.texture_id == atlas.texture_id)
+        );
+        assert!(sprites.iter().all(|sprite| sprite.source.is_some()));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     fn sprite(texture_id: &str, y: f32, z_index: i32, layer: MapSpriteLayer) -> MapSprite {
         MapSprite {
             texture_id: texture_id.to_owned(),
+            source: None,
             rect: Rect::new(Vec2::new(0.0, y), Vec2::new(10.0, 10.0)),
             z_index,
             layer,

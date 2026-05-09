@@ -5,7 +5,7 @@ use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
 
-use crate::{Camera2d, Color, Rect, Renderer, Vec2};
+use crate::{Camera2d, Color, Rect, RenderStats, Renderer, Vec2};
 
 const RECT_SHADER: &str = r#"
 struct VertexInput {
@@ -160,6 +160,14 @@ enum PreparedCommand {
     },
 }
 
+enum PendingBatch {
+    Rect(Vec<RectVertex>),
+    Image {
+        texture_id: String,
+        vertices: Vec<ImageVertex>,
+    },
+}
+
 struct GpuTexture {
     _texture: wgpu::Texture,
     _sampler: wgpu::Sampler,
@@ -180,6 +188,7 @@ pub struct WgpuRenderer {
     clear_color: Color,
     commands: Vec<RenderCommand>,
     textures: HashMap<String, GpuTexture>,
+    last_frame_stats: RenderStats,
 }
 
 impl WgpuRenderer {
@@ -348,6 +357,7 @@ impl WgpuRenderer {
             clear_color: Color::rgb(0.015, 0.019, 0.035),
             commands: Vec::with_capacity(256),
             textures: HashMap::new(),
+            last_frame_stats: RenderStats::default(),
         })
     }
 
@@ -444,20 +454,38 @@ impl WgpuRenderer {
         Ok(())
     }
 
-    fn prepare_commands(&self) -> Vec<PreparedCommand> {
+    fn prepare_commands(&mut self) -> Vec<PreparedCommand> {
         let mut prepared = Vec::with_capacity(self.commands.len());
+        let mut pending: Option<PendingBatch> = None;
+        let mut stats = RenderStats {
+            queued_commands: self.commands.len(),
+            loaded_textures: self.textures.len(),
+            ..RenderStats::default()
+        };
 
         for command in &self.commands {
             match command {
                 RenderCommand::Rect(command) => {
+                    stats.rect_commands += 1;
                     let vertices = self.build_rect_vertices(*command);
-                    prepared.push(PreparedCommand::Rect {
-                        buffer: self.create_vertex_buffer("Rectangle Vertex Buffer", &vertices),
-                        vertex_count: vertices.len() as u32,
-                    });
+                    match &mut pending {
+                        Some(PendingBatch::Rect(batch_vertices)) => {
+                            batch_vertices.extend_from_slice(&vertices);
+                        }
+                        _ => {
+                            self.flush_pending_batch(&mut pending, &mut prepared, &mut stats);
+                            pending = Some(PendingBatch::Rect(vertices.to_vec()));
+                        }
+                    }
                 }
                 RenderCommand::Image(command) => {
+                    stats.image_commands += 1;
+                    if command.texture_id.starts_with("__map_ground_cache_") {
+                        stats.ground_chunk_commands += 1;
+                    }
+
                     if !self.textures.contains_key(&command.texture_id) {
+                        stats.skipped_image_commands += 1;
                         continue;
                     }
 
@@ -466,16 +494,70 @@ impl WgpuRenderer {
                     };
 
                     let vertices = self.build_image_vertices(command, texture.size);
-                    prepared.push(PreparedCommand::Image {
-                        texture_id: command.texture_id.clone(),
-                        buffer: self.create_vertex_buffer("Image Vertex Buffer", &vertices),
-                        vertex_count: vertices.len() as u32,
-                    });
+                    match &mut pending {
+                        Some(PendingBatch::Image {
+                            texture_id,
+                            vertices: batch_vertices,
+                        }) if texture_id == &command.texture_id => {
+                            batch_vertices.extend_from_slice(&vertices);
+                        }
+                        _ => {
+                            self.flush_pending_batch(&mut pending, &mut prepared, &mut stats);
+                            pending = Some(PendingBatch::Image {
+                                texture_id: command.texture_id.clone(),
+                                vertices: vertices.to_vec(),
+                            });
+                        }
+                    }
                 }
             }
         }
 
+        self.flush_pending_batch(&mut pending, &mut prepared, &mut stats);
+        stats.draw_calls = prepared.len();
+        self.last_frame_stats = stats;
+
         prepared
+    }
+
+    fn flush_pending_batch(
+        &self,
+        pending: &mut Option<PendingBatch>,
+        prepared: &mut Vec<PreparedCommand>,
+        stats: &mut RenderStats,
+    ) {
+        let Some(batch) = pending.take() else {
+            return;
+        };
+
+        match batch {
+            PendingBatch::Rect(vertices) => {
+                if vertices.is_empty() {
+                    return;
+                }
+                stats.rect_batches += 1;
+                stats.vertex_buffers += 1;
+                prepared.push(PreparedCommand::Rect {
+                    buffer: self.create_vertex_buffer("Rectangle Vertex Buffer", &vertices),
+                    vertex_count: vertices.len() as u32,
+                });
+            }
+            PendingBatch::Image {
+                texture_id,
+                vertices,
+            } => {
+                if vertices.is_empty() {
+                    return;
+                }
+                stats.image_batches += 1;
+                stats.vertex_buffers += 1;
+                prepared.push(PreparedCommand::Image {
+                    texture_id,
+                    buffer: self.create_vertex_buffer("Image Vertex Buffer", &vertices),
+                    vertex_count: vertices.len() as u32,
+                });
+            }
+        }
     }
 
     fn create_vertex_buffer<T>(&self, label: &str, vertices: &[T]) -> wgpu::Buffer
@@ -711,6 +793,10 @@ impl Renderer for WgpuRenderer {
         Vec2::new(self.config.width as f32, self.config.height as f32)
     }
 
+    fn frame_stats(&self) -> RenderStats {
+        self.last_frame_stats
+    }
+
     fn visible_world_rect(&self) -> Rect {
         let zoom = self.camera.zoom.max(0.001);
         let size = Vec2::new(
@@ -778,6 +864,26 @@ impl Renderer for WgpuRenderer {
             tint,
             flip_x: false,
             rotation: 0,
+        }));
+    }
+
+    fn draw_image_region_transformed(
+        &mut self,
+        texture_id: &str,
+        rect: Rect,
+        source: Rect,
+        tint: Color,
+        flip_x: bool,
+        rotation: i32,
+    ) {
+        self.commands.push(RenderCommand::Image(ImageCommand {
+            camera: self.camera,
+            texture_id: texture_id.to_owned(),
+            rect,
+            source: Some(source),
+            tint,
+            flip_x,
+            rotation,
         }));
     }
 }

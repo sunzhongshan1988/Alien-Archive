@@ -53,7 +53,7 @@
 - 验证：能检查空地图 id、无效尺寸、越界、重复 id、未知资产、资产类型/默认层不匹配、实体类型为空、scale 非法、区域点数过少等。
 - UI 组件层：`crates/editor/src/ui` 是 Alien Archive Editor 自己的组件层。`egui` 只作为底层 immediate-mode GUI，长期不要在业务面板里反复手写 tabs、toolbar button、property row 等常见控件。
 - 面板拆分：左侧 `资源库 / 图层 / 对象` 面板已经从 `main.rs` 移到 `crates/editor/src/panels.rs`，右侧 Inspector 已移到 `crates/editor/src/inspector.rs`，弹窗和素材草稿编辑已移到 `crates/editor/src/dialogs.rs`。
-- Canvas 拆分：画布绘制、输入处理、hit test、工具操作和坐标转换已经从 `main.rs` 移到 `crates/editor/src/canvas/editor.rs`，纯绘制 helper 保留在 `crates/editor/src/canvas/rendering.rs`。下一步在 canvas 内继续拆 `viewport / input / hit_test / tools / overlays`，并引入可见区域裁剪。
+- Canvas 拆分：画布绘制、输入处理、hit test、工具操作和坐标转换已经从 `main.rs` 移到 `crates/editor/src/canvas/editor.rs`，纯绘制 helper 保留在 `crates/editor/src/canvas/rendering.rs`。Canvas 绘制已引入可见区域裁剪：Ground/Collision 按当前 tile bounds 跳过视口外单元，Decals/Objects/Entities/Zones/Entity Bounds 按 screen rect 跳过视口外实例，对象和实体会先裁剪再排序。下一步在 canvas 内继续拆 `viewport / input / hit_test / tools / overlays`。
 
 这个基础已经足够继续做内容，但如果进入长期地图生产，下面这些缺口会很快变成效率和质量问题。
 
@@ -332,6 +332,7 @@ Godot 的 TileSet property painting 对我们很有参考价值：
 - 曾试做 Coherent Terrain Pack 和 Seamless Terrain Pack：前者块边界太明显，后者纹理过平；两批 `ct_*` / `st_*` 4x4 地面素材已被后续 Terrain32 Pack 清理替换。
 - 4x4 地面素材实测过平，已清理旧 `tiles` 素材并重建 Terrain32 Pack：`assets/sprites/_sources/overworld/terrain32_pack_2026_05_09_*`；实际 tile 统一为 `assets/sprites/tiles/overworld/generated/ow_tile_32_*`，`default_size: (32,32)`、`footprint: Some((1,1))`。这包覆盖 sand、rock、scorch、ruin 四组，每组 12 个 center、1 个 `edge_n`、1 个 `corner_ne`，并补齐四组材料两两之间的有向 edge/corner transition。
 - 当前素材库计数变为：tiles 152、decals 38、props 34、structures 19、ruins 15、flora 18、fauna 10、interactables 11、pickups 14。当前 landing map 的 ground 层已从 117 个 4x4 实例展开为 1872 个 1x1 地块，starter map 已补成 1728 个 1x1 地块；后续地图生产基于 32x32 tile 和 transition tile 继续细化。
+- Editor 的“自动接边”已从同族 edge/corner 扩展到跨材质 directed transition：基础族优先读 `material:*`，如 sand 邻接 rock 会优先选 `sand_to_rock_edge_*` / `sand_to_rock_corner_*`，找不到 transition 时才回退到本族 edge/corner 或 center。地表工具栏同时补了“重算可见 / 重算全图”，方便整理旧地图或手动修补后的 transition。
 
 ### 2026-05-08
 

@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::PathBuf, time::Instant};
 
 use content::{self, AssetDatabase, CodexDatabase, LayerKind, MapDocument};
-use eframe::egui::{Color32, Pos2, TextureHandle, Vec2};
+use eframe::egui::{Color32, Pos2, Rect, TextureHandle, Vec2};
 
 use super::{config::EditorConfig, maps::MapListEntry};
 use crate::{asset_registry::AssetRegistry, assets::AssetDraft, native_menu, tools::ToolKind};
@@ -272,6 +272,7 @@ pub(crate) struct EditorApp {
     pub(crate) zoom: f32,
     pub(crate) pending_focus_world: Option<Vec2>,
     pub(crate) mouse_tile: Option<[i32; 2]>,
+    pub(crate) last_canvas_rect: Option<Rect>,
     pub(crate) thumbnails: HashMap<String, TextureHandle>,
     pub(crate) status: String,
 }

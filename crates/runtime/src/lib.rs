@@ -12,5 +12,5 @@ pub use app::{Game, run};
 pub use camera::Camera2d;
 pub use input::{Button, InputState};
 pub use math::{Color, Rect, Vec2};
-pub use renderer::Renderer;
+pub use renderer::{RenderStats, Renderer};
 pub use scene::SceneCommand;

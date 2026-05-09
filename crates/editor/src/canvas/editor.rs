@@ -5,6 +5,7 @@ impl EditorApp {
         let desired_size = ui.available_size_before_wrap();
         let (response, painter) = ui.allocate_painter(desired_size, Sense::click_and_drag());
         let rect = response.rect;
+        self.last_canvas_rect = Some(rect);
 
         if let Some(focus_world) = self.pending_focus_world.take() {
             self.pan = (rect.center() - rect.min) - focus_world * self.zoom;
@@ -1186,10 +1187,13 @@ impl EditorApp {
         if !self.terrain_autotile {
             return 0;
         }
-        let rules = TerrainRules::from_assets(self.registry.assets());
-        if rules.is_empty() {
+        self.recalc_all_ground()
+    }
+
+    pub(crate) fn recalc_all_ground(&mut self) -> usize {
+        let Some(rules) = self.terrain_rules_for_autotile() else {
             return 0;
-        }
+        };
         let anchors = self
             .document
             .layers
@@ -1200,18 +1204,41 @@ impl EditorApp {
         self.autotile_ground_anchors(&rules, anchors)
     }
 
+    pub(crate) fn recalc_visible_ground(&mut self, canvas_rect: Rect) -> usize {
+        let Some(rules) = self.terrain_rules_for_autotile() else {
+            return 0;
+        };
+        let visible = self.visible_tile_bounds(canvas_rect);
+        let anchors = self
+            .document
+            .layers
+            .ground
+            .iter()
+            .filter(|tile| {
+                tile_intersects_rect(
+                    tile,
+                    visible.min_x,
+                    visible.min_y,
+                    visible.max_x,
+                    visible.max_y,
+                )
+            })
+            .map(|tile| (tile.x, tile.y))
+            .collect::<Vec<_>>();
+        self.autotile_ground_anchors(&rules, anchors)
+    }
+
     pub(crate) fn autotile_ground_near_rect(&mut self, x: i32, y: i32, w: i32, h: i32) -> usize {
         if !self.terrain_autotile {
             return 0;
         }
-        let rules = TerrainRules::from_assets(self.registry.assets());
-        if rules.is_empty() {
+        let Some(rules) = self.terrain_rules_for_autotile() else {
             return 0;
-        }
+        };
         let min_x = x.saturating_sub(1);
         let min_y = y.saturating_sub(1);
-        let max_x = (x + w.max(1)).min(self.document.width as i32);
-        let max_y = (y + h.max(1)).min(self.document.height as i32);
+        let max_x = (x + w.max(1) + 1).min(self.document.width as i32);
+        let max_y = (y + h.max(1) + 1).min(self.document.height as i32);
         let anchors = self
             .document
             .layers
@@ -1222,6 +1249,11 @@ impl EditorApp {
             .collect::<Vec<_>>();
 
         self.autotile_ground_anchors(&rules, anchors)
+    }
+
+    fn terrain_rules_for_autotile(&self) -> Option<TerrainRules> {
+        let rules = TerrainRules::from_assets(self.registry.assets());
+        (!rules.is_empty()).then_some(rules)
     }
 
     fn autotile_ground_anchors(
@@ -1250,16 +1282,16 @@ impl EditorApp {
         else {
             return false;
         };
-        let Some(family) = rules.family_for_asset(&tile.asset) else {
+        if rules.family_for_asset(&tile.asset).is_none() {
             return false;
+        }
+        let neighbors = TerrainNeighborFamilies {
+            north: self.terrain_family_at_side(rules, &tile, DirectionSide::North),
+            east: self.terrain_family_at_side(rules, &tile, DirectionSide::East),
+            south: self.terrain_family_at_side(rules, &tile, DirectionSide::South),
+            west: self.terrain_family_at_side(rules, &tile, DirectionSide::West),
         };
-        let mask = TerrainMask {
-            north: self.same_terrain_at_side(rules, family, &tile, DirectionSide::North),
-            east: self.same_terrain_at_side(rules, family, &tile, DirectionSide::East),
-            south: self.same_terrain_at_side(rules, family, &tile, DirectionSide::South),
-            west: self.same_terrain_at_side(rules, family, &tile, DirectionSide::West),
-        };
-        let Some(choice) = rules.choice_for(&tile.asset, mask) else {
+        let Some(choice) = rules.choice_for_neighbors(&tile.asset, &neighbors) else {
             return false;
         };
         if choice.asset_id == tile.asset && choice.rotation == tile.rotation {
@@ -1280,13 +1312,12 @@ impl EditorApp {
         true
     }
 
-    fn same_terrain_at_side(
+    fn terrain_family_at_side(
         &self,
         rules: &TerrainRules,
-        family: &str,
         tile: &content::TileInstance,
         side: DirectionSide,
-    ) -> bool {
+    ) -> Option<String> {
         let width = tile.w.max(1);
         let height = tile.h.max(1);
         let [x, y] = match side {
@@ -1296,7 +1327,7 @@ impl EditorApp {
             DirectionSide::West => [tile.x - 1, tile.y + height / 2],
         };
         if x < 0 || y < 0 || x >= self.document.width as i32 || y >= self.document.height as i32 {
-            return false;
+            return None;
         }
 
         self.document
@@ -1305,7 +1336,8 @@ impl EditorApp {
             .iter()
             .rev()
             .find(|candidate| tile_contains_cell(candidate, x, y))
-            .is_some_and(|candidate| rules.same_family(&candidate.asset, family))
+            .and_then(|candidate| rules.family_for_asset(&candidate.asset))
+            .map(str::to_owned)
     }
 
     pub(crate) fn ground_asset_at_cell(&self, x: i32, y: i32) -> Option<String> {
@@ -2257,8 +2289,18 @@ impl EditorApp {
     }
 
     pub(crate) fn draw_layers(&self, canvas_rect: Rect, painter: &egui::Painter) {
+        let visible_tiles = self.visible_tile_bounds(canvas_rect);
         if self.layer_state(LayerKind::Ground).visible {
             for tile in &self.document.layers.ground {
+                if !tile_intersects_rect(
+                    tile,
+                    visible_tiles.min_x,
+                    visible_tiles.min_y,
+                    visible_tiles.max_x,
+                    visible_tiles.max_y,
+                ) {
+                    continue;
+                }
                 let rect = self.tile_screen_rect(canvas_rect, tile.x, tile.y, tile.w, tile.h);
                 self.draw_asset_image(painter, &tile.asset, rect, tile.flip_x, tile.rotation);
             }
@@ -2266,14 +2308,16 @@ impl EditorApp {
 
         if self.layer_state(LayerKind::Decals).visible {
             for decal in &self.document.layers.decals {
-                self.draw_object_like(
-                    canvas_rect,
+                let Some(rect) = self.object_instance_screen_rect(canvas_rect, decal) else {
+                    continue;
+                };
+                if !rect.intersects(canvas_rect) {
+                    continue;
+                }
+                self.draw_object_like_rect(
                     painter,
                     &decal.asset,
-                    decal.x,
-                    decal.y,
-                    decal.scale_x,
-                    decal.scale_y,
+                    rect,
                     decal.flip_x,
                     decal.rotation,
                 );
@@ -2281,21 +2325,28 @@ impl EditorApp {
         }
 
         if self.layer_state(LayerKind::Objects).visible {
-            let mut objects = self.document.layers.objects.iter().collect::<Vec<_>>();
+            let mut objects = self
+                .document
+                .layers
+                .objects
+                .iter()
+                .filter_map(|object| {
+                    self.object_instance_screen_rect(canvas_rect, object)
+                        .filter(|rect| rect.intersects(canvas_rect))
+                        .map(|rect| (object, rect))
+                })
+                .collect::<Vec<_>>();
             objects.sort_by(|left, right| {
-                left.z_index
-                    .cmp(&right.z_index)
-                    .then_with(|| left.y.total_cmp(&right.y))
+                left.0
+                    .z_index
+                    .cmp(&right.0.z_index)
+                    .then_with(|| left.0.y.total_cmp(&right.0.y))
             });
-            for object in objects {
-                self.draw_object_like(
-                    canvas_rect,
+            for (object, rect) in objects {
+                self.draw_object_like_rect(
                     painter,
                     &object.asset,
-                    object.x,
-                    object.y,
-                    object.scale_x,
-                    object.scale_y,
+                    rect,
                     object.flip_x,
                     object.rotation,
                 );
@@ -2303,21 +2354,28 @@ impl EditorApp {
         }
 
         if self.layer_state(LayerKind::Entities).visible {
-            let mut entities = self.document.layers.entities.iter().collect::<Vec<_>>();
+            let mut entities = self
+                .document
+                .layers
+                .entities
+                .iter()
+                .filter_map(|entity| {
+                    self.entity_instance_screen_rect(canvas_rect, entity)
+                        .filter(|rect| rect.intersects(canvas_rect))
+                        .map(|rect| (entity, rect))
+                })
+                .collect::<Vec<_>>();
             entities.sort_by(|left, right| {
-                left.z_index
-                    .cmp(&right.z_index)
-                    .then_with(|| left.y.total_cmp(&right.y))
+                left.0
+                    .z_index
+                    .cmp(&right.0.z_index)
+                    .then_with(|| left.0.y.total_cmp(&right.0.y))
             });
-            for entity in entities {
-                self.draw_object_like(
-                    canvas_rect,
+            for (entity, rect) in entities {
+                self.draw_object_like_rect(
                     painter,
                     &entity.asset,
-                    entity.x,
-                    entity.y,
-                    entity.scale_x,
-                    entity.scale_y,
+                    rect,
                     entity.flip_x,
                     entity.rotation,
                 );
@@ -2332,6 +2390,12 @@ impl EditorApp {
     pub(crate) fn draw_zones(&self, canvas_rect: Rect, painter: &egui::Painter) {
         let tile_size = self.document.tile_size as f32;
         for zone in &self.document.layers.zones {
+            if !self
+                .zone_screen_rect(canvas_rect, zone)
+                .is_some_and(|rect| rect.intersects(canvas_rect))
+            {
+                continue;
+            }
             let (stroke_color, fill_color) = zone_colors(&zone.zone_type);
             let points = zone
                 .points
@@ -2364,23 +2428,15 @@ impl EditorApp {
         }
     }
 
-    pub(crate) fn draw_object_like(
+    fn draw_object_like_rect(
         &self,
-        canvas_rect: Rect,
         painter: &egui::Painter,
         asset_id: &str,
-        x: f32,
-        y: f32,
-        scale_x: f32,
-        scale_y: f32,
+        rect: Rect,
         flip_x: bool,
         rotation: i32,
     ) {
-        if let Some(rect) =
-            self.object_screen_rect_scaled(canvas_rect, asset_id, x, y, scale_x, scale_y)
-        {
-            self.draw_asset_image_tinted(painter, asset_id, rect, flip_x, rotation, Color32::WHITE);
-        }
+        self.draw_asset_image_tinted(painter, asset_id, rect, flip_x, rotation, Color32::WHITE);
     }
 
     pub(crate) fn object_screen_rect_scaled(
@@ -2525,12 +2581,16 @@ impl EditorApp {
             return;
         }
         let tile_size = self.document.tile_size as f32;
+        let visible_tiles = self.visible_tile_bounds(canvas_rect);
         for cell in &self.document.layers.collision {
             if !cell.solid {
                 continue;
             }
 
             let bounds = cell.bounds();
+            if !bounds_intersects_tile_rect(bounds.x, bounds.y, bounds.w, bounds.h, visible_tiles) {
+                continue;
+            }
             let world = vec2(bounds.x * tile_size, bounds.y * tile_size);
             let rect = Rect::from_min_size(
                 self.world_to_screen(canvas_rect, world),
@@ -2549,6 +2609,15 @@ impl EditorApp {
         }
 
         for tile in &self.document.layers.ground {
+            if !tile_intersects_rect(
+                tile,
+                visible_tiles.min_x,
+                visible_tiles.min_y,
+                visible_tiles.max_x,
+                visible_tiles.max_y,
+            ) {
+                continue;
+            }
             let rect = self
                 .registry
                 .get(&tile.asset)
@@ -2565,6 +2634,12 @@ impl EditorApp {
         }
 
         for instance in &self.document.layers.objects {
+            if !self
+                .object_instance_screen_rect(canvas_rect, instance)
+                .is_some_and(|rect| rect.intersects(canvas_rect))
+            {
+                continue;
+            }
             let rect = instance.collision_rect.or_else(|| {
                 self.registry
                     .get(&instance.asset)
@@ -2582,6 +2657,12 @@ impl EditorApp {
         }
 
         for entity in &self.document.layers.entities {
+            if !self
+                .entity_instance_screen_rect(canvas_rect, entity)
+                .is_some_and(|rect| rect.intersects(canvas_rect))
+            {
+                continue;
+            }
             let rect = entity.collision_rect.or_else(|| {
                 self.registry
                     .get(&entity.asset)
@@ -2608,6 +2689,9 @@ impl EditorApp {
             rect.size[0],
             rect.size[1],
         );
+        if !rect.intersects(canvas_rect) {
+            return;
+        }
         painter.rect_filled(
             rect,
             0.0,
@@ -2628,12 +2712,19 @@ impl EditorApp {
 
     pub(crate) fn draw_entity_bounds(&self, canvas_rect: Rect, painter: &egui::Painter) {
         let tile_size = self.document.tile_size as f32;
+        let visible_tiles = self.visible_tile_bounds(canvas_rect);
         for entity in &self.document.layers.entities {
+            if !bounds_intersects_tile_rect(entity.x, entity.y, 1.0, 1.0, visible_tiles) {
+                continue;
+            }
             let world = vec2(entity.x * tile_size, entity.y * tile_size);
             let rect = Rect::from_min_size(
                 self.world_to_screen(canvas_rect, world),
                 vec2(tile_size, tile_size) * self.zoom,
             );
+            if !rect.intersects(canvas_rect) {
+                continue;
+            }
             painter.rect_stroke(
                 rect,
                 0.0,
@@ -3519,6 +3610,17 @@ impl EditorApp {
         canvas_rect.min + self.pan + world * self.zoom
     }
 
+    pub(crate) fn visible_tile_bounds(&self, canvas_rect: Rect) -> VisibleTileBounds {
+        visible_tile_bounds_for_canvas(
+            canvas_rect,
+            self.pan,
+            self.zoom,
+            self.document.tile_size as f32,
+            self.document.width,
+            self.document.height,
+        )
+    }
+
     pub(crate) fn screen_to_tile(&self, canvas_rect: Rect, screen: Pos2) -> Option<[i32; 2]> {
         let local = (screen - canvas_rect.min - self.pan) / self.zoom;
         let tile_size = self.document.tile_size as f32;
@@ -3608,6 +3710,45 @@ enum DirectionSide {
     West,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct VisibleTileBounds {
+    min_x: i32,
+    min_y: i32,
+    max_x: i32,
+    max_y: i32,
+}
+
+fn visible_tile_bounds_for_canvas(
+    canvas_rect: Rect,
+    pan: Vec2,
+    zoom: f32,
+    tile_size: f32,
+    map_width: u32,
+    map_height: u32,
+) -> VisibleTileBounds {
+    if map_width == 0 || map_height == 0 || tile_size <= f32::EPSILON {
+        return VisibleTileBounds {
+            min_x: 0,
+            min_y: 0,
+            max_x: 0,
+            max_y: 0,
+        };
+    }
+
+    let zoom = zoom.max(0.01);
+    let local_min = (canvas_rect.min - canvas_rect.min - pan) / zoom;
+    let local_max = (canvas_rect.max - canvas_rect.min - pan) / zoom;
+    let width = map_width as i32;
+    let height = map_height as i32;
+
+    VisibleTileBounds {
+        min_x: ((local_min.x / tile_size).floor() as i32 - 1).clamp(0, width),
+        min_y: ((local_min.y / tile_size).floor() as i32 - 1).clamp(0, height),
+        max_x: ((local_max.x / tile_size).ceil() as i32 + 1).clamp(0, width),
+        max_y: ((local_max.y / tile_size).ceil() as i32 + 1).clamp(0, height),
+    }
+}
+
 fn tile_intersects_rect(
     tile: &content::TileInstance,
     min_x: i32,
@@ -3618,6 +3759,13 @@ fn tile_intersects_rect(
     let tile_max_x = tile.x + tile.w.max(1);
     let tile_max_y = tile.y + tile.h.max(1);
     tile.x < max_x && tile_max_x > min_x && tile.y < max_y && tile_max_y > min_y
+}
+
+fn bounds_intersects_tile_rect(x: f32, y: f32, w: f32, h: f32, visible: VisibleTileBounds) -> bool {
+    x < visible.max_x as f32
+        && x + w.max(0.0) > visible.min_x as f32
+        && y < visible.max_y as f32
+        && y + h.max(0.0) > visible.min_y as f32
 }
 
 fn tile_contains_cell(tile: &content::TileInstance, x: i32, y: i32) -> bool {
@@ -3675,6 +3823,72 @@ fn offset_stamp_item(item: &mut StampItem, dx: i32, dy: i32) {
         StampItem::Entity(instance) => {
             instance.x += dx as f32;
             instance.y += dy as f32;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn visible_tile_bounds_tracks_pan_and_zoom() {
+        let canvas = Rect::from_min_size(Pos2::new(0.0, 0.0), vec2(320.0, 320.0));
+
+        assert_eq!(
+            visible_tile_bounds_for_canvas(canvas, vec2(0.0, 0.0), 1.0, 32.0, 100, 100),
+            VisibleTileBounds {
+                min_x: 0,
+                min_y: 0,
+                max_x: 11,
+                max_y: 11,
+            }
+        );
+        assert_eq!(
+            visible_tile_bounds_for_canvas(canvas, vec2(-320.0, -160.0), 1.0, 32.0, 100, 100),
+            VisibleTileBounds {
+                min_x: 9,
+                min_y: 4,
+                max_x: 21,
+                max_y: 16,
+            }
+        );
+    }
+
+    #[test]
+    fn bounds_intersection_uses_exclusive_visible_max() {
+        let visible = VisibleTileBounds {
+            min_x: 10,
+            min_y: 5,
+            max_x: 20,
+            max_y: 15,
+        };
+
+        assert!(bounds_intersects_tile_rect(19.5, 14.5, 1.0, 1.0, visible));
+        assert!(!bounds_intersects_tile_rect(20.0, 14.5, 1.0, 1.0, visible));
+        assert!(!bounds_intersects_tile_rect(9.0, 14.5, 1.0, 1.0, visible));
+    }
+
+    #[test]
+    fn tile_intersection_needs_expanded_max_to_include_right_and_bottom_neighbors() {
+        let right_neighbor = tile_at(11, 10);
+        let bottom_neighbor = tile_at(10, 11);
+
+        assert!(!tile_intersects_rect(&right_neighbor, 9, 9, 11, 11));
+        assert!(!tile_intersects_rect(&bottom_neighbor, 9, 9, 11, 11));
+        assert!(tile_intersects_rect(&right_neighbor, 9, 9, 12, 12));
+        assert!(tile_intersects_rect(&bottom_neighbor, 9, 9, 12, 12));
+    }
+
+    fn tile_at(x: i32, y: i32) -> content::TileInstance {
+        content::TileInstance {
+            asset: "ow_tile_test".to_owned(),
+            x,
+            y,
+            w: 1,
+            h: 1,
+            flip_x: false,
+            rotation: 0,
         }
     }
 }

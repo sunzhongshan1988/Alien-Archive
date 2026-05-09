@@ -174,6 +174,7 @@
 - 使用 `winit` 打开窗口。
 - 使用 `wgpu` 渲染矩形和 PNG 图片。
 - Overworld 运行时会把编辑器 ground layer 按 32x32 tile chunk 分块预烘；每帧只上传和绘制当前 camera 视口相交的地面 chunk，避免 32x32 地面展开后提交上千个小 tile draw call，也避免超大地图生成单张巨型纹理。
+- Runtime renderer 会把连续的矩形命令和同 texture 图片命令合批成更少的 vertex buffer / draw call；编辑器地图运行时会把 decals/objects/entities 用到的贴图打成 map-local atlas，让世界物件更容易合批；F3 Debug Overlay 已显示上一帧 commands、batches、draw calls、ground chunks、textures 和 skipped images。
 - 最小窗口尺寸已调整为 `1280x720`。
 - 添加启动界面，读取 `assets/images/startup/startup_background.png`。
 - 添加基础 Scene 系统和 `SceneCommand`：`Switch` / `Push` / `Pop` / `Quit`。
