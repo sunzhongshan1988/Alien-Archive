@@ -58,15 +58,16 @@ pub(super) struct FieldHud {
 #[derive(Clone, Copy)]
 struct HudLayout {
     scale: f32,
+    quickbar_scale: f32,
     player_panel: Rect,
     quickbar: Rect,
 }
 
 impl HudLayout {
     fn new(viewport: Vec2) -> Self {
-        let scale = (viewport.y / 720.0)
-            .min(viewport.x / 1280.0)
-            .clamp(0.74, 1.0);
+        let raw_scale = (viewport.y / 720.0).min(viewport.x / 1280.0);
+        let scale = raw_scale.clamp(0.74, 1.0);
+        let quickbar_scale = raw_scale.clamp(0.82, 1.8);
 
         let max_player_width = (viewport.x - 28.0 * scale).max(196.0 * scale);
         let player_width = (PLAYER_PANEL_BASE_SIZE.x * scale).min(max_player_width);
@@ -78,18 +79,20 @@ impl HudLayout {
             ),
         );
 
-        let quickbar_width = (QUICKBAR_BASE_SIZE.x * scale).min(viewport.x - 42.0 * scale);
+        let quickbar_width =
+            (QUICKBAR_BASE_SIZE.x * quickbar_scale).min(viewport.x - 42.0 * quickbar_scale);
         let quickbar_height = quickbar_width * QUICKBAR_BASE_SIZE.y / QUICKBAR_BASE_SIZE.x;
         let quickbar = Rect::new(
             Vec2::new(
                 (viewport.x - quickbar_width) * 0.5,
-                viewport.y - quickbar_height - 18.0 * scale,
+                viewport.y - quickbar_height - 22.0 * quickbar_scale,
             ),
             Vec2::new(quickbar_width, quickbar_height),
         );
 
         Self {
             scale,
+            quickbar_scale,
             player_panel,
             quickbar,
         }
@@ -112,9 +115,9 @@ impl FieldHud {
             let _ = inventory_scene::load_inventory_item_icons(renderer);
         }
 
-        self.upload_textures_if_needed(renderer, ctx, scene_id)?;
         let viewport = renderer.screen_size();
         let layout = HudLayout::new(viewport);
+        self.upload_textures_if_needed(renderer, ctx, scene_id, &layout)?;
         renderer.set_camera(Camera2d::default());
         self.draw_status_panel(renderer, viewport, ctx, &layout);
         self.draw_quickbar(renderer, viewport, ctx, &layout);
@@ -395,10 +398,10 @@ impl FieldHud {
             let slot = quickbar_slot_rect(layout.quickbar, quick_index);
             let selected = ctx.save_data.inventory.selected_slot == slot_index;
 
-            draw_quick_slot_frame(renderer, viewport, slot, selected, layout.scale);
+            draw_quick_slot_frame(renderer, viewport, slot, selected, layout.quickbar_scale);
 
             if let Some(Some(item)) = slots.get(slot_index) {
-                let icon_rect = inset_rect(slot, 8.0 * layout.scale);
+                let icon_rect = inset_rect(slot, 8.0 * layout.quickbar_scale);
                 if !draw_texture_rect(
                     renderer,
                     viewport,
@@ -415,8 +418,8 @@ impl FieldHud {
                     renderer,
                     count,
                     viewport,
-                    slot.right() - count.size.x - 3.0 * layout.scale,
-                    slot.bottom() - count.size.y - 1.0 * layout.scale,
+                    slot.right() - count.size.x - 3.0 * layout.quickbar_scale,
+                    slot.bottom() - count.size.y - 1.0 * layout.quickbar_scale,
                     Color::rgba(0.88, 1.0, 0.96, 1.0),
                 );
             }
@@ -428,17 +431,20 @@ impl FieldHud {
         renderer: &mut dyn Renderer,
         ctx: &GameContext,
         scene_id: SceneId,
+        layout: &HudLayout,
     ) -> Result<()> {
         let status_lines = status_lines(ctx, scene_id);
         let quick_counts = quickbar_counts(ctx);
+        let quickbar_scale_key = (layout.quickbar_scale * 100.0).round() as i32;
         let key = format!(
-            "{}|{}",
+            "{}|{}|{}",
             status_lines.join("\n"),
             quick_counts
                 .iter()
                 .map(|count| count.clone().unwrap_or_default())
                 .collect::<Vec<_>>()
-                .join(",")
+                .join(","),
+            quickbar_scale_key,
         );
         if self.text_key == key {
             return Ok(());
@@ -491,7 +497,7 @@ impl FieldHud {
                             font,
                             &format!("field_hud_quick_count_{index}"),
                             count,
-                            11.0,
+                            11.0 * layout.quickbar_scale,
                         )
                     })
                     .transpose()
@@ -914,6 +920,16 @@ mod tests {
 
         assert_eq!(quickbar_slot_at_position(viewport, center), Some(2));
         assert_eq!(quickbar_slot_at_position(viewport, Vec2::ZERO), None);
+    }
+
+    #[test]
+    fn quickbar_scales_up_on_large_displays() {
+        let desktop = HudLayout::new(Vec2::new(3840.0, 2160.0));
+        let baseline = HudLayout::new(Vec2::new(1280.0, 720.0));
+
+        assert_eq!(baseline.quickbar.size.x, QUICKBAR_BASE_SIZE.x);
+        assert!(desktop.player_panel.size.x <= PLAYER_PANEL_BASE_SIZE.x);
+        assert!(desktop.quickbar.size.x > QUICKBAR_BASE_SIZE.x * 1.7);
     }
 
     #[test]
