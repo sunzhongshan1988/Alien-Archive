@@ -313,6 +313,13 @@ Godot 的 TileSet property painting 对我们很有参考价值：
 - 按分类目标高度和最大宽度缩放；当前 Landing Site 验证值为：`props` 高 `72`、最大宽 `132`；`interactables` 高 `96`、最大宽 `132`；`decals` 高 `64`、最大宽 `132`。
 - chroma key 绿底要全图清理，不只 flood-fill 外部背景；物体内部孔洞也可能残留绿色。
 
+物件类素材必须保持“干净落地”，不要把地面附件烘进主体图里：
+
+- 植物不要自带根部砾石、土堆、草皮底座。
+- 箱子、设备、房屋、模块舱、遗迹主体不要自带底部石头、碎砖、沙土垫、废料裙边。
+- 这些压地感和环境融合效果统一通过 Decal、Terrain transition 或 Stamp 叠加完成。
+- 这样碰撞框、交互框和遮挡范围可以只围绕主体，不会被美术底座迫使扩大。
+
 裁切后必须做这些检查：
 
 - manifest 条数、缺失路径、重复 id、生成 pack id 数量和分类计数。
@@ -323,6 +330,14 @@ Godot 的 TileSet property painting 对我们很有参考价值：
 地面底材优先做真实 `32x32` 单格 tile，不要把 128x128 或 4x4 footprint 的大图当基础地面拉伸使用。中心块需要有可读的像素纹理（砂粒、风纹、裂缝、矿点、遗迹槽线），但边缘不能有高亮外框或阴影；明显焦痕、晶体、道路边缘和大地貌分界应通过 transition tile、decals 或 Stamp 叠加完成。
 
 ## 实施记录
+
+### 2026-05-10
+
+- 新增第二轮 Landing Site Expansion Pack：生成、裁切并登记 100 个 Overworld 素材，源图、裁切脚本、manifest 和 preview 位于 `assets/sprites/_sources/overworld/landing_site_expansion_2026_05_10_*`。
+- 本轮分类补量：structures 9、ruins 9、props 17、interactables 10、flora 14、fauna 6、pickups 5、decals 30；素材已落到各自 `assets/sprites/<category>/overworld/generated/` 目录，并登记进 `assets/data/assets/overworld_assets.ron`。
+- 本轮按“干净落地”规则处理物件：结构、遗迹、箱子、设备、植物和生物不烘底部石头/土堆/碎料底座；需要压地和环境融合的内容单独放到 decal，例如 root soil、contact dust、rubble scatter、burn smear、coolant puddle、crawler tracks。
+- 裁切流程增加边界碎片过滤：格子边缘的小联通块会被丢弃，避免相邻 cell 的残片混入宽物件或高物件；chroma-key 处理也加了边缘去绿和 despill。
+- 追加 Terrain Landforms Pack：新增 `terrain` 分类 20 个悬崖/山脉/岩脊/台地/洞口主体素材，另补 20 个 cliff/mountain 支撑贴花；源图、裁切脚本、manifest 和 preview 位于 `assets/sprites/_sources/overworld/terrain_landforms_2026_05_10_*`。主体作为 Object 放置，山脚碎石、坡脚尘土、岩屑和矿脉散布仍拆到 Decal。
 
 ### 2026-05-09
 
