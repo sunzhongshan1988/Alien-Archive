@@ -271,6 +271,7 @@ impl Map {
         let mut textures = HashMap::new();
 
         let mut tiles = Vec::new();
+        let mut collision_rects = Vec::new();
         for tile in file.layers.ground {
             let asset = registry
                 .get(&tile.asset)
@@ -289,6 +290,16 @@ impl Map {
                 flip_x: tile.flip_x,
                 rotation: tile.rotation,
             });
+
+            if let Some(rect) = asset.default_collision_rect {
+                collision_rects.push(instance_rect_to_world(
+                    origin,
+                    tile_size,
+                    tile.x as f32,
+                    tile.y as f32,
+                    rect,
+                ));
+            }
         }
 
         let mut sprites = Vec::new();
@@ -297,6 +308,7 @@ impl Map {
                 &registry,
                 &mut textures,
                 &mut sprites,
+                &mut collision_rects,
                 MapSpriteLayer::Decal,
                 origin,
                 tile_size,
@@ -308,6 +320,7 @@ impl Map {
                 &registry,
                 &mut textures,
                 &mut sprites,
+                &mut collision_rects,
                 MapSpriteLayer::Object,
                 origin,
                 tile_size,
@@ -355,10 +368,12 @@ impl Map {
             let default_rect = centered_rect(anchor, Vec2::new(tile_size, tile_size));
             let hit_rect = entity
                 .interaction_rect
+                .or(asset.default_interaction_rect)
                 .map(|rect| instance_rect_to_world(origin, tile_size, entity.x, entity.y, rect))
                 .unwrap_or(default_rect);
             let collision_rect = entity
                 .collision_rect
+                .or(asset.default_collision_rect)
                 .map(|rect| instance_rect_to_world(origin, tile_size, entity.x, entity.y, rect));
             let kind = map_entity_kind(&entity.entity_type);
             let codex_id = asset.codex_id.clone();
@@ -411,18 +426,22 @@ impl Map {
             })
             .collect();
 
-        let collision_rects = file
-            .layers
-            .collision
-            .into_iter()
-            .filter(|cell| cell.solid)
-            .map(|cell| {
-                Rect::new(
-                    grid_to_world(origin, tile_size, cell.x, cell.y),
-                    Vec2::new(tile_size, tile_size),
-                )
-            })
-            .collect();
+        collision_rects.extend(
+            file.layers
+                .collision
+                .into_iter()
+                .filter(|cell| cell.solid)
+                .map(|cell| {
+                    let bounds = cell.bounds();
+                    Rect::new(
+                        Vec2::new(
+                            origin.x + bounds.x * tile_size,
+                            origin.y + bounds.y * tile_size,
+                        ),
+                        Vec2::new(bounds.w * tile_size, bounds.h * tile_size),
+                    )
+                }),
+        );
 
         Ok(Self {
             tiles,
@@ -657,6 +676,8 @@ struct OverworldAsset {
     id: String,
     path: PathBuf,
     default_size: Vec2,
+    default_collision_rect: Option<InstanceRect>,
+    default_interaction_rect: Option<InstanceRect>,
     anchor: AnchorKind,
     codex_id: Option<String>,
 }
@@ -676,6 +697,7 @@ fn push_sprite(
     registry: &HashMap<String, OverworldAsset>,
     textures: &mut HashMap<String, PathBuf>,
     sprites: &mut Vec<MapSprite>,
+    collision_rects: &mut Vec<Rect>,
     layer: MapSpriteLayer,
     origin: Vec2,
     tile_size: f32,
@@ -699,6 +721,14 @@ fn push_sprite(
         flip_x: instance.flip_x,
         rotation: instance.rotation,
     });
+
+    if layer == MapSpriteLayer::Object {
+        if let Some(rect) = instance.collision_rect.or(asset.default_collision_rect) {
+            collision_rects.push(instance_rect_to_world(
+                origin, tile_size, instance.x, instance.y, rect,
+            ));
+        }
+    }
 
     Ok(())
 }
@@ -834,6 +864,8 @@ fn scan_overworld_assets() -> Result<HashMap<String, OverworldAsset>> {
                     id: asset.id,
                     path: resolve_asset_path(&project_root.join(asset.path)),
                     default_size: Vec2::new(asset.default_size[0], asset.default_size[1]),
+                    default_collision_rect: asset.default_collision_rect,
+                    default_interaction_rect: asset.default_interaction_rect,
                     anchor: asset.anchor,
                     codex_id: asset.codex_id,
                 },

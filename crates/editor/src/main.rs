@@ -144,8 +144,8 @@ impl EditorApp {
             ground_footprint_w: 4,
             ground_footprint_h: 4,
             terrain_autotile: true,
-            collision_brush_w: 1,
-            collision_brush_h: 1,
+            collision_brush_w: 1.0,
+            collision_brush_h: 1.0,
             rectangle_erase_mode: false,
             asset_search: String::new(),
             outliner_search: String::new(),
@@ -1614,16 +1614,16 @@ impl EditorApp {
                 toolbar_centered(ui, vec2(54.0, 26.0), |ui| {
                     ui.add(
                         egui::DragValue::new(&mut self.collision_brush_w)
-                            .range(1..=self.document.width as i32)
-                            .speed(0.1)
+                            .range(0.125..=self.document.width as f32)
+                            .speed(0.125)
                             .prefix("W "),
                     );
                 });
                 toolbar_centered(ui, vec2(54.0, 26.0), |ui| {
                     ui.add(
                         egui::DragValue::new(&mut self.collision_brush_h)
-                            .range(1..=self.document.height as i32)
-                            .speed(0.1)
+                            .range(0.125..=self.document.height as f32)
+                            .speed(0.125)
                             .prefix("H "),
                     );
                 });
@@ -1957,6 +1957,7 @@ fn object_instance_editor(
     instance: &mut content::ObjectInstance,
     default_size: Option<[f32; 2]>,
     lock_aspect_ratio: &mut bool,
+    collision_enabled: bool,
 ) -> bool {
     let mut changed = false;
     changed |= labeled_text_edit(ui, "实例 ID", &mut instance.id);
@@ -1985,6 +1986,9 @@ fn object_instance_editor(
     changed |= ui
         .add(egui::DragValue::new(&mut instance.z_index).prefix("层级 "))
         .changed();
+    if collision_enabled {
+        entity_rect_editor(ui, "碰撞覆盖", &mut instance.collision_rect, &mut changed);
+    }
     changed |= ui.checkbox(&mut instance.flip_x, "水平翻转").changed();
     changed |= ui
         .add(egui::DragValue::new(&mut instance.rotation).prefix("旋转 "))

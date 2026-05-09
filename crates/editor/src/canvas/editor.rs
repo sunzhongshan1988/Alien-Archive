@@ -269,11 +269,18 @@ impl EditorApp {
         }
 
         if self.tool == ToolKind::Erase {
-            let [width, height] = if self.active_layer == LayerKind::Collision {
-                self.clamped_collision_brush_at(tile_x, tile_y)
-            } else {
-                self.clamped_ground_footprint_at(tile_x, tile_y)
-            };
+            if self.active_layer == LayerKind::Collision {
+                let modifiers = ctx.input(|input| input.modifiers);
+                let [x, y] = self.snapped_collision_position(raw_map_pos, modifiers);
+                let [width, height] = self.clamped_collision_brush_at(x, y);
+                self.push_undo_snapshot();
+                self.document.erase_collision_rect(x, y, width, height);
+                self.mark_dirty();
+                self.status = format!("Erased collision {:.2}, {:.2}", x, y);
+                return;
+            }
+
+            let [width, height] = self.clamped_ground_footprint_at(tile_x, tile_y);
             self.push_undo_snapshot();
             self.erase_brush_at(tile_x, tile_y);
             if self.active_layer == LayerKind::Ground {
@@ -285,10 +292,12 @@ impl EditorApp {
         }
 
         if self.tool == ToolKind::Collision || self.active_layer == LayerKind::Collision {
+            let modifiers = ctx.input(|input| input.modifiers);
+            let [x, y] = self.snapped_collision_position(raw_map_pos, modifiers);
             self.push_undo_snapshot();
-            self.paint_collision_brush(tile_x, tile_y);
+            self.paint_collision_brush(x, y);
             self.mark_dirty();
-            self.status = format!("Collision {}, {}", tile_x, tile_y);
+            self.status = format!("Collision {:.2}, {:.2}", x, y);
             return;
         }
 
@@ -1074,14 +1083,14 @@ impl EditorApp {
                 );
             }
             LayerKind::Collision => {
-                for y in min_y..=max_y {
-                    for x in min_x..=max_x {
-                        if self.rectangle_erase_mode {
-                            self.document.erase_at(LayerKind::Collision, x, y);
-                        } else {
-                            self.document.place_collision(x, y);
-                        }
-                    }
+                let width = (max_x - min_x + 1) as f32;
+                let height = (max_y - min_y + 1) as f32;
+                if self.rectangle_erase_mode {
+                    self.document
+                        .erase_collision_rect(min_x as f32, min_y as f32, width, height);
+                } else {
+                    self.document
+                        .place_collision_rect(min_x as f32, min_y as f32, width, height);
                 }
                 self.status = format!(
                     "矩形碰撞{}: {}x{}",
@@ -1114,21 +1123,20 @@ impl EditorApp {
             .place_tile_sized(asset_id, x, y, width, height);
     }
 
-    pub(crate) fn paint_collision_brush(&mut self, x: i32, y: i32) {
+    pub(crate) fn paint_collision_brush(&mut self, x: f32, y: f32) {
         let [width, height] = self.clamped_collision_brush_at(x, y);
-        for yy in y..y + height {
-            for xx in x..x + width {
-                self.document.place_collision(xx, yy);
-            }
-        }
+        self.document.place_collision_rect(x, y, width, height);
     }
 
     pub(crate) fn erase_brush_at(&mut self, x: i32, y: i32) {
-        let [width, height] = if self.active_layer == LayerKind::Collision {
-            self.clamped_collision_brush_at(x, y)
-        } else {
-            self.clamped_ground_footprint_at(x, y)
-        };
+        if self.active_layer == LayerKind::Collision {
+            let [width, height] = self.clamped_collision_brush_at(x as f32, y as f32);
+            self.document
+                .erase_collision_rect(x as f32, y as f32, width, height);
+            return;
+        }
+
+        let [width, height] = self.clamped_ground_footprint_at(x, y);
         for yy in y..y + height {
             for xx in x..x + width {
                 self.document.erase_at(self.active_layer, xx, yy);
@@ -2218,13 +2226,13 @@ impl EditorApp {
         ]
     }
 
-    pub(crate) fn clamped_collision_brush_at(&self, x: i32, y: i32) -> [i32; 2] {
-        let max_width = (self.document.width as i32 - x).max(1);
-        let max_height = (self.document.height as i32 - y).max(1);
+    pub(crate) fn clamped_collision_brush_at(&self, x: f32, y: f32) -> [f32; 2] {
+        let max_width = (self.document.width as f32 - x).max(0.125);
+        let max_height = (self.document.height as f32 - y).max(0.125);
 
         [
-            self.collision_brush_w.clamp(1, max_width),
-            self.collision_brush_h.clamp(1, max_height),
+            self.collision_brush_w.clamp(0.125, max_width),
+            self.collision_brush_h.clamp(0.125, max_height),
         ]
     }
 
@@ -2498,6 +2506,20 @@ impl EditorApp {
         Rect::from_min_size(self.world_to_screen(canvas_rect, world), size * self.zoom)
     }
 
+    pub(crate) fn map_unit_screen_rect(
+        &self,
+        canvas_rect: Rect,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+    ) -> Rect {
+        let tile_size = self.document.tile_size as f32;
+        let world = vec2(x * tile_size, y * tile_size);
+        let size = vec2(w.max(0.05) * tile_size, h.max(0.05) * tile_size);
+        Rect::from_min_size(self.world_to_screen(canvas_rect, world), size * self.zoom)
+    }
+
     pub(crate) fn draw_collision(&self, canvas_rect: Rect, painter: &egui::Painter) {
         if !self.layer_state(LayerKind::Collision).visible {
             return;
@@ -2508,10 +2530,11 @@ impl EditorApp {
                 continue;
             }
 
-            let world = vec2(cell.x as f32 * tile_size, cell.y as f32 * tile_size);
+            let bounds = cell.bounds();
+            let world = vec2(bounds.x * tile_size, bounds.y * tile_size);
             let rect = Rect::from_min_size(
                 self.world_to_screen(canvas_rect, world),
-                vec2(tile_size, tile_size) * self.zoom,
+                vec2(bounds.w * tile_size, bounds.h * tile_size) * self.zoom,
             );
             painter.rect_filled(
                 rect,
@@ -2524,6 +2547,83 @@ impl EditorApp {
                 ),
             );
         }
+
+        for tile in &self.document.layers.ground {
+            let rect = self
+                .registry
+                .get(&tile.asset)
+                .and_then(|asset| asset.default_collision_rect);
+            if let Some(rect) = rect {
+                self.draw_instance_collision_rect(
+                    canvas_rect,
+                    painter,
+                    tile.x as f32,
+                    tile.y as f32,
+                    rect,
+                );
+            }
+        }
+
+        for instance in &self.document.layers.objects {
+            let rect = instance.collision_rect.or_else(|| {
+                self.registry
+                    .get(&instance.asset)
+                    .and_then(|asset| asset.default_collision_rect)
+            });
+            if let Some(rect) = rect {
+                self.draw_instance_collision_rect(
+                    canvas_rect,
+                    painter,
+                    instance.x,
+                    instance.y,
+                    rect,
+                );
+            }
+        }
+
+        for entity in &self.document.layers.entities {
+            let rect = entity.collision_rect.or_else(|| {
+                self.registry
+                    .get(&entity.asset)
+                    .and_then(|asset| asset.default_collision_rect)
+            });
+            if let Some(rect) = rect {
+                self.draw_instance_collision_rect(canvas_rect, painter, entity.x, entity.y, rect);
+            }
+        }
+    }
+
+    fn draw_instance_collision_rect(
+        &self,
+        canvas_rect: Rect,
+        painter: &egui::Painter,
+        x: f32,
+        y: f32,
+        rect: content::InstanceRect,
+    ) {
+        let rect = self.map_unit_screen_rect(
+            canvas_rect,
+            x + rect.offset[0],
+            y + rect.offset[1],
+            rect.size[0],
+            rect.size[1],
+        );
+        painter.rect_filled(
+            rect,
+            0.0,
+            Color32::from_rgba_unmultiplied(
+                THEME_COLLISION.r(),
+                THEME_COLLISION.g(),
+                THEME_COLLISION.b(),
+                58,
+            ),
+        );
+        painter.rect_stroke(
+            rect,
+            0.0,
+            Stroke::new(1.0, THEME_COLLISION),
+            StrokeKind::Inside,
+        );
     }
 
     pub(crate) fn draw_entity_bounds(&self, canvas_rect: Rect, painter: &egui::Painter) {
@@ -2745,6 +2845,16 @@ impl EditorApp {
             return;
         };
 
+        if preview_layer == LayerKind::Collision {
+            let Some(raw) = self.screen_to_map_position(canvas_rect, hover_pos) else {
+                self.draw_canvas_hover_label(painter, hover_pos, THEME_ERROR, "地图外");
+                return;
+            };
+            let [x, y] = self.snapped_collision_position(raw, modifiers);
+            self.draw_collision_brush_preview(canvas_rect, painter, x, y);
+            return;
+        }
+
         let Some([x, y]) = self.screen_to_tile(canvas_rect, hover_pos) else {
             self.draw_canvas_hover_label(painter, hover_pos, THEME_ERROR, "地图外");
             return;
@@ -2961,8 +3071,41 @@ impl EditorApp {
             warnings.extend(self.asset_placement_warnings(asset, layer));
         }
 
+        if layer == LayerKind::Collision {
+            let desired = [
+                self.collision_brush_w.max(0.125),
+                self.collision_brush_h.max(0.125),
+            ];
+            let clamped = self.clamped_collision_brush_at(x as f32, y as f32);
+            if desired != clamped {
+                warnings.push(format!(
+                    "边界裁切 {:.2}x{:.2} -> {:.2}x{:.2}",
+                    desired[0], desired[1], clamped[0], clamped[1]
+                ));
+            }
+
+            let rect =
+                self.map_unit_screen_rect(canvas_rect, x as f32, y as f32, clamped[0], clamped[1]);
+            let color = if self.layer_state(layer).locked {
+                THEME_ERROR
+            } else if !warnings.is_empty() {
+                THEME_WARNING
+            } else {
+                THEME_COLLISION
+            };
+            self.paint_preview_rect(painter, rect, color, !warnings.is_empty());
+            if !warnings.is_empty() {
+                self.draw_canvas_hover_label(
+                    painter,
+                    rect.right_top(),
+                    color,
+                    &warnings.join("\n"),
+                );
+            }
+            return;
+        }
+
         let desired = match layer {
-            LayerKind::Collision => [self.collision_brush_w.max(1), self.collision_brush_h.max(1)],
             LayerKind::Ground if self.tool == ToolKind::Erase => [
                 self.ground_footprint_w.max(1),
                 self.ground_footprint_h.max(1),
@@ -2976,7 +3119,6 @@ impl EditorApp {
             _ => [1, 1],
         };
         let clamped = match layer {
-            LayerKind::Collision => self.clamped_collision_brush_at(x, y),
             LayerKind::Ground if self.tool == ToolKind::Erase => {
                 self.clamped_ground_footprint_at(x, y)
             }
@@ -3020,6 +3162,44 @@ impl EditorApp {
             }
         }
 
+        if !warnings.is_empty() {
+            self.draw_canvas_hover_label(painter, rect.right_top(), color, &warnings.join("\n"));
+        }
+    }
+
+    fn draw_collision_brush_preview(
+        &self,
+        canvas_rect: Rect,
+        painter: &egui::Painter,
+        x: f32,
+        y: f32,
+    ) {
+        let mut warnings = Vec::new();
+        if self.layer_state(LayerKind::Collision).locked {
+            warnings.push("碰撞 已锁定".to_owned());
+        }
+
+        let desired = [
+            self.collision_brush_w.max(0.125),
+            self.collision_brush_h.max(0.125),
+        ];
+        let clamped = self.clamped_collision_brush_at(x, y);
+        if desired != clamped {
+            warnings.push(format!(
+                "边界裁切 {:.2}x{:.2} -> {:.2}x{:.2}",
+                desired[0], desired[1], clamped[0], clamped[1]
+            ));
+        }
+
+        let rect = self.map_unit_screen_rect(canvas_rect, x, y, clamped[0], clamped[1]);
+        let color = if self.layer_state(LayerKind::Collision).locked {
+            THEME_ERROR
+        } else if !warnings.is_empty() {
+            THEME_WARNING
+        } else {
+            THEME_COLLISION
+        };
+        self.paint_preview_rect(painter, rect, color, !warnings.is_empty());
         if !warnings.is_empty() {
             self.draw_canvas_hover_label(painter, rect.right_top(), color, &warnings.join("\n"));
         }
@@ -3388,6 +3568,25 @@ impl EditorApp {
             SnapMode::HalfGrid => [(raw[0] * 2.0).round() * 0.5, (raw[1] * 2.0).round() * 0.5],
             SnapMode::Free => [raw[0], raw[1]],
         }
+    }
+
+    pub(crate) fn snapped_collision_position(
+        &self,
+        raw: [f32; 2],
+        modifiers: Modifiers,
+    ) -> [f32; 2] {
+        if modifiers.alt {
+            return [
+                raw[0].clamp(0.0, self.document.width as f32),
+                raw[1].clamp(0.0, self.document.height as f32),
+            ];
+        }
+
+        let step = if modifiers.shift { 0.5 } else { 0.25 };
+        [
+            ((raw[0] / step).round() * step).clamp(0.0, self.document.width as f32),
+            ((raw[1] / step).round() * step).clamp(0.0, self.document.height as f32),
+        ]
     }
 }
 

@@ -144,6 +144,7 @@ impl MapDocument {
             scale_x: 1.0,
             scale_y: 1.0,
             z_index: 0,
+            collision_rect: None,
             flip_x: false,
             rotation: 0,
         });
@@ -160,6 +161,7 @@ impl MapDocument {
             scale_x: 1.0,
             scale_y: 1.0,
             z_index: 0,
+            collision_rect: None,
             flip_x: false,
             rotation: 0,
         });
@@ -192,15 +194,42 @@ impl MapDocument {
             .layers
             .collision
             .iter_mut()
-            .find(|cell| cell.x == x && cell.y == y)
+            .find(|cell| cell.is_full_cell_at(x, y))
         {
             cell.solid = true;
             return;
         }
 
+        self.layers.collision.push(CollisionCell::solid_cell(x, y));
+    }
+
+    pub fn place_collision_rect(&mut self, x: f32, y: f32, w: f32, h: f32) {
+        let rect = CollisionCell::solid_rect(x, y, w, h);
+        if let Some(cell) = self.layers.collision.iter_mut().find(|cell| {
+            cell.solid
+                && floats_close(
+                    cell.x as f32 + cell.offset[0],
+                    rect.x as f32 + rect.offset[0],
+                )
+                && floats_close(
+                    cell.y as f32 + cell.offset[1],
+                    rect.y as f32 + rect.offset[1],
+                )
+                && floats_close(cell.size[0], rect.size[0])
+                && floats_close(cell.size[1], rect.size[1])
+        }) {
+            *cell = rect;
+            return;
+        }
+
+        self.layers.collision.push(rect);
+    }
+
+    pub fn erase_collision_rect(&mut self, x: f32, y: f32, w: f32, h: f32) {
+        let target = CollisionBounds::new(x, y, w, h);
         self.layers
             .collision
-            .push(CollisionCell { x, y, solid: true });
+            .retain(|cell| !cell.solid || !cell.bounds().intersects(target));
     }
 
     pub fn erase_at(&mut self, layer: LayerKind, x: i32, y: i32) {
@@ -216,10 +245,11 @@ impl MapDocument {
                 .layers
                 .zones
                 .retain(|zone| !zone_contains_cell(zone, x, y)),
-            LayerKind::Collision => self
-                .layers
-                .collision
-                .retain(|cell| cell.x != x || cell.y != y),
+            LayerKind::Collision => self.layers.collision.retain(|cell| {
+                !cell
+                    .bounds()
+                    .intersects(CollisionBounds::new(x as f32, y as f32, 1.0, 1.0))
+            }),
         }
     }
 }
@@ -261,6 +291,8 @@ pub struct ObjectInstance {
     pub scale_y: f32,
     #[serde(default, skip_serializing_if = "is_zero_i32")]
     pub z_index: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collision_rect: Option<InstanceRect>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub flip_x: bool,
     #[serde(default, skip_serializing_if = "is_zero_i32")]
@@ -373,7 +405,98 @@ pub struct ZoneInstance {
 pub struct CollisionCell {
     pub x: i32,
     pub y: i32,
+    #[serde(default, skip_serializing_if = "is_zero_vec2")]
+    pub offset: [f32; 2],
+    #[serde(
+        default = "default_collision_size",
+        skip_serializing_if = "is_unit_vec2"
+    )]
+    pub size: [f32; 2],
     pub solid: bool,
+}
+
+impl CollisionCell {
+    pub fn solid_cell(x: i32, y: i32) -> Self {
+        Self {
+            x,
+            y,
+            offset: [0.0, 0.0],
+            size: [1.0, 1.0],
+            solid: true,
+        }
+    }
+
+    pub fn solid_rect(x: f32, y: f32, w: f32, h: f32) -> Self {
+        let min_x = x.min(x + w);
+        let min_y = y.min(y + h);
+        let width = w.abs().max(0.05);
+        let height = h.abs().max(0.05);
+        let cell_x = min_x.floor() as i32;
+        let cell_y = min_y.floor() as i32;
+        Self {
+            x: cell_x,
+            y: cell_y,
+            offset: [min_x - cell_x as f32, min_y - cell_y as f32],
+            size: [width, height],
+            solid: true,
+        }
+    }
+
+    pub fn bounds(&self) -> CollisionBounds {
+        CollisionBounds::new(
+            self.x as f32 + self.offset[0],
+            self.y as f32 + self.offset[1],
+            self.size[0],
+            self.size[1],
+        )
+    }
+
+    fn is_full_cell_at(&self, x: i32, y: i32) -> bool {
+        self.x == x
+            && self.y == y
+            && floats_close(self.offset[0], 0.0)
+            && floats_close(self.offset[1], 0.0)
+            && floats_close(self.size[0], 1.0)
+            && floats_close(self.size[1], 1.0)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct CollisionBounds {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+impl CollisionBounds {
+    fn new(x: f32, y: f32, w: f32, h: f32) -> Self {
+        Self {
+            x,
+            y,
+            w: w.max(0.0),
+            h: h.max(0.0),
+        }
+    }
+
+    pub fn right(self) -> f32 {
+        self.x + self.w
+    }
+
+    pub fn bottom(self) -> f32 {
+        self.y + self.h
+    }
+
+    pub fn contains_point(self, x: f32, y: f32) -> bool {
+        x >= self.x && x <= self.right() && y >= self.y && y <= self.bottom()
+    }
+
+    pub fn intersects(self, other: Self) -> bool {
+        self.x < other.right()
+            && self.right() > other.x
+            && self.y < other.bottom()
+            && self.bottom() > other.y
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -455,6 +578,22 @@ fn zone_contains_cell(zone: &ZoneInstance, x: i32, y: i32) -> bool {
 
 fn is_false(value: &bool) -> bool {
     !*value
+}
+
+fn default_collision_size() -> [f32; 2] {
+    [1.0, 1.0]
+}
+
+fn is_zero_vec2(value: &[f32; 2]) -> bool {
+    floats_close(value[0], 0.0) && floats_close(value[1], 0.0)
+}
+
+fn is_unit_vec2(value: &[f32; 2]) -> bool {
+    floats_close(value[0], 1.0) && floats_close(value[1], 1.0)
+}
+
+fn floats_close(a: f32, b: f32) -> bool {
+    (a - b).abs() <= 0.0001
 }
 
 fn option_unlock_rule_is_none_or_empty(value: &Option<UnlockRule>) -> bool {

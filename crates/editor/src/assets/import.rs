@@ -30,6 +30,8 @@ pub(crate) fn infer_asset_draft_from_path(project_root: &Path, relative_path: &s
         default_layer: LayerKind::Objects,
         default_size: image_dimensions(&project_root.join(&normalized)).unwrap_or([72.0, 72.0]),
         footprint: [1, 1],
+        default_collision_rect: None,
+        default_interaction_rect: None,
         anchor: AnchorKind::BottomCenter,
         snap: SnapMode::Grid,
         tags: category.replace('_', ", "),

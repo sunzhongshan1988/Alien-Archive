@@ -563,6 +563,8 @@ mod tests {
             default_layer: LayerKind::Ground,
             default_size: [128.0, 128.0],
             footprint: Some([4, 4]),
+            default_collision_rect: None,
+            default_interaction_rect: None,
             anchor: AnchorKind::TopLeft,
             snap: SnapMode::Grid,
             entity_type: None,

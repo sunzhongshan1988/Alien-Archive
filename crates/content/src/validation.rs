@@ -40,13 +40,13 @@ pub fn validate_map_with_codex(
     codex: Option<&CodexDatabase>,
 ) -> Vec<MapValidationIssue> {
     let mut issues = Vec::new();
-    let solid_collision_cells = document
+    let solid_collision_bounds = document
         .layers
         .collision
         .iter()
         .filter(|cell| cell.solid)
-        .map(|cell| (cell.x, cell.y))
-        .collect::<HashSet<_>>();
+        .map(|cell| cell.bounds())
+        .collect::<Vec<_>>();
 
     if document.id.trim().is_empty() {
         issues.push(MapValidationIssue::error("map id is empty"));
@@ -69,11 +69,13 @@ pub fn validate_map_with_codex(
     for spawn in &document.spawns {
         validate_id("spawn", &spawn.id, &mut ids, &mut issues);
         validate_point("spawn", &spawn.id, spawn.x, spawn.y, document, &mut issues);
-        let spawn_cell = (spawn.x.floor() as i32, spawn.y.floor() as i32);
-        if solid_collision_cells.contains(&spawn_cell) {
+        if let Some(bounds) = solid_collision_bounds
+            .iter()
+            .find(|bounds| bounds.contains_point(spawn.x, spawn.y))
+        {
             issues.push(MapValidationIssue::error(format!(
-                "spawn {} overlaps solid collision cell {},{}",
-                spawn.id, spawn_cell.0, spawn_cell.1
+                "spawn {} overlaps solid collision {:.2},{:.2} {:.2}x{:.2}",
+                spawn.id, bounds.x, bounds.y, bounds.w, bounds.h
             )));
         }
     }
@@ -216,7 +218,11 @@ pub fn validate_map_with_codex(
                     "codex_id {codex_id} appears on multiple entities in this map"
                 )));
             }
-            if entity.interaction_rect.is_none() {
+            if entity.interaction_rect.is_none()
+                && asset
+                    .and_then(|asset| asset.default_interaction_rect)
+                    .is_none()
+            {
                 issues.push(MapValidationIssue::warning(format!(
                     "entity {} uses codex_id {codex_id} but has no interaction_rect; runtime will use a 1x1 default scan area",
                     entity.id
@@ -239,14 +245,15 @@ pub fn validate_map_with_codex(
     }
 
     for cell in &document.layers.collision {
-        if cell.x < 0
-            || cell.y < 0
-            || cell.x >= document.width as i32
-            || cell.y >= document.height as i32
+        let bounds = cell.bounds();
+        if bounds.x < 0.0
+            || bounds.y < 0.0
+            || bounds.right() > document.width as f32
+            || bounds.bottom() > document.height as f32
         {
             issues.push(MapValidationIssue::error(format!(
-                "collision cell {},{} is outside map bounds",
-                cell.x, cell.y
+                "collision {:.2},{:.2} {:.2}x{:.2} is outside map bounds",
+                bounds.x, bounds.y, bounds.w, bounds.h
             )));
         }
     }
@@ -609,6 +616,8 @@ mod tests {
         document.layers.collision.push(CollisionCell {
             x: 8,
             y: 12,
+            offset: [0.0, 0.0],
+            size: [1.0, 1.0],
             solid: true,
         });
         let database = test_database(Vec::new());
@@ -800,6 +809,8 @@ mod tests {
             default_layer,
             default_size: [32.0, 32.0],
             footprint: (kind == AssetKind::Tile).then_some([1, 1]),
+            default_collision_rect: None,
+            default_interaction_rect: None,
             anchor: AnchorKind::TopLeft,
             snap: SnapMode::Grid,
             tags: Vec::new(),

@@ -7,7 +7,7 @@ use std::{
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::LayerKind;
+use crate::{InstanceRect, LayerKind};
 
 pub const DEFAULT_ASSET_DB_PATH: &str = "assets/data/assets/overworld_assets.ron";
 
@@ -143,6 +143,10 @@ pub struct AssetDefinition {
     pub default_size: [f32; 2],
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub footprint: Option<[i32; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_collision_rect: Option<InstanceRect>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_interaction_rect: Option<InstanceRect>,
     pub anchor: AnchorKind,
     pub snap: SnapMode,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use content::{AnchorKind, AssetDefinition, AssetKind, LayerKind, SnapMode};
+use content::{AnchorKind, AssetDefinition, AssetKind, InstanceRect, LayerKind, SnapMode};
 
 use crate::asset_registry::AssetEntry;
 use crate::assets::import::infer_tile_footprint;
@@ -17,6 +17,8 @@ pub(crate) struct AssetDraft {
     pub(crate) default_layer: LayerKind,
     pub(crate) default_size: [f32; 2],
     pub(crate) footprint: [i32; 2],
+    pub(crate) default_collision_rect: Option<InstanceRect>,
+    pub(crate) default_interaction_rect: Option<InstanceRect>,
     pub(crate) anchor: AnchorKind,
     pub(crate) snap: SnapMode,
     pub(crate) tags: String,
@@ -34,6 +36,8 @@ impl Default for AssetDraft {
             default_layer: LayerKind::Objects,
             default_size: [72.0, 72.0],
             footprint: [1, 1],
+            default_collision_rect: None,
+            default_interaction_rect: None,
             anchor: AnchorKind::BottomCenter,
             snap: SnapMode::Grid,
             tags: "props".to_owned(),
@@ -55,6 +59,8 @@ impl AssetDraft {
             footprint: entry
                 .footprint
                 .unwrap_or_else(|| infer_tile_footprint(entry.default_size, 32).unwrap_or([1, 1])),
+            default_collision_rect: entry.default_collision_rect,
+            default_interaction_rect: entry.default_interaction_rect,
             anchor: entry.anchor,
             snap: entry.snap,
             tags: entry.tags.join(", "),
@@ -76,6 +82,15 @@ impl AssetDraft {
             default_size: [self.default_size[0].max(1.0), self.default_size[1].max(1.0)],
             footprint: (self.kind == AssetKind::Tile)
                 .then_some([self.footprint[0].max(1), self.footprint[1].max(1)]),
+            default_collision_rect: matches!(
+                self.kind,
+                AssetKind::Tile | AssetKind::Object | AssetKind::Entity
+            )
+            .then_some(self.default_collision_rect)
+            .flatten(),
+            default_interaction_rect: (self.kind == AssetKind::Entity)
+                .then_some(self.default_interaction_rect)
+                .flatten(),
             anchor: self.anchor,
             snap: self.snap,
             tags: parse_tags(&self.tags),

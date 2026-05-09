@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use content::{AnchorKind, AssetDatabase, AssetDefinition, AssetKind, LayerKind, SnapMode};
+use content::{
+    AnchorKind, AssetDatabase, AssetDefinition, AssetKind, InstanceRect, LayerKind, SnapMode,
+};
 
 #[derive(Clone, Debug)]
 pub struct AssetEntry {
@@ -12,6 +14,8 @@ pub struct AssetEntry {
     pub default_layer: LayerKind,
     pub default_size: [f32; 2],
     pub footprint: Option<[i32; 2]>,
+    pub default_collision_rect: Option<InstanceRect>,
+    pub default_interaction_rect: Option<InstanceRect>,
     pub anchor: AnchorKind,
     pub snap: SnapMode,
     pub entity_type: Option<String>,
@@ -87,6 +91,8 @@ fn asset_entry(project_root: &Path, asset: AssetDefinition) -> AssetEntry {
         default_layer: asset.default_layer,
         default_size: asset.default_size,
         footprint: asset.footprint,
+        default_collision_rect: asset.default_collision_rect,
+        default_interaction_rect: asset.default_interaction_rect,
         anchor: asset.anchor,
         snap: asset.snap,
         entity_type: asset.entity_type,

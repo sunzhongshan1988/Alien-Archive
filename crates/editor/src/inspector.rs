@@ -158,6 +158,18 @@ impl EditorApp {
             let footprint = self.asset_tile_footprint(asset);
             ui.label(format!("占格：{} x {}", footprint[0], footprint[1]));
         }
+        if let Some(rect) = asset.default_collision_rect {
+            ui.label(format!(
+                "默认碰撞：{:.2},{:.2} / {:.2}x{:.2}",
+                rect.offset[0], rect.offset[1], rect.size[0], rect.size[1]
+            ));
+        }
+        if let Some(rect) = asset.default_interaction_rect {
+            ui.label(format!(
+                "默认交互：{:.2},{:.2} / {:.2}x{:.2}",
+                rect.offset[0], rect.offset[1], rect.size[0], rect.size[1]
+            ));
+        }
         if let Some(entity_type) = &asset.entity_type {
             ui.label(format!("实体类型：{entity_type}"));
         }
@@ -252,6 +264,7 @@ impl EditorApp {
                         instance,
                         default_size,
                         &mut self.lock_aspect_ratio,
+                        false,
                     );
                     draw_object_layer_scan_status(
                         ui,
@@ -277,6 +290,7 @@ impl EditorApp {
                         instance,
                         default_size,
                         &mut self.lock_aspect_ratio,
+                        true,
                     );
                     draw_object_layer_scan_status(
                         ui,

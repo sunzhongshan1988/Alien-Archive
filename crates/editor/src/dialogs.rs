@@ -313,6 +313,28 @@ impl EditorApp {
                 }
             });
 
+        if matches!(
+            self.asset_draft.kind,
+            AssetKind::Tile | AssetKind::Object | AssetKind::Entity
+        ) {
+            let mut changed = false;
+            entity_rect_editor(
+                ui,
+                "默认碰撞模板",
+                &mut self.asset_draft.default_collision_rect,
+                &mut changed,
+            );
+        }
+        if self.asset_draft.kind == AssetKind::Entity {
+            let mut changed = false;
+            entity_rect_editor(
+                ui,
+                "默认交互模板",
+                &mut self.asset_draft.default_interaction_rect,
+                &mut changed,
+            );
+        }
+
         ui.separator();
         ui.label("Tags / 额外属性");
         labeled_text_edit(ui, "Tags", &mut self.asset_draft.tags);
