@@ -127,6 +127,10 @@ pub(crate) fn zone_colors(zone_type: &str) -> (Color32, Color32) {
             Color32::from_rgb(152, 156, 126),
             Color32::from_rgba_unmultiplied(152, 156, 126, 34),
         ),
+        "WalkSurface" => (
+            Color32::from_rgb(100, 184, 170),
+            Color32::from_rgba_unmultiplied(100, 184, 170, 34),
+        ),
         _ => (
             THEME_ACCENT,
             Color32::from_rgba_unmultiplied(

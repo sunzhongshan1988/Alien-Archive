@@ -212,10 +212,20 @@ impl Scene for OverworldScene {
 
     fn render(&mut self, ctx: &mut RenderContext<'_>) -> Result<()> {
         self.world.load_visible_ground_assets(ctx.renderer)?;
-        self.world
-            .draw_with_actor(ctx.renderer, self.player.topdown_depth_y(), |renderer| {
+        let surface = self
+            .world
+            .walk_surface_at(self.player.topdown_feet_position());
+        let actor_depth_y =
+            self.player.topdown_depth_y() + surface.map_or(0.0, |surface| surface.depth_offset);
+        let actor_z_index = surface.map_or(0, |surface| surface.z_index);
+        self.world.draw_with_actor_at_depth(
+            ctx.renderer,
+            actor_depth_y,
+            actor_z_index,
+            |renderer| {
                 self.player.draw_topdown(renderer);
-            });
+            },
+        );
         self.scan.draw(ctx.renderer)?;
         self.notice.draw(ctx.renderer)?;
         Ok(())

@@ -9,4 +9,4 @@ pub(crate) use import::{
     infer_tile_footprint,
 };
 pub(crate) use labels::{asset_matches_search, category_label, compact_asset_label};
-pub(crate) use thumbnails::load_thumbnail;
+pub(crate) use thumbnails::ThumbnailLoader;

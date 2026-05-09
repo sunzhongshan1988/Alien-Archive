@@ -9,6 +9,7 @@ use anyhow::{Context, Result, bail};
 use content::{
     AnchorKind, AssetDatabase, DEFAULT_ASSET_DB_PATH, InstanceRect, MapDocument as EditorMapFile,
     ObjectInstance as EditorObjectInstance, TransitionTarget, UnlockRule,
+    WalkSurfaceRule as EditorWalkSurfaceRule,
 };
 use image::{RgbaImage, imageops};
 use runtime::{Color, Rect, Renderer, Vec2, collision::rects_overlap};
@@ -67,17 +68,28 @@ impl Map {
         }
     }
 
+    #[allow(dead_code)]
     pub fn draw_with_actor(
         &self,
         renderer: &mut dyn Renderer,
         actor_depth_y: f32,
         draw_actor: impl FnOnce(&mut dyn Renderer),
     ) {
+        self.draw_with_actor_at_depth(renderer, actor_depth_y, 0, draw_actor);
+    }
+
+    pub fn draw_with_actor_at_depth(
+        &self,
+        renderer: &mut dyn Renderer,
+        actor_depth_y: f32,
+        actor_z_index: i32,
+        draw_actor: impl FnOnce(&mut dyn Renderer),
+    ) {
         let visible = renderer.visible_world_rect();
         self.draw_ground(renderer, visible);
         self.draw_decals(renderer, visible);
 
-        let actor_key = DepthKey::new(actor_depth_y, 0);
+        let actor_key = DepthKey::new(actor_depth_y, actor_z_index);
         let mut draw_actor = Some(draw_actor);
 
         for drawable in self.sorted_depth_drawables(visible) {
@@ -224,6 +236,20 @@ impl Map {
                     .filter(|entity| entity.solid)
                     .map(|entity| entity.collision_rect.unwrap_or(entity.rect)),
             )
+    }
+
+    pub fn walk_surface_at(&self, point: Vec2) -> Option<MapWalkSurface> {
+        self.zones
+            .iter()
+            .filter_map(|zone| zone.surface.map(|surface| (zone, surface)))
+            .filter(|(zone, _)| rect_contains_point(zone.bounds, point))
+            .filter(|(zone, _)| polygon_contains_point(&zone.points, point))
+            .map(|(_, surface)| surface)
+            .max_by(|left, right| {
+                left.z_index
+                    .cmp(&right.z_index)
+                    .then_with(|| left.depth_offset.total_cmp(&right.depth_offset))
+            })
     }
 
     fn from_file(file: AnyMapFile) -> Result<Self> {
@@ -510,6 +536,7 @@ impl Map {
                     zone_type: zone.zone_type,
                     points,
                     bounds,
+                    surface: MapWalkSurface::from_content(zone.surface),
                     unlock: MapUnlockRule::from_content(zone.unlock),
                     transition: MapTransitionTarget::from_content(zone.transition),
                 }
@@ -1033,8 +1060,24 @@ pub struct MapZone {
     pub zone_type: String,
     pub points: Vec<Vec2>,
     pub bounds: Rect,
+    pub surface: Option<MapWalkSurface>,
     pub unlock: Option<MapUnlockRule>,
     pub transition: Option<MapTransitionTarget>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct MapWalkSurface {
+    pub z_index: i32,
+    pub depth_offset: f32,
+}
+
+impl MapWalkSurface {
+    fn from_content(surface: Option<EditorWalkSurfaceRule>) -> Option<Self> {
+        surface.map(|surface| Self {
+            z_index: surface.z_index,
+            depth_offset: surface.depth_offset,
+        })
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -1281,6 +1324,34 @@ fn bounds_for_points(points: &[Vec2]) -> Rect {
     )
 }
 
+fn rect_contains_point(rect: Rect, point: Vec2) -> bool {
+    point.x >= rect.origin.x
+        && point.x <= rect.right()
+        && point.y >= rect.origin.y
+        && point.y <= rect.bottom()
+}
+
+fn polygon_contains_point(points: &[Vec2], point: Vec2) -> bool {
+    if points.len() < 3 {
+        return false;
+    }
+
+    let mut inside = false;
+    let mut previous = points[points.len() - 1];
+    for current in points {
+        let intersects_y = (current.y > point.y) != (previous.y > point.y);
+        if intersects_y {
+            let t = (point.y - current.y) / (previous.y - current.y);
+            let crossing_x = current.x + t * (previous.x - current.x);
+            if point.x < crossing_x {
+                inside = !inside;
+            }
+        }
+        previous = *current;
+    }
+    inside
+}
+
 fn map_entity_kind(value: &str) -> MapEntityKind {
     match value {
         "PlayerSpawn" => MapEntityKind::PlayerSpawn,
@@ -1392,6 +1463,73 @@ mod tests {
             ["decal", "rear", "actor", "front"],
             "decals stay below, while actor joins the object Y-depth pass"
         );
+    }
+
+    #[test]
+    fn walk_surface_z_index_can_lift_actor_above_object_depth() {
+        let map = Map {
+            tiles: Vec::new(),
+            sprites: vec![
+                sprite("front", 50.0, 0, MapSpriteLayer::Object),
+                sprite("rear", 0.0, 0, MapSpriteLayer::Object),
+            ],
+            entities: Vec::new(),
+            zones: Vec::new(),
+            collision_rects: Vec::new(),
+            ground_cache: None,
+            textures: HashMap::new(),
+            texture_atlas: None,
+        };
+        let mut renderer = RecordingRenderer::default();
+
+        map.draw_with_actor_at_depth(&mut renderer, 30.0, 64, |renderer| {
+            renderer.draw_rect(Rect::new(Vec2::ZERO, Vec2::ZERO), Color::rgb(1.0, 0.0, 1.0));
+        });
+
+        assert_eq!(
+            renderer.commands,
+            ["rear", "front", "actor"],
+            "a walk surface can temporarily lift the actor above normal object Y-depth"
+        );
+    }
+
+    #[test]
+    fn walk_surface_at_uses_zone_polygon() {
+        let map = Map {
+            tiles: Vec::new(),
+            sprites: Vec::new(),
+            entities: Vec::new(),
+            zones: vec![MapZone {
+                id: "ramp_surface".to_owned(),
+                zone_type: "WalkSurface".to_owned(),
+                points: vec![
+                    Vec2::new(0.0, 0.0),
+                    Vec2::new(10.0, 0.0),
+                    Vec2::new(10.0, 10.0),
+                    Vec2::new(0.0, 10.0),
+                ],
+                bounds: Rect::new(Vec2::ZERO, Vec2::new(10.0, 10.0)),
+                surface: Some(MapWalkSurface {
+                    z_index: 48,
+                    depth_offset: -8.0,
+                }),
+                unlock: None,
+                transition: None,
+            }],
+            collision_rects: Vec::new(),
+            ground_cache: None,
+            textures: HashMap::new(),
+            texture_atlas: None,
+        };
+
+        assert_eq!(
+            map.walk_surface_at(Vec2::new(5.0, 5.0)),
+            Some(MapWalkSurface {
+                z_index: 48,
+                depth_offset: -8.0
+            })
+        );
+        assert_eq!(map.walk_surface_at(Vec2::new(12.0, 5.0)), None);
     }
 
     #[test]

@@ -277,6 +277,17 @@ pub fn validate_map_with_codex(
                 zone.id
             )));
         }
+        if zone.zone_type == "WalkSurface" && zone.surface.is_none() {
+            issues.push(MapValidationIssue::warning(format!(
+                "zone {} is WalkSurface but has no surface settings",
+                zone.id
+            )));
+        } else if zone.surface.is_some() && zone.zone_type != "WalkSurface" {
+            issues.push(MapValidationIssue::warning(format!(
+                "zone {} has walk surface data but zone_type is {}",
+                zone.id, zone.zone_type
+            )));
+        }
         if let Some(unlock) = &zone.unlock {
             validate_unlock_rule("zone", &zone.id, unlock, codex, &mut issues);
         }
@@ -297,7 +308,13 @@ pub fn validate_map_with_codex(
     issues
 }
 
-const KNOWN_ZONE_TYPES: &[&str] = &["ScanArea", "MapTransition", "NoSpawn", "CameraBounds"];
+const KNOWN_ZONE_TYPES: &[&str] = &[
+    "ScanArea",
+    "MapTransition",
+    "NoSpawn",
+    "CameraBounds",
+    "WalkSurface",
+];
 
 fn validate_unlock_rule(
     owner: &str,
@@ -524,7 +541,7 @@ fn validate_scale(
 mod tests {
     use crate::{
         AnchorKind, AssetDatabase, AssetDefinition, AssetKind, CodexDatabase, CodexEntry,
-        CollisionCell, LayerKind, MapDocument, SnapMode, UnlockRule,
+        CollisionCell, LayerKind, MapDocument, SnapMode, UnlockRule, WalkSurfaceRule, ZoneInstance,
     };
 
     use super::*;
@@ -772,6 +789,36 @@ mod tests {
                 && issue.message.contains("spawn_id")
                 && issue.message.contains("contains whitespace")
         }));
+    }
+
+    #[test]
+    fn validates_walk_surface_zone_settings() {
+        let mut document = MapDocument::new_landing_site();
+        document.layers.zones.push(ZoneInstance {
+            id: "ramp_surface".to_owned(),
+            zone_type: "WalkSurface".to_owned(),
+            points: vec![[1.0, 1.0], [3.0, 1.0], [3.0, 3.0], [1.0, 3.0]],
+            surface: Some(WalkSurfaceRule {
+                z_index: 48,
+                depth_offset: -8.0,
+            }),
+            unlock: None,
+            transition: None,
+        });
+        let database = test_database(Vec::new());
+
+        let issues = validate_map(&document, &database);
+
+        assert!(
+            issues
+                .iter()
+                .all(|issue| !issue.message.contains("unknown zone_type"))
+        );
+        assert!(
+            issues
+                .iter()
+                .all(|issue| !issue.message.contains("WalkSurface but has no surface"))
+        );
     }
 
     fn test_database(assets: Vec<AssetDefinition>) -> AssetDatabase {

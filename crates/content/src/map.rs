@@ -392,6 +392,8 @@ pub struct ZoneInstance {
     pub id: String,
     pub zone_type: String,
     pub points: Vec<[f32; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface: Option<WalkSurfaceRule>,
     #[serde(default, skip_serializing_if = "option_unlock_rule_is_none_or_empty")]
     pub unlock: Option<UnlockRule>,
     #[serde(
@@ -399,6 +401,23 @@ pub struct ZoneInstance {
         skip_serializing_if = "option_transition_target_is_none_or_empty"
     )]
     pub transition: Option<TransitionTarget>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub struct WalkSurfaceRule {
+    #[serde(default, skip_serializing_if = "is_zero_i32")]
+    pub z_index: i32,
+    #[serde(default, skip_serializing_if = "is_zero_f32")]
+    pub depth_offset: f32,
+}
+
+impl Default for WalkSurfaceRule {
+    fn default() -> Self {
+        Self {
+            z_index: 64,
+            depth_offset: 0.0,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -606,6 +625,10 @@ fn option_transition_target_is_none_or_empty(value: &Option<TransitionTarget>) -
 
 fn is_zero_i32(value: &i32) -> bool {
     *value == 0
+}
+
+fn is_zero_f32(value: &f32) -> bool {
+    floats_close(*value, 0.0)
 }
 
 fn is_one_i32(value: &i32) -> bool {

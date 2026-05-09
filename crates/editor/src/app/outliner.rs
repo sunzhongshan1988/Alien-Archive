@@ -5,8 +5,13 @@ use super::state::{OutlinerBadge, OutlinerEntry, SelectedItem};
 
 pub(crate) const OUTLINER_GROUPS: &[&str] =
     &["Spawns", "Entities", "Objects", "Decals", "Zones", "Ground"];
-pub(crate) const EDITOR_KNOWN_ZONE_TYPES: &[&str] =
-    &["ScanArea", "MapTransition", "NoSpawn", "CameraBounds"];
+pub(crate) const EDITOR_KNOWN_ZONE_TYPES: &[&str] = &[
+    "ScanArea",
+    "MapTransition",
+    "NoSpawn",
+    "CameraBounds",
+    "WalkSurface",
+];
 
 pub(crate) fn outliner_entry(
     group: &'static str,

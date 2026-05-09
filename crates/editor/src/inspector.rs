@@ -392,6 +392,57 @@ impl EditorApp {
                 {
                     changed |= labeled_text_edit(ui, "区域 ID", &mut zone.id);
                     changed |= labeled_text_edit(ui, "区域类型", &mut zone.zone_type);
+                    ui.horizontal(|ui| {
+                        if ui.button("设为可走表面").clicked() {
+                            zone.zone_type = "WalkSurface".to_owned();
+                            if zone.surface.is_none() {
+                                zone.surface = Some(content::WalkSurfaceRule::default());
+                            }
+                            changed = true;
+                        }
+                        if ui.button("设为转场").clicked() {
+                            zone.zone_type = "MapTransition".to_owned();
+                            changed = true;
+                        }
+                    });
+
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.label("可走表面");
+                        if zone.surface.is_none() && ui.button("添加").clicked() {
+                            zone.surface = Some(content::WalkSurfaceRule::default());
+                            if zone.zone_type == "Trigger" {
+                                zone.zone_type = "WalkSurface".to_owned();
+                            }
+                            changed = true;
+                        }
+                        if zone.surface.is_some() && ui.button("清除").clicked() {
+                            zone.surface = None;
+                            changed = true;
+                        }
+                    });
+                    if let Some(surface) = &mut zone.surface {
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut surface.z_index)
+                                    .range(-256..=256)
+                                    .prefix("表面层级 "),
+                            )
+                            .changed();
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut surface.depth_offset)
+                                    .range(-512.0..=512.0)
+                                    .speed(1.0)
+                                    .prefix("深度偏移 "),
+                            )
+                            .changed();
+                        ui.colored_label(
+                            THEME_MUTED_TEXT,
+                            "人物脚底进入该区域后，会用这里的层级参与 Y 深度排序。",
+                        );
+                    }
+
                     let unlock_id = format!("zone_unlock_{}", zone.id);
                     draw_unlock_rule_editor(
                         ui,

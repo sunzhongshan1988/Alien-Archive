@@ -25,6 +25,39 @@ impl EditorApp {
         );
         painter.rect_filled(map_rect, 0.0, THEME_MAP_BG);
 
+        let visible_asset_ids = self.visible_canvas_asset_ids(rect);
+        let requested_textures =
+            self.request_asset_textures(visible_asset_ids.iter().map(String::as_str));
+        let loaded_visible_textures = visible_asset_ids
+            .iter()
+            .filter(|asset_id| self.thumbnails.contains_key(asset_id.as_str()))
+            .count();
+        let map_textures_ready = loaded_visible_textures >= visible_asset_ids.len();
+        if requested_textures > 0 || !map_textures_ready {
+            ctx.request_repaint();
+        }
+
+        if !map_textures_ready {
+            if self.show_grid {
+                draw_grid(
+                    &painter,
+                    rect,
+                    map_rect,
+                    self.document.width,
+                    self.document.height,
+                    tile_size * self.zoom,
+                );
+            }
+            self.draw_map_texture_loading_overlay(
+                &painter,
+                rect,
+                loaded_visible_textures,
+                visible_asset_ids.len(),
+            );
+            self.mouse_tile = None;
+            return;
+        }
+
         self.draw_layers(rect, &painter);
 
         if self.show_grid {
@@ -65,10 +98,127 @@ impl EditorApp {
         );
         self.draw_stamp_preview(rect, &painter, response.hover_pos());
         self.draw_rectangle_preview(rect, &painter);
-        self.draw_zone_draft(rect, &painter, response.hover_pos());
+        self.draw_zone_draft(
+            rect,
+            &painter,
+            response.hover_pos(),
+            ctx.input(|input| input.modifiers),
+        );
         self.draw_selection_marquee(&painter);
         self.handle_canvas_selection(&response, rect, ctx);
         self.handle_canvas_placement(&response, rect, ctx);
+    }
+
+    fn visible_canvas_asset_ids(&self, canvas_rect: Rect) -> Vec<String> {
+        let visible_tiles = self.visible_tile_bounds(canvas_rect);
+        let mut asset_ids = BTreeSet::new();
+
+        if self.layer_state(LayerKind::Ground).visible {
+            for tile in &self.document.layers.ground {
+                if tile_intersects_rect(
+                    tile,
+                    visible_tiles.min_x,
+                    visible_tiles.min_y,
+                    visible_tiles.max_x,
+                    visible_tiles.max_y,
+                ) && self.registry.get(&tile.asset).is_some()
+                {
+                    asset_ids.insert(tile.asset.clone());
+                }
+            }
+        }
+
+        if self.layer_state(LayerKind::Decals).visible {
+            for decal in &self.document.layers.decals {
+                let Some(rect) = self.object_instance_screen_rect(canvas_rect, decal) else {
+                    continue;
+                };
+                if rect.intersects(canvas_rect) && self.registry.get(&decal.asset).is_some() {
+                    asset_ids.insert(decal.asset.clone());
+                }
+            }
+        }
+
+        if self.layer_state(LayerKind::Objects).visible {
+            for object in &self.document.layers.objects {
+                let Some(rect) = self.object_instance_screen_rect(canvas_rect, object) else {
+                    continue;
+                };
+                if rect.intersects(canvas_rect) && self.registry.get(&object.asset).is_some() {
+                    asset_ids.insert(object.asset.clone());
+                }
+            }
+        }
+
+        if self.layer_state(LayerKind::Entities).visible {
+            for entity in &self.document.layers.entities {
+                let Some(rect) = self.entity_instance_screen_rect(canvas_rect, entity) else {
+                    continue;
+                };
+                if rect.intersects(canvas_rect) && self.registry.get(&entity.asset).is_some() {
+                    asset_ids.insert(entity.asset.clone());
+                }
+            }
+        }
+
+        asset_ids.into_iter().collect()
+    }
+
+    fn draw_map_texture_loading_overlay(
+        &self,
+        painter: &egui::Painter,
+        canvas_rect: Rect,
+        loaded: usize,
+        total: usize,
+    ) {
+        let progress = if total == 0 {
+            1.0
+        } else {
+            loaded as f32 / total as f32
+        };
+        let panel_size = vec2(340.0, 92.0);
+        let panel = Rect::from_center_size(canvas_rect.center(), panel_size);
+        let bar_bg = Rect::from_min_size(
+            panel.left_bottom() + vec2(24.0, -34.0),
+            vec2(panel.width() - 48.0, 8.0),
+        );
+        let bar_fill = Rect::from_min_size(
+            bar_bg.min,
+            vec2(bar_bg.width() * progress.clamp(0.0, 1.0), bar_bg.height()),
+        );
+
+        painter.rect_filled(
+            canvas_rect,
+            0.0,
+            Color32::from_rgba_unmultiplied(12, 14, 13, 132),
+        );
+        painter.rect_filled(panel, 6.0, Color32::from_rgba_unmultiplied(25, 27, 24, 238));
+        painter.rect_stroke(
+            panel,
+            6.0,
+            Stroke::new(1.0, THEME_BORDER),
+            StrokeKind::Outside,
+        );
+        painter.text(
+            panel.center_top() + vec2(0.0, 20.0),
+            egui::Align2::CENTER_CENTER,
+            "地图素材加载中",
+            egui::TextStyle::Button.resolve(&egui::Style::default()),
+            THEME_TEXT,
+        );
+        painter.text(
+            panel.center_top() + vec2(0.0, 44.0),
+            egui::Align2::CENTER_CENTER,
+            format!("{loaded}/{total}"),
+            egui::TextStyle::Small.resolve(&egui::Style::default()),
+            THEME_MUTED_TEXT,
+        );
+        painter.rect_filled(
+            bar_bg,
+            3.0,
+            Color32::from_rgba_unmultiplied(56, 58, 52, 255),
+        );
+        painter.rect_filled(bar_fill, 3.0, THEME_ACCENT);
     }
 
     pub(crate) fn handle_canvas_context_menu(
@@ -993,7 +1143,7 @@ impl EditorApp {
             return;
         }
 
-        let point = self.snapped_map_position(raw_pos, None, modifiers);
+        let point = self.snapped_zone_position(raw_pos, modifiers);
         if response.double_clicked() {
             if self.zone_draft_points.len() >= 3 {
                 self.finish_zone_draft();
@@ -1010,7 +1160,10 @@ impl EditorApp {
 
         self.zone_draft_points.push(point);
         self.active_layer = LayerKind::Zones;
-        self.status = format!("区域点 {}", self.zone_draft_points.len());
+        self.status = format!(
+            "区域点 {}（默认 1/4 格，Shift 半格，Alt 自由，双击完成）",
+            self.zone_draft_points.len()
+        );
     }
 
     pub(crate) fn finish_zone_draft(&mut self) {
@@ -1024,6 +1177,7 @@ impl EditorApp {
             id: id.clone(),
             zone_type: "Trigger".to_owned(),
             points: self.zone_draft_points.clone(),
+            surface: None,
             unlock: None,
             transition: None,
         });
@@ -3512,6 +3666,7 @@ impl EditorApp {
         canvas_rect: Rect,
         painter: &egui::Painter,
         hover_pos: Option<Pos2>,
+        modifiers: Modifiers,
     ) {
         if self.zone_draft_points.is_empty() {
             return;
@@ -3527,8 +3682,14 @@ impl EditorApp {
                 )
             })
             .collect::<Vec<_>>();
-        if let Some(hover) = hover_pos {
-            points.push(hover);
+        if let Some(raw) =
+            hover_pos.and_then(|hover| self.screen_to_map_position(canvas_rect, hover))
+        {
+            let point = self.snapped_zone_position(raw, modifiers);
+            points.push(self.world_to_screen(
+                canvas_rect,
+                vec2(point[0] * tile_size, point[1] * tile_size),
+            ));
         }
 
         for pair in points.windows(2) {
@@ -3602,6 +3763,10 @@ impl EditorApp {
             ui.separator();
             ui.label(format!("Zoom: {:.0}%", self.zoom * 100.0));
             ui.separator();
+            if let Some(texture_status) = self.texture_loading_status() {
+                ui.label(texture_status);
+                ui.separator();
+            }
             ui.label(&self.status);
         });
     }
@@ -3670,6 +3835,21 @@ impl EditorApp {
             SnapMode::HalfGrid => [(raw[0] * 2.0).round() * 0.5, (raw[1] * 2.0).round() * 0.5],
             SnapMode::Free => [raw[0], raw[1]],
         }
+    }
+
+    pub(crate) fn snapped_zone_position(&self, raw: [f32; 2], modifiers: Modifiers) -> [f32; 2] {
+        if modifiers.alt {
+            return [
+                raw[0].clamp(0.0, self.document.width as f32),
+                raw[1].clamp(0.0, self.document.height as f32),
+            ];
+        }
+
+        let step = if modifiers.shift { 0.5 } else { 0.25 };
+        [
+            ((raw[0] / step).round() * step).clamp(0.0, self.document.width as f32),
+            ((raw[1] / step).round() * step).clamp(0.0, self.document.height as f32),
+        ]
     }
 
     pub(crate) fn snapped_collision_position(

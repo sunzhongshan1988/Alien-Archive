@@ -50,6 +50,9 @@ impl EditorApp {
                     if response.clicked() {
                         self.select_asset(asset);
                     }
+                    if selected || response.rect.intersects(ui.clip_rect()) {
+                        self.request_asset_texture(&asset.id);
+                    }
                     response.on_hover_text(&asset.id);
 
                     if (index + 1) % columns == 0 {
@@ -61,6 +64,7 @@ impl EditorApp {
 
     fn select_asset(&mut self, asset: &AssetEntry) {
         self.selected_asset = Some(asset.id.clone());
+        self.request_asset_texture(&asset.id);
         self.clear_selection();
         self.active_layer = asset.default_layer;
         self.tool = ToolKind::Brush;
@@ -387,6 +391,12 @@ impl EditorApp {
                 badges.push(OutlinerBadge {
                     label: "few points",
                     color: THEME_WARNING,
+                });
+            }
+            if zone.surface.is_some() {
+                badges.push(OutlinerBadge {
+                    label: "surface",
+                    color: THEME_ACCENT_STRONG,
                 });
             }
             if zone

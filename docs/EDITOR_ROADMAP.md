@@ -338,6 +338,7 @@ Godot 的 TileSet property painting 对我们很有参考价值：
 - 本轮按“干净落地”规则处理物件：结构、遗迹、箱子、设备、植物和生物不烘底部石头/土堆/碎料底座；需要压地和环境融合的内容单独放到 decal，例如 root soil、contact dust、rubble scatter、burn smear、coolant puddle、crawler tracks。
 - 裁切流程增加边界碎片过滤：格子边缘的小联通块会被丢弃，避免相邻 cell 的残片混入宽物件或高物件；chroma-key 处理也加了边缘去绿和 despill。
 - 追加 Terrain Landforms Pack：新增 `terrain` 分类 20 个悬崖/山脉/岩脊/台地/洞口主体素材，另补 20 个 cliff/mountain 支撑贴花；源图、裁切脚本、manifest 和 preview 位于 `assets/sprites/_sources/overworld/terrain_landforms_2026_05_10_*`。主体作为 Object 放置，山脚碎石、坡脚尘土、岩屑和矿脉散布仍拆到 Decal。
+- Overworld 地形新增第一版“可走表面”语义：Zone 支持 `WalkSurface` + `surface` 参数，人物脚底进入该多边形后会用 `surface.z_index` / `surface.depth_offset` 临时参与 Y 深度排序。悬崖、斜坡、台地仍应由 Object 主体负责遮挡；坡面/台面用 WalkSurface Zone 标出，碰撞只画不可通行的岩壁/边缘，这样人物既能绕到地形背后，也能在坡面或台面上方显示。
 
 ### 2026-05-09
 

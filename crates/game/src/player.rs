@@ -134,6 +134,11 @@ impl Player {
         self.topdown_collision_rect().bottom()
     }
 
+    pub fn topdown_feet_position(&self) -> Vec2 {
+        let rect = self.topdown_collision_rect();
+        Vec2::new(rect.origin.x + rect.size.x * 0.5, rect.bottom())
+    }
+
     fn set_topdown_animation(&mut self, animation: TopdownAnimation) {
         if self.topdown_animation != animation {
             self.topdown_animation = animation;

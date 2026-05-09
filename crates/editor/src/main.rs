@@ -39,9 +39,9 @@ use app::{
 };
 use asset_registry::{AssetEntry, AssetRegistry};
 use assets::{
-    AssetDraft, apply_kind_defaults, asset_matches_search, category_label, collect_png_paths,
-    compact_asset_label, image_dimensions, infer_asset_draft_from_path, infer_tile_footprint,
-    load_thumbnail,
+    AssetDraft, ThumbnailLoader, apply_kind_defaults, asset_matches_search, category_label,
+    collect_png_paths, compact_asset_label, image_dimensions, infer_asset_draft_from_path,
+    infer_tile_footprint,
 };
 use canvas::rendering::{draw_grid, paint_transformed_image, zone_colors};
 use content::{
@@ -108,7 +108,7 @@ impl EditorApp {
         let document =
             MapDocument::load(&map_path).unwrap_or_else(|_| MapDocument::new_landing_site());
         let save_as_id = document.id.clone();
-        let mut app = Self {
+        Self {
             native_menu: native_menu::NativeMenu::install(),
             project_root: project_root.clone(),
             selected_map_path: map_path.clone(),
@@ -177,31 +177,62 @@ impl EditorApp {
             mouse_tile: None,
             last_canvas_rect: None,
             thumbnails: HashMap::new(),
+            thumbnail_loader: ThumbnailLoader::new(),
             status: "Ready".to_owned(),
-        };
-
-        app.load_visible_textures(&cc.egui_ctx);
-        app
+        }
     }
 
-    fn load_visible_textures(&mut self, ctx: &EguiContext) {
-        for asset in self.registry.assets() {
-            if self.thumbnails.contains_key(&asset.id) {
-                continue;
-            }
+    fn upload_ready_textures(&mut self, ctx: &EguiContext) -> usize {
+        self.thumbnail_loader
+            .upload_ready(ctx, &mut self.thumbnails, 12)
+    }
 
-            match load_thumbnail(ctx, asset) {
-                Ok(texture) => {
-                    self.thumbnails.insert(asset.id.clone(), texture);
-                }
-                Err(error) => {
-                    eprintln!(
-                        "failed to load thumbnail {}: {error:?}",
-                        asset.relative_path
-                    );
-                }
+    fn reset_texture_cache(&mut self) {
+        self.thumbnails.clear();
+        self.thumbnail_loader = ThumbnailLoader::new();
+    }
+
+    pub(crate) fn request_asset_texture(&mut self, asset_id: &str) -> bool {
+        if self.thumbnails.contains_key(asset_id) {
+            return false;
+        }
+
+        let Some(asset) = self.registry.get(asset_id).cloned() else {
+            return false;
+        };
+        self.thumbnail_loader.request(asset)
+    }
+
+    pub(crate) fn request_asset_textures<'a>(
+        &mut self,
+        asset_ids: impl IntoIterator<Item = &'a str>,
+    ) -> usize {
+        let mut requested = 0usize;
+        for asset_id in asset_ids {
+            if self.request_asset_texture(asset_id) {
+                requested += 1;
             }
         }
+        requested
+    }
+
+    pub(crate) fn texture_loading_status(&self) -> Option<String> {
+        let requested = self.thumbnail_loader.requested_count();
+        if requested == 0 {
+            return None;
+        }
+
+        let done = self.thumbnail_loader.completed_count();
+        Some(format!(
+            "纹理 {}/{}{}",
+            done.min(requested),
+            requested,
+            if self.thumbnail_loader.failed_count() > 0 {
+                " 有失败"
+            } else {
+                ""
+            }
+        ))
     }
 
     fn set_tool(&mut self, tool: ToolKind) {
@@ -709,7 +740,8 @@ impl EditorApp {
         self.asset_database.reindex();
         self.registry =
             AssetRegistry::from_database(&self.project_root, self.asset_database.clone());
-        self.load_visible_textures(ctx);
+        self.reset_texture_cache();
+        ctx.request_repaint();
     }
 
     fn open_add_asset_dialog(&mut self) {
@@ -1586,6 +1618,7 @@ impl EditorApp {
                     ui.label("1-6 切换图层");
                     ui.label("空格拖拽平移，滚轮缩放");
                     ui.label("鼠标中键拖拽平移");
+                    ui.label("区域工具：点击加点，双击或点回首点完成；Alt 自由点");
                 });
             },
         );
@@ -1776,6 +1809,10 @@ impl eframe::App for EditorApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         configure_editor_theme(&ctx);
+        let uploaded_textures = self.upload_ready_textures(&ctx);
+        if uploaded_textures > 0 || self.thumbnail_loader.has_pending() {
+            ctx.request_repaint();
+        }
         self.handle_native_menu_commands(&ctx);
         self.handle_shortcuts(&ctx);
         self.autosave_if_needed();

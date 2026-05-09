@@ -3,7 +3,9 @@ mod map;
 use anyhow::Result;
 use runtime::{Rect, Renderer, Vec2};
 
-pub use map::{MapEntity, MapEntityKind, MapTransitionTarget, MapUnlockRule, MapZone};
+pub use map::{
+    MapEntity, MapEntityKind, MapTransitionTarget, MapUnlockRule, MapWalkSurface, MapZone,
+};
 
 use map::Map;
 
@@ -36,6 +38,7 @@ impl World {
         self.map.draw(renderer);
     }
 
+    #[allow(dead_code)]
     pub fn draw_with_actor(
         &self,
         renderer: &mut dyn Renderer,
@@ -44,6 +47,17 @@ impl World {
     ) {
         self.map
             .draw_with_actor(renderer, actor_depth_y, draw_actor);
+    }
+
+    pub fn draw_with_actor_at_depth(
+        &self,
+        renderer: &mut dyn Renderer,
+        actor_depth_y: f32,
+        actor_z_index: i32,
+        draw_actor: impl FnOnce(&mut dyn Renderer),
+    ) {
+        self.map
+            .draw_with_actor_at_depth(renderer, actor_depth_y, actor_z_index, draw_actor);
     }
 
     pub fn load_assets(&self, renderer: &mut dyn Renderer) -> Result<()> {
@@ -78,6 +92,10 @@ impl World {
             .zones()
             .iter()
             .filter(move |zone| zone.zone_type == zone_type)
+    }
+
+    pub fn walk_surface_at(&self, point: Vec2) -> Option<MapWalkSurface> {
+        self.map.walk_surface_at(point)
     }
 
     pub fn codex_entities(&self) -> impl Iterator<Item = &MapEntity> + '_ {
