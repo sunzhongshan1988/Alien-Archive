@@ -247,6 +247,7 @@ impl Scene for FacilityScene {
     }
 
     fn render(&mut self, ctx: &mut RenderContext<'_>) -> Result<()> {
+        self.world.load_visible_ground_assets(ctx.renderer)?;
         self.world.draw(ctx.renderer);
         self.player.draw(ctx.renderer);
         self.scan.draw(ctx.renderer)?;

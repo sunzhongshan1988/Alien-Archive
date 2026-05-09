@@ -173,6 +173,7 @@
   - `tools/sprite_sheet_compactor`
 - 使用 `winit` 打开窗口。
 - 使用 `wgpu` 渲染矩形和 PNG 图片。
+- Overworld 运行时会把编辑器 ground layer 按 32x32 tile chunk 分块预烘；每帧只上传和绘制当前 camera 视口相交的地面 chunk，避免 32x32 地面展开后提交上千个小 tile draw call，也避免超大地图生成单张巨型纹理。
 - 最小窗口尺寸已调整为 `1280x720`。
 - 添加启动界面，读取 `assets/images/startup/startup_background.png`。
 - 添加基础 Scene 系统和 `SceneCommand`：`Switch` / `Push` / `Pop` / `Quit`。

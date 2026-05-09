@@ -711,6 +711,21 @@ impl Renderer for WgpuRenderer {
         Vec2::new(self.config.width as f32, self.config.height as f32)
     }
 
+    fn visible_world_rect(&self) -> Rect {
+        let zoom = self.camera.zoom.max(0.001);
+        let size = Vec2::new(
+            self.config.width as f32 / zoom,
+            self.config.height as f32 / zoom,
+        );
+        Rect::new(
+            Vec2::new(
+                self.camera.position.x - size.x * 0.5,
+                self.camera.position.y - size.y * 0.5,
+            ),
+            size,
+        )
+    }
+
     fn set_camera(&mut self, camera: Camera2d) {
         self.camera = camera;
     }

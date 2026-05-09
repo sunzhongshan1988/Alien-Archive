@@ -50,6 +50,10 @@ impl World {
         self.map.load_assets(renderer)
     }
 
+    pub fn load_visible_ground_assets(&self, renderer: &mut dyn Renderer) -> Result<()> {
+        self.map.load_visible_ground_assets(renderer)
+    }
+
     #[allow(dead_code)]
     pub fn first_entity(&self, kind: MapEntityKind) -> Option<&MapEntity> {
         self.map

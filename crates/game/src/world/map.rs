@@ -10,12 +10,16 @@ use content::{
     AnchorKind, AssetDatabase, DEFAULT_ASSET_DB_PATH, InstanceRect, MapDocument as EditorMapFile,
     ObjectInstance as EditorObjectInstance, TransitionTarget, UnlockRule,
 };
-use runtime::{Color, Rect, Renderer, Vec2};
+use image::{RgbaImage, imageops};
+use runtime::{Color, Rect, Renderer, Vec2, collision::rects_overlap};
 use serde::Deserialize;
+
+const GROUND_CACHE_CHUNK_TILES: u32 = 32;
 
 #[derive(Clone, Debug)]
 pub struct Map {
     tiles: Vec<MapTile>,
+    ground_cache: Option<MapGroundCache>,
     sprites: Vec<MapSprite>,
     entities: Vec<MapEntity>,
     zones: Vec<MapZone>,
@@ -51,10 +55,11 @@ impl Map {
     }
 
     pub fn draw(&self, renderer: &mut dyn Renderer) {
-        self.draw_ground(renderer);
-        self.draw_decals(renderer);
+        let visible = renderer.visible_world_rect();
+        self.draw_ground(renderer, visible);
+        self.draw_decals(renderer, visible);
 
-        for drawable in self.sorted_depth_drawables() {
+        for drawable in self.sorted_depth_drawables(visible) {
             drawable.draw(renderer);
         }
     }
@@ -65,13 +70,14 @@ impl Map {
         actor_depth_y: f32,
         draw_actor: impl FnOnce(&mut dyn Renderer),
     ) {
-        self.draw_ground(renderer);
-        self.draw_decals(renderer);
+        let visible = renderer.visible_world_rect();
+        self.draw_ground(renderer, visible);
+        self.draw_decals(renderer, visible);
 
         let actor_key = DepthKey::new(actor_depth_y, 0);
         let mut draw_actor = Some(draw_actor);
 
-        for drawable in self.sorted_depth_drawables() {
+        for drawable in self.sorted_depth_drawables(visible) {
             if draw_actor.is_some() && actor_key.cmp(&drawable.depth_key()) == Ordering::Less {
                 draw_actor.take().expect("actor draw should exist")(renderer);
             }
@@ -83,8 +89,23 @@ impl Map {
         }
     }
 
-    fn draw_ground(&self, renderer: &mut dyn Renderer) {
-        for tile in &self.tiles {
+    fn draw_ground(&self, renderer: &mut dyn Renderer, visible: Rect) {
+        if let Some(cache) = &self.ground_cache {
+            for chunk in cache.visible_chunks(visible) {
+                renderer.draw_image(
+                    &chunk.texture_id,
+                    chunk.rect,
+                    Color::rgba(1.0, 1.0, 1.0, 1.0),
+                );
+            }
+            return;
+        }
+
+        for tile in self
+            .tiles
+            .iter()
+            .filter(|tile| rects_overlap(tile.rect, visible))
+        {
             match &tile.visual {
                 MapVisual::Color(color) => renderer.draw_rect(tile.rect, *color),
                 MapVisual::Texture(texture_id) => {
@@ -100,11 +121,13 @@ impl Map {
         }
     }
 
-    fn draw_decals(&self, renderer: &mut dyn Renderer) {
+    fn draw_decals(&self, renderer: &mut dyn Renderer, visible: Rect) {
         let mut sprites = self
             .sprites
             .iter()
-            .filter(|sprite| sprite.layer == MapSpriteLayer::Decal)
+            .filter(|sprite| {
+                sprite.layer == MapSpriteLayer::Decal && rects_overlap(sprite.rect, visible)
+            })
             .collect::<Vec<_>>();
         sprites.sort_by(|left, right| {
             left.z_index
@@ -122,16 +145,21 @@ impl Map {
         }
     }
 
-    fn sorted_depth_drawables(&self) -> Vec<DepthDrawable<'_>> {
+    fn sorted_depth_drawables(&self, visible: Rect) -> Vec<DepthDrawable<'_>> {
         let mut drawables = self
             .sprites
             .iter()
-            .filter(|sprite| sprite.layer == MapSpriteLayer::Object)
+            .filter(|sprite| {
+                sprite.layer == MapSpriteLayer::Object && rects_overlap(sprite.rect, visible)
+            })
             .map(DepthDrawable::Sprite)
             .chain(
                 self.entities
                     .iter()
-                    .filter(|entity| entity.kind != MapEntityKind::PlayerSpawn)
+                    .filter(|entity| {
+                        entity.kind != MapEntityKind::PlayerSpawn
+                            && rects_overlap(entity.sprite_rect, visible)
+                    })
                     .map(DepthDrawable::Entity),
             )
             .collect::<Vec<_>>();
@@ -144,6 +172,25 @@ impl Map {
             if renderer.texture_size(texture_id).is_none() {
                 renderer.load_texture(texture_id, path)?;
             }
+        }
+
+        Ok(())
+    }
+
+    pub fn load_visible_ground_assets(&self, renderer: &mut dyn Renderer) -> Result<()> {
+        let Some(cache) = &self.ground_cache else {
+            return Ok(());
+        };
+
+        let visible = renderer.visible_world_rect();
+        let mut source_cache = HashMap::<PathBuf, RgbaImage>::new();
+        for chunk in cache.visible_chunks(visible) {
+            if renderer.texture_size(&chunk.texture_id).is_some() {
+                continue;
+            }
+
+            let rgba = chunk.render_rgba(cache.tile_size, &mut source_cache)?;
+            renderer.load_texture_rgba(&chunk.texture_id, chunk.width, chunk.height, &rgba)?;
         }
 
         Ok(())
@@ -249,6 +296,7 @@ impl Map {
             entities,
             zones: Vec::new(),
             collision_rects: Vec::new(),
+            ground_cache: None,
             textures: HashMap::new(),
         })
     }
@@ -269,6 +317,7 @@ impl Map {
             -(file.height as f32 * tile_size) * 0.5,
         );
         let mut textures = HashMap::new();
+        let mut ground_sources = Vec::new();
 
         let mut tiles = Vec::new();
         let mut collision_rects = Vec::new();
@@ -276,12 +325,20 @@ impl Map {
             let asset = registry
                 .get(&tile.asset)
                 .with_context(|| format!("unknown tile asset {}", tile.asset))?;
-            textures.insert(asset.id.clone(), asset.path.clone());
             let position = grid_to_world(origin, tile_size, tile.x, tile.y);
             let size = Vec2::new(
                 tile_size * tile.w.max(1) as f32,
                 tile_size * tile.h.max(1) as f32,
             );
+            ground_sources.push(GroundTextureSource {
+                path: asset.path.clone(),
+                x: tile.x,
+                y: tile.y,
+                w: tile.w.max(1),
+                h: tile.h.max(1),
+                flip_x: tile.flip_x,
+                rotation: tile.rotation,
+            });
 
             tiles.push(MapTile {
                 rect: Rect::new(position, size),
@@ -301,6 +358,14 @@ impl Map {
                 ));
             }
         }
+        let ground_cache = build_ground_cache(
+            &file.id,
+            &ground_sources,
+            origin,
+            file.width,
+            file.height,
+            file.tile_size,
+        )?;
 
         let mut sprites = Vec::new();
         for decal in file.layers.decals {
@@ -449,8 +514,227 @@ impl Map {
             entities,
             zones,
             collision_rects,
+            ground_cache,
             textures,
         })
+    }
+}
+
+#[derive(Clone, Debug)]
+struct MapGroundCache {
+    tile_size: u32,
+    chunks: Vec<MapGroundChunkCache>,
+}
+
+impl MapGroundCache {
+    fn visible_chunks(&self, visible: Rect) -> impl Iterator<Item = &MapGroundChunkCache> {
+        self.chunks
+            .iter()
+            .filter(move |chunk| rects_overlap(chunk.rect, visible))
+    }
+}
+
+#[derive(Clone, Debug)]
+struct MapGroundChunkCache {
+    texture_id: String,
+    rect: Rect,
+    width: u32,
+    height: u32,
+    tile_origin_x: u32,
+    tile_origin_y: u32,
+    sources: Vec<GroundTextureSource>,
+}
+
+impl MapGroundChunkCache {
+    fn render_rgba(
+        &self,
+        tile_size: u32,
+        source_cache: &mut HashMap<PathBuf, RgbaImage>,
+    ) -> Result<Vec<u8>> {
+        let mut canvas = RgbaImage::new(self.width, self.height);
+
+        for source in &self.sources {
+            let tile = if let Some(tile) = source_cache.get(&source.path) {
+                tile.clone()
+            } else {
+                let tile = image::ImageReader::open(&source.path)
+                    .with_context(|| {
+                        format!("failed to open ground tile image {}", source.path.display())
+                    })?
+                    .decode()
+                    .with_context(|| {
+                        format!(
+                            "failed to decode ground tile image {}",
+                            source.path.display()
+                        )
+                    })?
+                    .to_rgba8();
+                source_cache.insert(source.path.clone(), tile.clone());
+                tile
+            };
+
+            let target_width = (source.w.max(1) as u32).saturating_mul(tile_size).max(1);
+            let target_height = (source.h.max(1) as u32).saturating_mul(tile_size).max(1);
+            let tile = transform_ground_tile(
+                &tile,
+                target_width,
+                target_height,
+                source.flip_x,
+                source.rotation,
+            );
+            imageops::overlay(
+                &mut canvas,
+                &tile,
+                (source.x as i64 - self.tile_origin_x as i64) * tile_size as i64,
+                (source.y as i64 - self.tile_origin_y as i64) * tile_size as i64,
+            );
+        }
+
+        Ok(canvas.into_raw())
+    }
+}
+
+#[derive(Clone, Debug)]
+struct GroundTextureSource {
+    path: PathBuf,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    flip_x: bool,
+    rotation: i32,
+}
+
+fn build_ground_cache(
+    map_id: &str,
+    sources: &[GroundTextureSource],
+    origin: Vec2,
+    map_width: u32,
+    map_height: u32,
+    tile_size: u32,
+) -> Result<Option<MapGroundCache>> {
+    if sources.is_empty() || map_width == 0 || map_height == 0 {
+        return Ok(None);
+    }
+
+    let chunk_tiles = GROUND_CACHE_CHUNK_TILES.max(1);
+    let chunks_x = map_width.div_ceil(chunk_tiles);
+    let chunks_y = map_height.div_ceil(chunk_tiles);
+    let mut chunk_sources = HashMap::<(u32, u32), Vec<GroundTextureSource>>::new();
+
+    let map_width = map_width as i32;
+    let map_height = map_height as i32;
+    for source in sources {
+        let source_left = source.x;
+        let source_top = source.y;
+        let source_right = source.x.saturating_add(source.w.max(1));
+        let source_bottom = source.y.saturating_add(source.h.max(1));
+        if source_left >= map_width
+            || source_top >= map_height
+            || source_right <= 0
+            || source_bottom <= 0
+        {
+            continue;
+        }
+
+        let min_chunk_x = (source_left.max(0) as u32) / chunk_tiles;
+        let min_chunk_y = (source_top.max(0) as u32) / chunk_tiles;
+        let max_chunk_x = ((source_right.min(map_width) - 1).max(0) as u32) / chunk_tiles;
+        let max_chunk_y = ((source_bottom.min(map_height) - 1).max(0) as u32) / chunk_tiles;
+
+        for chunk_y in min_chunk_y..=max_chunk_y.min(chunks_y.saturating_sub(1)) {
+            for chunk_x in min_chunk_x..=max_chunk_x.min(chunks_x.saturating_sub(1)) {
+                chunk_sources
+                    .entry((chunk_x, chunk_y))
+                    .or_default()
+                    .push(source.clone());
+            }
+        }
+    }
+
+    let map_id = texture_id_component(map_id);
+    let mut chunks = Vec::new();
+    for chunk_y in 0..chunks_y {
+        for chunk_x in 0..chunks_x {
+            let Some(sources) = chunk_sources.remove(&(chunk_x, chunk_y)) else {
+                continue;
+            };
+
+            let tile_origin_x = chunk_x * chunk_tiles;
+            let tile_origin_y = chunk_y * chunk_tiles;
+            let tile_width = (map_width as u32 - tile_origin_x).min(chunk_tiles);
+            let tile_height = (map_height as u32 - tile_origin_y).min(chunk_tiles);
+            chunks.push(MapGroundChunkCache {
+                texture_id: format!("__map_ground_cache_{map_id}_{chunk_x}_{chunk_y}"),
+                rect: Rect::new(
+                    Vec2::new(
+                        origin.x + tile_origin_x as f32 * tile_size as f32,
+                        origin.y + tile_origin_y as f32 * tile_size as f32,
+                    ),
+                    Vec2::new(
+                        tile_width as f32 * tile_size as f32,
+                        tile_height as f32 * tile_size as f32,
+                    ),
+                ),
+                width: tile_width.saturating_mul(tile_size).max(1),
+                height: tile_height.saturating_mul(tile_size).max(1),
+                tile_origin_x,
+                tile_origin_y,
+                sources,
+            });
+        }
+    }
+
+    Ok(Some(MapGroundCache { tile_size, chunks }))
+}
+
+fn texture_id_component(value: &str) -> String {
+    let value = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+
+    if value.is_empty() {
+        "map".to_owned()
+    } else {
+        value
+    }
+}
+
+fn transform_ground_tile(
+    source: &RgbaImage,
+    width: u32,
+    height: u32,
+    flip_x: bool,
+    rotation: i32,
+) -> RgbaImage {
+    let mut tile = if source.width() == width && source.height() == height {
+        source.clone()
+    } else {
+        imageops::resize(source, width, height, imageops::FilterType::Nearest)
+    };
+
+    if flip_x {
+        tile = imageops::flip_horizontal(&tile);
+    }
+
+    tile = match rotation.rem_euclid(360) {
+        90 => imageops::rotate90(&tile),
+        180 => imageops::rotate180(&tile),
+        270 => imageops::rotate270(&tile),
+        _ => tile,
+    };
+
+    if tile.width() != width || tile.height() != height {
+        imageops::resize(&tile, width, height, imageops::FilterType::Nearest)
+    } else {
+        tile
     }
 }
 
@@ -916,6 +1200,7 @@ mod tests {
             entities: Vec::new(),
             zones: Vec::new(),
             collision_rects: Vec::new(),
+            ground_cache: None,
             textures: HashMap::new(),
         };
         let mut renderer = RecordingRenderer::default();
@@ -928,6 +1213,38 @@ mod tests {
             renderer.commands,
             ["decal", "rear", "actor", "front"],
             "decals stay below, while actor joins the object Y-depth pass"
+        );
+    }
+
+    #[test]
+    fn ground_cache_splits_tiles_across_visible_chunks() {
+        let source = GroundTextureSource {
+            path: PathBuf::from("dummy.png"),
+            x: 31,
+            y: 0,
+            w: 2,
+            h: 1,
+            flip_x: false,
+            rotation: 0,
+        };
+        let cache = build_ground_cache("map one", &[source], Vec2::ZERO, 65, 33, 32)
+            .expect("ground cache should build")
+            .expect("source should create chunks");
+
+        assert_eq!(cache.chunks.len(), 2);
+        assert!(
+            cache
+                .chunks
+                .iter()
+                .any(|chunk| chunk.texture_id == "__map_ground_cache_map_one_0_0")
+        );
+        let visible_chunks = cache
+            .visible_chunks(Rect::new(Vec2::new(1024.0, 0.0), Vec2::new(1024.0, 1024.0)))
+            .collect::<Vec<_>>();
+        assert_eq!(visible_chunks.len(), 1);
+        assert_eq!(
+            visible_chunks[0].texture_id,
+            "__map_ground_cache_map_one_1_0"
         );
     }
 
@@ -968,6 +1285,10 @@ mod tests {
 
         fn screen_size(&self) -> Vec2 {
             Vec2::ZERO
+        }
+
+        fn visible_world_rect(&self) -> Rect {
+            Rect::new(Vec2::new(-1000.0, -1000.0), Vec2::new(2000.0, 2000.0))
         }
 
         fn set_camera(&mut self, _camera: runtime::Camera2d) {}

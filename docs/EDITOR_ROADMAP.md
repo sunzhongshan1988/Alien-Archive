@@ -320,6 +320,8 @@ Godot 的 TileSet property painting 对我们很有参考价值：
 - `overworld_assets.ron` 中的 `default_size` 与 PNG 实际尺寸一致。
 - 需要时启动 `target/debug/editor.exe`，确认 `target/editor-startup.stderr.log` 为空。
 
+地面底材优先做真实 `32x32` 单格 tile，不要把 128x128 或 4x4 footprint 的大图当基础地面拉伸使用。中心块需要有可读的像素纹理（砂粒、风纹、裂缝、矿点、遗迹槽线），但边缘不能有高亮外框或阴影；明显焦痕、晶体、道路边缘和大地貌分界应通过 transition tile、decals 或 Stamp 叠加完成。
+
 ## 实施记录
 
 ### 2026-05-09
@@ -327,8 +329,9 @@ Godot 的 TileSet property painting 对我们很有参考价值：
 - 素材生产转入第一轮 Landing Site Starter Pack：生成并裁切 85 个 Overworld 可用素材，覆盖 structures、ruins、props、decals、flora、fauna、interactables 和 pickups。
 - 生成源图和裁切清单保存在 `assets/sprites/_sources/overworld/landing_site_pack_2026_05_09_*`；实际素材落在各分类的 `overworld/generated` 目录，并已登记进 `assets/data/assets/overworld_assets.ron`。
 - 已修正 Landing Site 生成素材裁切：贴花按 6/6/6/7 行布局重切，宽道具和高交互物改用源图联通区域边界裁切，并清掉内部残留 chroma key 绿底。
-- 已新增 Coherent Terrain Pack：`assets/sprites/_sources/overworld/coherent_terrain_pack_2026_05_09_*`，实际 tile 落在 `assets/sprites/tiles/overworld/generated`。这包不再混进旧 `sand/rock` family，而是使用 `ct_sand`、`ct_rock`、`ct_ruin`、`ct_scorch` 四个独立 terrain family；每个 family 有 6 个 center、1 个 `edge_n` 和 1 个 `corner_ne`，其余方向由 editor 自动旋转复用。
-- 当前素材库计数变为：tiles 142、decals 38、props 34、structures 19、ruins 15、flora 18、fauna 10、interactables 11、pickups 14。下一步地图生产优先用这些素材制作可复用 Stamp 场景块，而不是继续扩 editor 功能。
+- 曾试做 Coherent Terrain Pack 和 Seamless Terrain Pack：前者块边界太明显，后者纹理过平；两批 `ct_*` / `st_*` 4x4 地面素材已被后续 Terrain32 Pack 清理替换。
+- 4x4 地面素材实测过平，已清理旧 `tiles` 素材并重建 Terrain32 Pack：`assets/sprites/_sources/overworld/terrain32_pack_2026_05_09_*`；实际 tile 统一为 `assets/sprites/tiles/overworld/generated/ow_tile_32_*`，`default_size: (32,32)`、`footprint: Some((1,1))`。这包覆盖 sand、rock、scorch、ruin 四组，每组 12 个 center、1 个 `edge_n`、1 个 `corner_ne`，并补齐四组材料两两之间的有向 edge/corner transition。
+- 当前素材库计数变为：tiles 152、decals 38、props 34、structures 19、ruins 15、flora 18、fauna 10、interactables 11、pickups 14。当前 landing map 的 ground 层已从 117 个 4x4 实例展开为 1872 个 1x1 地块，starter map 已补成 1728 个 1x1 地块；后续地图生产基于 32x32 tile 和 transition tile 继续细化。
 
 ### 2026-05-08
 

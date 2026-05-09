@@ -211,6 +211,7 @@ impl Scene for OverworldScene {
     }
 
     fn render(&mut self, ctx: &mut RenderContext<'_>) -> Result<()> {
+        self.world.load_visible_ground_assets(ctx.renderer)?;
         self.world
             .draw_with_actor(ctx.renderer, self.player.topdown_depth_y(), |renderer| {
                 self.player.draw_topdown(renderer);
