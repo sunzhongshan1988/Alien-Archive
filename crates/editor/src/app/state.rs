@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     time::{Duration, Instant},
 };
@@ -215,7 +215,7 @@ impl BatchDistributeMode {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct SelectedItem {
     pub(crate) layer: LayerKind,
     pub(crate) id: String,
@@ -345,6 +345,7 @@ pub(crate) struct EditorApp {
     pub(crate) selected_asset: Option<String>,
     pub(crate) selected_item: Option<SelectedItem>,
     pub(crate) selected_items: Vec<SelectedItem>,
+    pub(crate) hidden_items: HashSet<SelectedItem>,
     pub(crate) active_layer: LayerKind,
     pub(crate) layer_states: HashMap<LayerKind, LayerUiState>,
     pub(crate) tool: ToolKind,

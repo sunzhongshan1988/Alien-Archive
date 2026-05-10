@@ -156,6 +156,7 @@ impl EditorApp {
             selected_asset: None,
             selected_item: None,
             selected_items: Vec::new(),
+            hidden_items: Default::default(),
             active_layer: LayerKind::Ground,
             layer_states: default_layer_states(),
             tool: ToolKind::Brush,
@@ -329,7 +330,7 @@ impl EditorApp {
             if input.consume_key(Modifiers::COMMAND, Key::D) {
                 self.duplicate_selected_item();
             }
-            if input.key_pressed(Key::Delete) {
+            if input.key_pressed(Key::Delete) || input.key_pressed(Key::Backspace) {
                 self.delete_current_selection();
             }
 
@@ -638,6 +639,7 @@ impl EditorApp {
                 self.document = document;
                 self.save_as_id = self.document.id.clone();
                 self.clear_selection();
+                self.hidden_items.clear();
                 self.selected_asset = None;
                 self.pending_open_path = None;
                 self.open_confirm_path = None;
@@ -1388,8 +1390,9 @@ impl EditorApp {
                         self.map_path = maps_dir(&self.project_root).join(format!("{id}.ron"));
                         self.selected_map_path = self.map_path.clone();
                         self.save_as_id = id;
-                        self.clear_selection();
-                        self.selected_asset = None;
+        self.clear_selection();
+        self.hidden_items.clear();
+        self.selected_asset = None;
                         self.undo_stack.clear();
                         self.redo_stack.clear();
                         self.dirty = true;
@@ -1565,6 +1568,32 @@ impl EditorApp {
         }
     }
 
+    fn item_hidden(&self, selection: &SelectedItem) -> bool {
+        self.hidden_items.contains(selection)
+    }
+
+    fn hidden_item_count(&self) -> usize {
+        self.hidden_items.len()
+    }
+
+    fn set_item_hidden(&mut self, selection: SelectedItem, hidden: bool) {
+        if hidden {
+            self.hidden_items.insert(selection);
+        } else {
+            self.hidden_items.remove(&selection);
+        }
+    }
+
+    fn clear_hidden_items(&mut self) {
+        let count = self.hidden_items.len();
+        self.hidden_items.clear();
+        self.status = if count == 0 {
+            "当前没有隐藏对象".to_owned()
+        } else {
+            format!("已显示 {} 个隐藏对象", count)
+        };
+    }
+
     fn toggle_selection(&mut self, selection: SelectedItem) {
         let mut selections = self.current_selection_list();
         if let Some(index) = selections.iter().position(|item| item == &selection) {
@@ -1685,12 +1714,20 @@ impl EditorApp {
         }
 
         self.push_undo_snapshot();
+        let mut deleted = 0usize;
         for selection in &editable {
-            self.delete_selected_item(selection);
+            if self.delete_selected_item(selection) {
+                self.hidden_items.remove(selection);
+                deleted += 1;
+            }
+        }
+        if deleted == 0 {
+            self.status = "没有找到可删除的对象".to_owned();
+            return;
         }
         self.clear_selection();
         self.mark_dirty();
-        self.status = format!("已删除 {} 个对象", editable.len());
+        self.status = format!("已删除 {} 个对象", deleted);
     }
 
     fn clipboard_for_selection(&self, selection: &SelectedItem) -> Option<ClipboardItem> {

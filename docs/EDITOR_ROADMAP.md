@@ -338,7 +338,7 @@ Godot 的 TileSet property painting 对我们很有参考价值：
 - 裁切流程增加边界碎片过滤：格子边缘的小联通块会被丢弃，避免相邻 cell 的残片混入宽物件或高物件；chroma-key 处理也加了边缘去绿和 despill。
 - 追加 Terrain Landforms Pack：新增 `terrain` 分类 20 个悬崖/山脉/岩脊/台地/洞口主体素材，另补 20 个 cliff/mountain 支撑贴花；源图、裁切脚本、manifest 和 preview 位于 `assets/sprites/_sources/overworld/terrain_landforms_2026_05_10_*`。主体作为 Object 放置，山脚碎石、坡脚尘土、岩屑和矿脉散布仍拆到 Decal。
 - Overworld 地形新增“分层可走表面”语义：Zone 支持 `WalkSurface` + `surface` 参数，`surface_id` 相同的台面和斜坡组成同一个可行走区域。`Platform` 负责圆台/高台顶面，`Ramp` 负责从地面进入/离开该 surface；人物在地面层不会因为走到圆台投影下方就被抬到台面，只有脚底进入 Ramp 后才切入同一 surface。人在该 surface 上时，移动会被限制在同 `surface_id` 的 Platform/Ramp 联合区域内，避免从圆台边缘掉下；离开 Ramp 后回到地面层，仍可从圆台背后绕行。
-- WalkSurface 深度和边缘规则已修正：角色站在 surface 上时按 `z_index` 层级优先参与对象排序，解决大斜坡/圆台整图底部过低导致角色被错误画到斜坡后面的问题；Ramp 和 Platform 重叠时优先按 Platform 的 surface 参数渲染。人在同一 `surface_id` 上时不能从圆台/斜坡侧边直接掉到地面，只有沿 Ramp 朝地面方向移动才会离开高层 surface。
+- WalkSurface 深度、边缘和切层规则已修正：角色站在 surface 上时按 `z_index` 层级优先参与对象排序，解决大斜坡/圆台整图底部过低导致角色被错误画到斜坡后面的问题；Ramp 和 Platform 重叠时优先按 Platform 的 surface 参数渲染。地面态不能从圆台背面/侧面直接踩进 Platform 顶面，只有从 Ramp 坡脚方向进入才会切到高层 surface；人在同一 `surface_id` 上时不能从圆台/斜坡侧边直接掉到地面，只有沿 Ramp 朝地面方向移动才会离开高层 surface。
 - Object / Entity 新增独立 `depth_rect` 和素材级 `default_depth_rect`，用于遮挡排序，不再被碰撞框或整张 sprite 底边绑死。运行时用人物脚底参与 Y-depth 排序；对象没有配置遮挡/碰撞范围时，会默认把排序线从图片底边向上收半格，避免角色从下往上走时脚还没进主体就被对象盖住。
 - Zone 现在也可作为碰撞来源：`CollisionArea` 表示区域碰撞，会按 tile 行栅格化为 solid rect；`CollisionLine` 表示细线屏障，会沿折线采样为窄碰撞条，适合悬崖边、墙边和圆台边缘。Zone 工具 2 个点默认生成碰撞线，3 个点以上生成普通区域，可在 Inspector 里改成碰撞区域/线。
 - P1 批量操作开始落地：多选 Inspector 和编辑菜单新增左/右/顶/底/水平居中/垂直居中对齐；对齐按素材真实显示边界计算，支持地表、贴花、物件、实体和区域。方向键可微调当前多选，Shift 为半格，Ctrl 为 4 格。

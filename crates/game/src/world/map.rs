@@ -326,7 +326,8 @@ impl Map {
             )
     }
 
-    pub fn walk_surface_at(&self, point: Vec2) -> Option<MapWalkSurface> {
+    #[cfg(test)]
+    fn walk_surface_at(&self, point: Vec2) -> Option<MapWalkSurface> {
         self.walk_surface_at_filtered(point, |_| true)
     }
 
@@ -340,6 +341,38 @@ impl Map {
 
     pub fn walk_surface_contains(&self, surface_id: &str, point: Vec2) -> bool {
         self.walk_surface_for_id_at(surface_id, point).is_some()
+    }
+
+    pub fn walk_surface_allows_ground_movement(&self, previous: Vec2, next: Vec2) -> bool {
+        let Some((ramp_zone, ramp_surface)) = self
+            .walk_surface_zone_at_filtered(next, &mut |surface| {
+                surface.kind == MapWalkSurfaceKind::Ramp
+            })
+        else {
+            return self
+                .walk_surface_zone_at_filtered(next, &mut |surface| {
+                    surface.kind == MapWalkSurfaceKind::Platform
+                })
+                .is_none();
+        };
+        let ramp_surface_id = ramp_surface.surface_id.clone();
+
+        if self
+            .walk_surface_zone_at_filtered(previous, &mut |surface| {
+                surface.surface_id == ramp_surface_id && surface.kind == MapWalkSurfaceKind::Ramp
+            })
+            .is_some()
+        {
+            return true;
+        }
+
+        self.walk_surface_movement_points_toward_kind(
+            &ramp_surface_id,
+            ramp_zone,
+            previous,
+            next,
+            MapWalkSurfaceKind::Platform,
+        )
     }
 
     pub fn walk_surface_allows_movement(
@@ -388,29 +421,70 @@ impl Map {
             return false;
         }
 
+        self.walk_surface_movement_points_away_from_kind(
+            surface_id,
+            ramp_zone,
+            previous,
+            next,
+            MapWalkSurfaceKind::Platform,
+        )
+    }
+
+    fn walk_surface_movement_points_toward_kind(
+        &self,
+        surface_id: &str,
+        from_zone: &MapZone,
+        previous: Vec2,
+        next: Vec2,
+        kind: MapWalkSurfaceKind,
+    ) -> bool {
+        self.walk_surface_movement_matches_kind_direction(
+            surface_id, from_zone, previous, next, kind, -1.0,
+        )
+    }
+
+    fn walk_surface_movement_points_away_from_kind(
+        &self,
+        surface_id: &str,
+        from_zone: &MapZone,
+        previous: Vec2,
+        next: Vec2,
+        kind: MapWalkSurfaceKind,
+    ) -> bool {
+        self.walk_surface_movement_matches_kind_direction(
+            surface_id, from_zone, previous, next, kind, 1.0,
+        )
+    }
+
+    fn walk_surface_movement_matches_kind_direction(
+        &self,
+        surface_id: &str,
+        from_zone: &MapZone,
+        previous: Vec2,
+        next: Vec2,
+        kind: MapWalkSurfaceKind,
+        direction_sign: f32,
+    ) -> bool {
         let movement = next - previous;
         let movement_length = vec2_length(movement);
         if movement_length <= f32::EPSILON {
             return true;
         }
 
-        let ramp_center = rect_center(ramp_zone.bounds);
-        let Some(platform_center) = self.nearest_walk_surface_zone_center(
-            surface_id,
-            MapWalkSurfaceKind::Platform,
-            ramp_center,
-        ) else {
+        let ramp_center = rect_center(from_zone.bounds);
+        let Some(platform_center) =
+            self.nearest_walk_surface_zone_center(surface_id, kind, ramp_center)
+        else {
             return true;
         };
-
         let outward = ramp_center - platform_center;
         let outward_length = vec2_length(outward);
         if outward_length <= f32::EPSILON {
             return false;
         }
 
-        let outward = outward * (1.0 / outward_length);
-        vec2_dot(movement, outward) >= movement_length * WALK_SURFACE_RAMP_EXIT_DOT_THRESHOLD
+        let expected = outward * (direction_sign / outward_length);
+        vec2_dot(movement, expected) >= movement_length * WALK_SURFACE_RAMP_EXIT_DOT_THRESHOLD
     }
 
     fn nearest_walk_surface_zone_center(
@@ -2458,6 +2532,33 @@ mod tests {
                 Vec2::new(116.0, 50.0)
             ),
             "platform movement should not drop to the ground through the platform side"
+        );
+    }
+
+    #[test]
+    fn ground_movement_cannot_enter_platform_top_directly() {
+        let map = platform_with_front_ramp();
+
+        assert!(
+            !map.walk_surface_allows_ground_movement(Vec2::new(50.0, -20.0), Vec2::new(50.0, 50.0)),
+            "ground movement behind the platform should stay on the ground layer instead of snapping onto the top"
+        );
+    }
+
+    #[test]
+    fn ground_movement_enters_ramp_only_from_foot_direction() {
+        let map = platform_with_front_ramp();
+
+        assert!(
+            map.walk_surface_allows_ground_movement(Vec2::new(50.0, 220.0), Vec2::new(50.0, 150.0)),
+            "walking from the ramp foot toward the platform should enter the ramp"
+        );
+        assert!(
+            !map.walk_surface_allows_ground_movement(
+                Vec2::new(-20.0, 150.0),
+                Vec2::new(50.0, 150.0)
+            ),
+            "walking into the ramp side should not switch to the raised surface"
         );
     }
 

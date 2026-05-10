@@ -45,7 +45,7 @@ impl OverworldScene {
                 .unwrap_or_else(|| world.player_spawn()),
         );
         let active_walk_surface_id = world
-            .walk_surface_at(player.topdown_feet_position())
+            .walk_surface_entry_at(player.topdown_feet_position())
             .map(|surface| surface.surface_id);
 
         Ok(Self {
@@ -245,7 +245,7 @@ impl Scene for OverworldScene {
             status.movement_speed_multiplier,
             |feet| {
                 let Some(surface_id) = active_surface_id.as_deref() else {
-                    return true;
+                    return world.walk_surface_allows_ground_movement(previous_feet, feet);
                 };
                 if !active_surface_constrained {
                     return true;

@@ -518,61 +518,7 @@ impl EditorApp {
                 {
                     changed |= labeled_text_edit(ui, "区域 ID", &mut zone.id);
                     changed |= labeled_text_edit(ui, "区域类型", &mut zone.zone_type);
-                    ui.horizontal(|ui| {
-                        if ui.button("设为可走表面").clicked() {
-                            zone.zone_type = "WalkSurface".to_owned();
-                            if zone.surface.is_none() {
-                                zone.surface = Some(content::WalkSurfaceRule::default());
-                            }
-                            changed = true;
-                        }
-                        if ui.button("设为碰撞区域").clicked() {
-                            zone.zone_type = "CollisionArea".to_owned();
-                            zone.surface = None;
-                            changed = true;
-                        }
-                        if ui.button("设为碰撞线").clicked() {
-                            zone.zone_type = "CollisionLine".to_owned();
-                            zone.surface = None;
-                            changed = true;
-                        }
-                        if ui.button("设为转场").clicked() {
-                            zone.zone_type = "MapTransition".to_owned();
-                            zone.surface = None;
-                            changed = true;
-                        }
-                        if ui.button("设为危险区").clicked() {
-                            zone.zone_type = "HazardZone".to_owned();
-                            if zone.hazard.is_none() {
-                                zone.hazard = Some(content::HazardRule {
-                                    effects: vec![content::HazardEffect::new("oxygen", -2.0)],
-                                    message: None,
-                                });
-                            }
-                            changed = true;
-                        }
-                        if ui.button("设为提示区").clicked() {
-                            zone.zone_type = "PromptZone".to_owned();
-                            if zone.prompt.is_none() {
-                                zone.prompt = Some(content::PromptRule::default());
-                            }
-                            changed = true;
-                        }
-                        if ui.button("设为目标区").clicked() {
-                            zone.zone_type = "ObjectiveZone".to_owned();
-                            if zone.objective.is_none() {
-                                zone.objective = Some(content::ObjectiveRule::default());
-                            }
-                            changed = true;
-                        }
-                        if ui.button("设为检查点").clicked() {
-                            zone.zone_type = "Checkpoint".to_owned();
-                            if zone.objective.is_none() {
-                                zone.objective = Some(content::ObjectiveRule::default());
-                            }
-                            changed = true;
-                        }
-                    });
+                    changed |= draw_zone_type_preset_checkboxes(ui, zone);
 
                     if zone.zone_type == "WalkSurface" || zone.surface.is_some() {
                         ui.separator();
@@ -783,6 +729,115 @@ impl EditorApp {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ZoneTypePreset {
+    WalkSurface,
+    CollisionArea,
+    CollisionLine,
+    MapTransition,
+    HazardZone,
+    PromptZone,
+    ObjectiveZone,
+    Checkpoint,
+}
+
+impl ZoneTypePreset {
+    const ALL: [Self; 8] = [
+        Self::WalkSurface,
+        Self::CollisionArea,
+        Self::CollisionLine,
+        Self::MapTransition,
+        Self::HazardZone,
+        Self::PromptZone,
+        Self::ObjectiveZone,
+        Self::Checkpoint,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::WalkSurface => "可走表面",
+            Self::CollisionArea => "碰撞区域",
+            Self::CollisionLine => "碰撞线",
+            Self::MapTransition => "转场",
+            Self::HazardZone => "危险区",
+            Self::PromptZone => "提示区",
+            Self::ObjectiveZone => "目标区",
+            Self::Checkpoint => "检查点",
+        }
+    }
+
+    fn zone_type(self) -> &'static str {
+        match self {
+            Self::WalkSurface => "WalkSurface",
+            Self::CollisionArea => "CollisionArea",
+            Self::CollisionLine => "CollisionLine",
+            Self::MapTransition => "MapTransition",
+            Self::HazardZone => "HazardZone",
+            Self::PromptZone => "PromptZone",
+            Self::ObjectiveZone => "ObjectiveZone",
+            Self::Checkpoint => "Checkpoint",
+        }
+    }
+}
+
+fn draw_zone_type_preset_checkboxes(ui: &mut egui::Ui, zone: &mut content::ZoneInstance) -> bool {
+    let mut changed = false;
+    ui.label("快速类型");
+    ui.horizontal_wrapped(|ui| {
+        for preset in ZoneTypePreset::ALL {
+            let mut selected = zone.zone_type == preset.zone_type();
+            if ui.checkbox(&mut selected, preset.label()).clicked() {
+                changed |= apply_zone_type_preset(zone, preset);
+            }
+        }
+    });
+    changed
+}
+
+fn apply_zone_type_preset(zone: &mut content::ZoneInstance, preset: ZoneTypePreset) -> bool {
+    let mut changed = zone.zone_type != preset.zone_type();
+    zone.zone_type = preset.zone_type().to_owned();
+
+    match preset {
+        ZoneTypePreset::WalkSurface => {
+            if zone.surface.is_none() {
+                zone.surface = Some(content::WalkSurfaceRule::default());
+                changed = true;
+            }
+        }
+        ZoneTypePreset::CollisionArea
+        | ZoneTypePreset::CollisionLine
+        | ZoneTypePreset::MapTransition => {
+            if zone.surface.take().is_some() {
+                changed = true;
+            }
+        }
+        ZoneTypePreset::HazardZone => {
+            if zone.hazard.is_none() {
+                zone.hazard = Some(content::HazardRule {
+                    effects: vec![content::HazardEffect::new("oxygen", -2.0)],
+                    message: None,
+                });
+                changed = true;
+            }
+        }
+        ZoneTypePreset::PromptZone => {
+            if zone.prompt.is_none() {
+                zone.prompt = Some(content::PromptRule::default());
+                changed = true;
+            }
+        }
+        ZoneTypePreset::ObjectiveZone | ZoneTypePreset::Checkpoint => {
+            if zone.objective.is_none() {
+                zone.objective = Some(content::ObjectiveRule::default());
+                changed = true;
+            }
+        }
+    }
+
+    changed
+}
+
 fn draw_zone_hazard_editor(
     ui: &mut egui::Ui,
     zone: &mut content::ZoneInstance,
@@ -952,4 +1007,74 @@ fn draw_zone_objective_editor(
         THEME_MUTED_TEXT,
         "ObjectiveZone 可启动目标；Checkpoint 填 Checkpoint ID 后推进目标步骤。",
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zone_type_preset_initializes_required_payload() {
+        let mut zone = test_zone("Trigger");
+
+        assert!(apply_zone_type_preset(
+            &mut zone,
+            ZoneTypePreset::WalkSurface
+        ));
+        assert_eq!(zone.zone_type, "WalkSurface");
+        assert!(zone.surface.is_some());
+
+        assert!(apply_zone_type_preset(
+            &mut zone,
+            ZoneTypePreset::CollisionLine
+        ));
+        assert_eq!(zone.zone_type, "CollisionLine");
+        assert!(zone.surface.is_none());
+
+        assert!(apply_zone_type_preset(
+            &mut zone,
+            ZoneTypePreset::PromptZone
+        ));
+        assert_eq!(zone.zone_type, "PromptZone");
+        assert!(zone.prompt.is_some());
+
+        assert!(apply_zone_type_preset(
+            &mut zone,
+            ZoneTypePreset::Checkpoint
+        ));
+        assert_eq!(zone.zone_type, "Checkpoint");
+        assert!(zone.objective.is_some());
+    }
+
+    #[test]
+    fn zone_type_preset_current_checkbox_can_repair_missing_payload() {
+        let mut zone = test_zone("WalkSurface");
+        zone.surface = None;
+
+        assert!(apply_zone_type_preset(
+            &mut zone,
+            ZoneTypePreset::WalkSurface
+        ));
+        assert_eq!(zone.zone_type, "WalkSurface");
+        assert!(zone.surface.is_some());
+
+        assert!(!apply_zone_type_preset(
+            &mut zone,
+            ZoneTypePreset::WalkSurface
+        ));
+    }
+
+    fn test_zone(zone_type: &str) -> content::ZoneInstance {
+        content::ZoneInstance {
+            id: "zone_test".to_owned(),
+            zone_type: zone_type.to_owned(),
+            points: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]],
+            hazard: None,
+            prompt: None,
+            objective: None,
+            surface: None,
+            unlock: None,
+            transition: None,
+        }
+    }
 }

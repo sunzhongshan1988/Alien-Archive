@@ -186,11 +186,26 @@ impl EditorApp {
                 color: badge.color,
             }),
         );
+        let response = response.on_hover_text(&entry.search_text);
 
+        if let Some(selection) = entry.selection.clone() {
+            let size = egui::vec2(22.0, 22.0);
+            let rect = egui::Rect::from_center_size(
+                egui::pos2(response.rect.right() - 13.0, response.rect.center().y),
+                size,
+            );
+            let delete_response = ui
+                .put(rect, egui::Button::new("×").frame(false))
+                .on_hover_text("删除对象");
+            if delete_response.clicked() {
+                self.set_single_selection(Some(selection));
+                self.delete_current_selection();
+                return;
+            }
+        }
         if response.clicked() {
             self.focus_outliner_entry(&entry);
         }
-        response.on_hover_text(&entry.search_text);
     }
 
     fn focus_outliner_entry(&mut self, entry: &OutlinerEntry) {

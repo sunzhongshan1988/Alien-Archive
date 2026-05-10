@@ -112,10 +112,6 @@ impl World {
             .filter(move |zone| runtime::collision::rects_overlap(rect, zone.bounds))
     }
 
-    pub fn walk_surface_at(&self, point: Vec2) -> Option<MapWalkSurface> {
-        self.map.walk_surface_at(point)
-    }
-
     pub fn walk_surface_entry_at(&self, point: Vec2) -> Option<MapWalkSurface> {
         self.map.walk_surface_entry_at(point)
     }
@@ -126,6 +122,10 @@ impl World {
 
     pub fn walk_surface_contains(&self, surface_id: &str, point: Vec2) -> bool {
         self.map.walk_surface_contains(surface_id, point)
+    }
+
+    pub fn walk_surface_allows_ground_movement(&self, previous: Vec2, next: Vec2) -> bool {
+        self.map.walk_surface_allows_ground_movement(previous, next)
     }
 
     pub fn walk_surface_allows_movement(

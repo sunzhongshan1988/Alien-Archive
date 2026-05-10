@@ -177,7 +177,7 @@
 - 橙色显示地图转场 Zone，绿色显示 WalkSurface Zone，其他 Zone 用紫色辅助识别。
 - 角色自身 hitbox 以绿色显示；Overworld 使用脚底碰撞框，Facility 使用当前角色矩形。
 - 该层在游戏内菜单覆盖层打开时仍会绘制在底层场景上，便于排查 overlay 是否影响底层运行时状态。
-- Overworld 的深度排序现在优先按 `z_index` 层级，再按脚底 Y 排序；站上 `WalkSurface` 台面时，人物会稳定绘制在底层斜坡/圆台整图之上，同时仍可被更高 `z_index` 的台面道具遮挡。`WalkSurface` 还会约束高层移动：角色不能从圆台或斜坡侧边直接掉到地面，只能沿 Ramp 朝地面方向离开同一 `surface_id`。
+- Overworld 的深度排序现在优先按 `z_index` 层级，再按脚底 Y 排序；站上 `WalkSurface` 台面时，人物会稳定绘制在底层斜坡/圆台整图之上，同时仍可被更高 `z_index` 的台面道具遮挡。`WalkSurface` 还会约束地面/高层切换：地面态不能从圆台背面或侧边直接踩进 Platform 顶面，只能从 Ramp 坡脚方向进入；高层态不能从圆台或斜坡侧边直接掉到地面，只能沿 Ramp 朝地面方向离开同一 `surface_id`。
 
 13. 区域脚本第一版
 

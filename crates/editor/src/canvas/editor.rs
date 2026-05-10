@@ -3100,38 +3100,8 @@ impl EditorApp {
         }
     }
 
-    pub(crate) fn delete_selected_item(&mut self, selection: &SelectedItem) {
-        match selection.layer {
-            LayerKind::Ground => {
-                if let Some([x, y]) = parse_ground_selection_id(&selection.id) {
-                    self.document
-                        .layers
-                        .ground
-                        .retain(|tile| tile.x != x || tile.y != y);
-                }
-            }
-            LayerKind::Decals => self
-                .document
-                .layers
-                .decals
-                .retain(|instance| instance.id != selection.id),
-            LayerKind::Objects => self
-                .document
-                .layers
-                .objects
-                .retain(|instance| instance.id != selection.id),
-            LayerKind::Entities => self
-                .document
-                .layers
-                .entities
-                .retain(|instance| instance.id != selection.id),
-            LayerKind::Zones => self
-                .document
-                .layers
-                .zones
-                .retain(|instance| instance.id != selection.id),
-            LayerKind::Collision => {}
-        }
+    pub(crate) fn delete_selected_item(&mut self, selection: &SelectedItem) -> bool {
+        delete_selected_item_from_document(&mut self.document, selection)
     }
 
     pub(crate) fn flip_selected_item(&mut self) {
@@ -4866,6 +4836,50 @@ impl EditorApp {
     }
 }
 
+fn delete_selected_item_from_document(
+    document: &mut content::MapDocument,
+    selection: &SelectedItem,
+) -> bool {
+    match selection.layer {
+        LayerKind::Ground => {
+            let Some([x, y]) = parse_ground_selection_id(&selection.id) else {
+                return false;
+            };
+            let before = document.layers.ground.len();
+            document
+                .layers
+                .ground
+                .retain(|tile| tile.x != x || tile.y != y);
+            document.layers.ground.len() != before
+        }
+        LayerKind::Decals => retain_without_object_id(&mut document.layers.decals, &selection.id),
+        LayerKind::Objects => retain_without_object_id(&mut document.layers.objects, &selection.id),
+        LayerKind::Entities => {
+            let before = document.layers.entities.len();
+            document
+                .layers
+                .entities
+                .retain(|instance| instance.id != selection.id);
+            document.layers.entities.len() != before
+        }
+        LayerKind::Zones => {
+            let before = document.layers.zones.len();
+            document
+                .layers
+                .zones
+                .retain(|instance| instance.id != selection.id);
+            document.layers.zones.len() != before
+        }
+        LayerKind::Collision => false,
+    }
+}
+
+fn retain_without_object_id(instances: &mut Vec<content::ObjectInstance>, id: &str) -> bool {
+    let before = instances.len();
+    instances.retain(|instance| instance.id != id);
+    instances.len() != before
+}
+
 fn expected_asset_kind_for_layer(layer: LayerKind) -> Option<AssetKind> {
     match layer {
         LayerKind::Ground => Some(AssetKind::Tile),
@@ -5129,6 +5143,71 @@ mod tests {
         assert_eq!(trimmed_optional("   "), None);
     }
 
+    #[test]
+    fn delete_selection_removes_placed_object_by_id() {
+        let mut document = content::MapDocument::new_landing_site();
+        document.layers.objects = vec![
+            object_instance("obj_keep", "ow_struct_keep"),
+            object_instance("obj_delete", "ow_struct_delete"),
+        ];
+
+        let deleted = delete_selected_item_from_document(
+            &mut document,
+            &SelectedItem {
+                layer: LayerKind::Objects,
+                id: "obj_delete".to_owned(),
+            },
+        );
+
+        assert!(deleted);
+        assert_eq!(document.layers.objects.len(), 1);
+        assert_eq!(document.layers.objects[0].id, "obj_keep");
+    }
+
+    #[test]
+    fn delete_selection_removes_all_selectable_layer_kinds() {
+        let mut document = content::MapDocument::new_landing_site();
+        document.layers.ground = vec![tile_at(2, 3)];
+        document.layers.decals = vec![object_instance("decal_001", "ow_decal_test")];
+        document.layers.objects = vec![object_instance("obj_001", "ow_struct_test")];
+        document.layers.entities = vec![entity_instance("ent_001", "ow_entity_test")];
+        document.layers.zones = vec![zone_instance("zone_001")];
+
+        for selection in [
+            SelectedItem {
+                layer: LayerKind::Ground,
+                id: ground_selection_id(2, 3),
+            },
+            SelectedItem {
+                layer: LayerKind::Decals,
+                id: "decal_001".to_owned(),
+            },
+            SelectedItem {
+                layer: LayerKind::Objects,
+                id: "obj_001".to_owned(),
+            },
+            SelectedItem {
+                layer: LayerKind::Entities,
+                id: "ent_001".to_owned(),
+            },
+            SelectedItem {
+                layer: LayerKind::Zones,
+                id: "zone_001".to_owned(),
+            },
+        ] {
+            assert!(delete_selected_item_from_document(
+                &mut document,
+                &selection
+            ));
+        }
+
+        assert!(document.layers.ground.is_empty());
+        assert!(document.layers.decals.is_empty());
+        assert!(document.layers.objects.is_empty());
+        assert!(document.layers.entities.is_empty());
+        assert!(document.layers.zones.is_empty());
+    }
+
     fn tile_at(x: i32, y: i32) -> content::TileInstance {
         content::TileInstance {
             asset: "ow_tile_test".to_owned(),
@@ -5138,6 +5217,56 @@ mod tests {
             h: 1,
             flip_x: false,
             rotation: 0,
+        }
+    }
+
+    fn object_instance(id: &str, asset: &str) -> content::ObjectInstance {
+        content::ObjectInstance {
+            id: id.to_owned(),
+            asset: asset.to_owned(),
+            x: 1.0,
+            y: 1.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            z_index: 0,
+            collision_rect: None,
+            depth_rect: None,
+            flip_x: false,
+            rotation: 0,
+        }
+    }
+
+    fn entity_instance(id: &str, asset: &str) -> content::EntityInstance {
+        content::EntityInstance {
+            id: id.to_owned(),
+            asset: asset.to_owned(),
+            entity_type: "Decoration".to_owned(),
+            x: 1.0,
+            y: 1.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            z_index: 0,
+            collision_rect: None,
+            depth_rect: None,
+            interaction_rect: None,
+            unlock: None,
+            transition: None,
+            flip_x: false,
+            rotation: 0,
+        }
+    }
+
+    fn zone_instance(id: &str) -> content::ZoneInstance {
+        content::ZoneInstance {
+            id: id.to_owned(),
+            zone_type: "PromptZone".to_owned(),
+            points: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]],
+            hazard: None,
+            prompt: None,
+            objective: None,
+            surface: None,
+            unlock: None,
+            transition: None,
         }
     }
 }
