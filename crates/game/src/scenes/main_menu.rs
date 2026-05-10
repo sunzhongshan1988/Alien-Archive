@@ -27,6 +27,9 @@ const SETTINGS_ITEM_HEIGHT: f32 = 60.0;
 const SETTINGS_CHOICE_WIDTH: f32 = 128.0;
 const SETTINGS_CHOICE_HEIGHT: f32 = 46.0;
 const SETTINGS_CHOICE_GAP: f32 = 14.0;
+const TOAST_VISIBLE_TIME: f32 = 3.0;
+const TOAST_WIDTH: f32 = 520.0;
+const TOAST_HEIGHT: f32 = 44.0;
 
 const MENU_ITEMS: [MenuAction; 6] = [
     MenuAction::Continue,
@@ -79,6 +82,7 @@ struct MainMenuText {
     back: Option<TextSprite>,
     slot_title: Option<TextSprite>,
     slot_items: Vec<TextSprite>,
+    toast: Option<TextSprite>,
 }
 
 #[derive(Clone, Debug)]
@@ -95,6 +99,21 @@ enum SaveSlotState {
     Corrupt,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MenuToastTone {
+    Info,
+    Success,
+    Warning,
+    Error,
+}
+
+#[derive(Clone, Debug)]
+struct MenuToast {
+    message: String,
+    tone: MenuToastTone,
+    remaining: f32,
+}
+
 pub struct MainMenuScene {
     elapsed: f32,
     page: MenuPage,
@@ -102,7 +121,9 @@ pub struct MainMenuScene {
     language: Language,
     text: MainMenuText,
     save_slots: Vec<SaveSlotView>,
+    pending_new_slot: Option<usize>,
     pending_delete_slot: Option<usize>,
+    toast: Option<MenuToast>,
 }
 
 impl MainMenuScene {
@@ -114,7 +135,9 @@ impl MainMenuScene {
             language: Language::default(),
             text: MainMenuText::default(),
             save_slots: load_save_slots(),
+            pending_new_slot: None,
             pending_delete_slot: None,
+            toast: None,
         }
     }
 
@@ -134,7 +157,7 @@ impl MainMenuScene {
                 Ok(SceneCommand::None)
             }
             MenuAction::Settings => {
-                self.pending_delete_slot = None;
+                self.clear_pending_slot_actions();
                 self.page = MenuPage::Settings;
                 self.selected_index = 0;
                 Ok(SceneCommand::None)
@@ -144,10 +167,13 @@ impl MainMenuScene {
     }
 
     fn open_save_slots(&mut self, mode: SaveSlotMode) {
-        self.pending_delete_slot = None;
+        self.clear_pending_slot_actions();
         self.refresh_save_slots();
         self.page = MenuPage::SaveSlots(mode);
         self.selected_index = 0;
+        if matches!(mode, SaveSlotMode::New) {
+            self.show_toast(new_save_slot_hint(self.language), MenuToastTone::Info);
+        }
     }
 
     fn confirm_save_slot_selection(
@@ -158,7 +184,7 @@ impl MainMenuScene {
         if self.selected_index >= SAVE_SLOT_COUNT {
             self.page = MenuPage::Main;
             self.selected_index = main_index_for_slot_mode(mode);
-            self.pending_delete_slot = None;
+            self.clear_pending_slot_actions();
             return Ok(SceneCommand::None);
         }
 
@@ -183,35 +209,70 @@ impl MainMenuScene {
                 Ok(SceneCommand::Switch(ctx.resume_scene_id()))
             }
             SaveSlotMode::New => {
+                let requires_confirmation = self
+                    .save_slots
+                    .get(self.selected_index)
+                    .is_some_and(|slot| !matches!(&slot.state, SaveSlotState::Empty));
+                if requires_confirmation && self.pending_new_slot != Some(self.selected_index) {
+                    self.pending_new_slot = Some(self.selected_index);
+                    self.pending_delete_slot = None;
+                    self.show_toast(
+                        confirm_overwrite_slot_message(self.selected_index, self.language),
+                        MenuToastTone::Warning,
+                    );
+                    return Ok(SceneCommand::None);
+                }
+
+                self.clear_pending_slot_actions();
                 ctx.start_new_save(slot_path);
                 self.language = ctx.language;
                 self.refresh_save_slots();
                 Ok(SceneCommand::Switch(ctx.resume_scene_id()))
             }
             SaveSlotMode::Delete => {
+                self.pending_new_slot = None;
                 let can_delete = self
                     .save_slots
                     .get(self.selected_index)
                     .is_some_and(|slot| !matches!(&slot.state, SaveSlotState::Empty));
                 if !can_delete {
                     self.pending_delete_slot = None;
-                    self.text = MainMenuText::default();
+                    self.show_toast(
+                        delete_empty_slot_message(self.language),
+                        MenuToastTone::Info,
+                    );
                     return Ok(SceneCommand::None);
                 }
 
                 if self.pending_delete_slot != Some(self.selected_index) {
                     self.pending_delete_slot = Some(self.selected_index);
-                    self.text = MainMenuText::default();
+                    self.show_toast(
+                        confirm_delete_slot_message(self.selected_index, self.language),
+                        MenuToastTone::Warning,
+                    );
                     return Ok(SceneCommand::None);
                 }
 
                 self.pending_delete_slot = None;
-                delete_save_file(&slot_path)?;
-                if ctx.save_path == slot_path {
-                    ctx.reset_to_empty_save_slot(slot_path);
-                    self.language = ctx.language;
+                match delete_save_file(&slot_path) {
+                    Ok(()) => {
+                        if ctx.save_path == slot_path {
+                            ctx.reset_to_empty_save_slot(slot_path);
+                            self.language = ctx.language;
+                        }
+                        self.refresh_save_slots();
+                        self.show_toast(
+                            delete_success_message(self.selected_index, self.language),
+                            MenuToastTone::Success,
+                        );
+                    }
+                    Err(error) => {
+                        self.show_toast(
+                            save_slot_error_message(self.language, &error.to_string()),
+                            MenuToastTone::Error,
+                        );
+                    }
                 }
-                self.refresh_save_slots();
                 Ok(SceneCommand::None)
             }
         }
@@ -223,7 +284,7 @@ impl MainMenuScene {
             SettingsItem::Back => {
                 self.page = MenuPage::Main;
                 self.selected_index = 4;
-                self.pending_delete_slot = None;
+                self.clear_pending_slot_actions();
             }
         }
     }
@@ -235,8 +296,34 @@ impl MainMenuScene {
 
         ctx.language = language;
         self.language = language;
+        self.toast = None;
         self.text = MainMenuText::default();
         ctx.request_save();
+    }
+
+    fn clear_pending_slot_actions(&mut self) {
+        self.pending_new_slot = None;
+        self.pending_delete_slot = None;
+        self.text = MainMenuText::default();
+    }
+
+    fn show_toast(&mut self, message: impl Into<String>, tone: MenuToastTone) {
+        self.toast = Some(MenuToast {
+            message: message.into(),
+            tone,
+            remaining: TOAST_VISIBLE_TIME,
+        });
+        self.text = MainMenuText::default();
+    }
+
+    fn update_toast(&mut self, dt: f32) {
+        if let Some(toast) = &mut self.toast {
+            toast.remaining -= dt;
+            if toast.remaining <= 0.0 {
+                self.toast = None;
+                self.text = MainMenuText::default();
+            }
+        }
     }
 
     fn refresh_save_slots(&mut self) {
@@ -288,6 +375,8 @@ impl MainMenuScene {
             MenuPage::Settings => self.draw_settings(ctx, viewport),
             MenuPage::SaveSlots(mode) => self.draw_save_slots(ctx, viewport, mode),
         }
+
+        self.draw_toast(ctx.renderer, viewport);
     }
 
     fn draw_main_panel(&self, renderer: &mut dyn Renderer, viewport: Vec2, panel: Rect) {
@@ -496,6 +585,29 @@ impl MainMenuScene {
         }
     }
 
+    fn draw_toast(&self, renderer: &mut dyn Renderer, viewport: Vec2) {
+        let (Some(toast), Some(text)) = (&self.toast, &self.text.toast) else {
+            return;
+        };
+        let rect = self.toast_rect(viewport);
+        draw_screen_rect(renderer, viewport, rect, toast_fill_color(toast.tone));
+        draw_border(
+            renderer,
+            viewport,
+            rect,
+            1.0,
+            toast_border_color(toast.tone),
+        );
+        draw_text_centered(
+            renderer,
+            text,
+            viewport,
+            rect.origin.x + rect.size.x * 0.5,
+            centered_text_y(rect, text, 0.0),
+            toast_text_color(toast.tone),
+        );
+    }
+
     fn menu_panel_rect(&self, viewport: Vec2) -> Rect {
         Rect::new(
             Vec2::new(
@@ -541,6 +653,18 @@ impl MainMenuScene {
                 panel.origin.y + 188.0 + index as f32 * (SAVE_SLOT_HEIGHT + SAVE_SLOT_GAP),
             ),
             Vec2::new(SAVE_SLOT_WIDTH, SAVE_SLOT_HEIGHT),
+        )
+    }
+
+    fn toast_rect(&self, viewport: Vec2) -> Rect {
+        let panel = self.menu_panel_rect(viewport);
+        let width = TOAST_WIDTH.min((viewport.x - 32.0).max(240.0));
+        let y = (panel.bottom() + 14.0)
+            .min(viewport.y - TOAST_HEIGHT - 18.0)
+            .max(18.0);
+        Rect::new(
+            Vec2::new((viewport.x - width) * 0.5, y),
+            Vec2::new(width, TOAST_HEIGHT),
         )
     }
 
@@ -665,6 +789,7 @@ impl MainMenuScene {
                         self.save_slots.get(index),
                         mode,
                         language,
+                        self.pending_new_slot == Some(index),
                         self.pending_delete_slot == Some(index),
                     )
                 } else {
@@ -682,6 +807,19 @@ impl MainMenuScene {
                 )
             })
             .collect::<Result<Vec<_>>>()?;
+
+        if let Some(toast) = &self.toast {
+            self.text.toast = Some(upload_text(
+                renderer,
+                &font,
+                "main_menu_toast",
+                &toast.message,
+                match language {
+                    Language::Chinese => 22.0,
+                    Language::English => 19.0,
+                },
+            )?);
+        }
 
         Ok(())
     }
@@ -709,6 +847,7 @@ impl Scene for MainMenuScene {
         input: &InputState,
     ) -> Result<SceneCommand<SceneId>> {
         self.elapsed += dt;
+        self.update_toast(dt);
         if self.language != ctx.language {
             self.language = ctx.language;
             self.text = MainMenuText::default();
@@ -793,12 +932,13 @@ impl Scene for MainMenuScene {
                 MenuPage::Settings => {
                     self.page = MenuPage::Main;
                     self.selected_index = 4;
+                    self.clear_pending_slot_actions();
                     return Ok(SceneCommand::None);
                 }
                 MenuPage::SaveSlots(mode) => {
                     self.page = MenuPage::Main;
                     self.selected_index = main_index_for_slot_mode(mode);
-                    self.pending_delete_slot = None;
+                    self.clear_pending_slot_actions();
                     return Ok(SceneCommand::None);
                 }
             }
@@ -1027,6 +1167,7 @@ fn save_slot_item_label(
     slot: Option<&SaveSlotView>,
     mode: SaveSlotMode,
     language: Language,
+    confirm_overwrite: bool,
     confirm_delete: bool,
 ) -> String {
     let Some(slot) = slot else {
@@ -1046,6 +1187,12 @@ fn save_slot_item_label(
     {
         return confirm_delete_slot_label(&slot_name, language);
     }
+    if mode == SaveSlotMode::New
+        && confirm_overwrite
+        && !matches!(&slot.state, SaveSlotState::Empty)
+    {
+        return confirm_overwrite_slot_label(&slot_name, language);
+    }
 
     match &slot.state {
         SaveSlotState::Empty => empty_slot_label(&slot_name, mode, language),
@@ -1058,6 +1205,13 @@ fn confirm_delete_slot_label(slot_name: &str, language: Language) -> String {
     match language {
         Language::Chinese => format!("{slot_name}  再次确认删除"),
         Language::English => format!("{slot_name}  Confirm Delete"),
+    }
+}
+
+fn confirm_overwrite_slot_label(slot_name: &str, language: Language) -> String {
+    match language {
+        Language::Chinese => format!("{slot_name}  再次确认覆盖"),
+        Language::English => format!("{slot_name}  Confirm Overwrite"),
     }
 }
 
@@ -1166,6 +1320,89 @@ fn back_label(language: Language) -> &'static str {
     }
 }
 
+fn new_save_slot_hint(language: Language) -> &'static str {
+    match language {
+        Language::Chinese => "选择空槽开始新游戏；已有存档需要再次确认覆盖",
+        Language::English => "Choose an empty slot, or confirm again to overwrite an existing save",
+    }
+}
+
+fn confirm_overwrite_slot_message(slot_index: usize, language: Language) -> String {
+    match language {
+        Language::Chinese => format!("再次确认将覆盖槽位 {}", slot_index + 1),
+        Language::English => format!("Confirm again to overwrite Slot {}", slot_index + 1),
+    }
+}
+
+fn confirm_delete_slot_message(slot_index: usize, language: Language) -> String {
+    match language {
+        Language::Chinese => format!("再次确认删除槽位 {}", slot_index + 1),
+        Language::English => format!("Confirm again to delete Slot {}", slot_index + 1),
+    }
+}
+
+fn delete_empty_slot_message(language: Language) -> &'static str {
+    match language {
+        Language::Chinese => "这个槽位为空，无需删除",
+        Language::English => "This slot is empty",
+    }
+}
+
+fn delete_success_message(slot_index: usize, language: Language) -> String {
+    match language {
+        Language::Chinese => format!("已删除槽位 {}", slot_index + 1),
+        Language::English => format!("Deleted Slot {}", slot_index + 1),
+    }
+}
+
+fn save_slot_error_message(language: Language, detail: &str) -> String {
+    match language {
+        Language::Chinese => format!("存档操作失败：{}", short_error_detail(detail)),
+        Language::English => format!("Save operation failed: {}", short_error_detail(detail)),
+    }
+}
+
+fn short_error_detail(detail: &str) -> &str {
+    const MAX_CHARS: usize = 44;
+    let trimmed = detail.trim();
+    if trimmed.chars().count() <= MAX_CHARS {
+        return trimmed;
+    }
+
+    let cut = trimmed
+        .char_indices()
+        .nth(MAX_CHARS)
+        .map_or(trimmed.len(), |(index, _)| index);
+    &trimmed[..cut]
+}
+
+fn toast_fill_color(tone: MenuToastTone) -> Color {
+    match tone {
+        MenuToastTone::Info => Color::rgba(0.020, 0.055, 0.070, 0.92),
+        MenuToastTone::Success => Color::rgba(0.020, 0.095, 0.070, 0.94),
+        MenuToastTone::Warning => Color::rgba(0.130, 0.085, 0.030, 0.94),
+        MenuToastTone::Error => Color::rgba(0.135, 0.032, 0.032, 0.94),
+    }
+}
+
+fn toast_border_color(tone: MenuToastTone) -> Color {
+    match tone {
+        MenuToastTone::Info => Color::rgba(0.34, 0.90, 1.0, 0.88),
+        MenuToastTone::Success => Color::rgba(0.42, 1.0, 0.72, 0.90),
+        MenuToastTone::Warning => Color::rgba(1.0, 0.76, 0.34, 0.92),
+        MenuToastTone::Error => Color::rgba(1.0, 0.40, 0.40, 0.92),
+    }
+}
+
+fn toast_text_color(tone: MenuToastTone) -> Color {
+    match tone {
+        MenuToastTone::Info => Color::rgba(0.82, 0.96, 1.0, 1.0),
+        MenuToastTone::Success => Color::rgba(0.82, 1.0, 0.90, 1.0),
+        MenuToastTone::Warning => Color::rgba(1.0, 0.92, 0.74, 1.0),
+        MenuToastTone::Error => Color::rgba(1.0, 0.82, 0.82, 1.0),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1201,6 +1438,7 @@ mod tests {
                 SaveSlotMode::New,
                 Language::Chinese,
                 false,
+                false,
             )
             .contains("新游戏")
         );
@@ -1222,6 +1460,7 @@ mod tests {
             SaveSlotMode::Load,
             Language::Chinese,
             false,
+            false,
         );
         assert!(label.contains("Lv7"));
         assert!(label.contains("设施"));
@@ -1231,9 +1470,20 @@ mod tests {
                 Some(&ready_slot),
                 SaveSlotMode::Delete,
                 Language::Chinese,
+                false,
                 true,
             )
             .contains("再次确认删除")
+        );
+        assert!(
+            save_slot_item_label(
+                Some(&ready_slot),
+                SaveSlotMode::New,
+                Language::Chinese,
+                true,
+                false,
+            )
+            .contains("再次确认覆盖")
         );
     }
 }

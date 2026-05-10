@@ -1375,6 +1375,8 @@ impl EditorApp {
             id: id.clone(),
             zone_type: zone_type.to_owned(),
             points: self.zone_draft_points.clone(),
+            hazard: None,
+            prompt: None,
             surface: None,
             unlock: None,
             transition: None,

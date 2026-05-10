@@ -4,7 +4,8 @@ use anyhow::Result;
 use runtime::{Rect, Renderer, Vec2};
 
 pub use map::{
-    MapEntity, MapEntityKind, MapTransitionTarget, MapUnlockRule, MapWalkSurface, MapZone,
+    MapEntity, MapEntityKind, MapHazardRule, MapPromptRule, MapTransitionTarget, MapUnlockRule,
+    MapWalkSurface, MapZone,
 };
 
 use map::Map;
@@ -60,6 +61,16 @@ impl World {
             .draw_with_actor_at_depth(renderer, actor_depth_y, actor_z_index, draw_actor);
     }
 
+    pub fn draw_debug_geometry(
+        &self,
+        renderer: &mut dyn Renderer,
+        active_scan_target_id: Option<&str>,
+        player_rect: Option<Rect>,
+    ) {
+        self.map
+            .draw_debug_geometry(renderer, active_scan_target_id, player_rect);
+    }
+
     pub fn load_assets(&self, renderer: &mut dyn Renderer) -> Result<()> {
         self.map.load_assets(renderer)
     }
@@ -92,6 +103,13 @@ impl World {
             .zones()
             .iter()
             .filter(move |zone| zone.zone_type == zone_type)
+    }
+
+    pub fn overlapping_zones(&self, rect: Rect) -> impl Iterator<Item = &MapZone> + '_ {
+        self.map
+            .zones()
+            .iter()
+            .filter(move |zone| runtime::collision::rects_overlap(rect, zone.bounds))
     }
 
     pub fn walk_surface_at(&self, point: Vec2) -> Option<MapWalkSurface> {

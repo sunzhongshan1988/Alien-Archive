@@ -37,6 +37,9 @@ const CODEX_VISIBLE_ROWS: usize = 4;
 const CODEX_VISIBLE_COLUMNS: usize = 2;
 const CODEX_VISIBLE_COUNT: usize = CODEX_VISIBLE_ROWS * CODEX_VISIBLE_COLUMNS;
 const ACTIVITY_LOG_VISIBLE_ROWS: usize = 5;
+const MENU_TOAST_VISIBLE_TIME: f32 = 2.8;
+const MENU_TOAST_WIDTH: f32 = 560.0;
+const MENU_TOAST_HEIGHT: f32 = 42.0;
 
 #[derive(Default)]
 struct GameMenuText {
@@ -89,6 +92,7 @@ struct GameMenuText {
     return_label: Option<TextSprite>,
     return_sublabel: Option<TextSprite>,
     placeholder: Option<TextSprite>,
+    toast: Option<TextSprite>,
 }
 
 struct InventoryDetailText {
@@ -121,6 +125,20 @@ struct ActivityLogRowText {
     detail: TextSprite,
     meta: TextSprite,
     category_key: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GameMenuToastTone {
+    Info,
+    Success,
+    Error,
+}
+
+#[derive(Clone, Debug)]
+struct GameMenuToast {
+    message: String,
+    tone: GameMenuToastTone,
+    remaining: f32,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -178,6 +196,7 @@ pub struct GameMenuScene {
     inventory_snapshot: InventorySave,
     activity_log_snapshot: Vec<ActivityLogEntrySave>,
     text: GameMenuText,
+    toast: Option<GameMenuToast>,
 }
 
 impl GameMenuScene {
@@ -192,6 +211,7 @@ impl GameMenuScene {
             inventory_snapshot: ctx.save_data.inventory.clone(),
             activity_log_snapshot: ctx.save_data.activity_log.entries.clone(),
             text: GameMenuText::default(),
+            toast: None,
         }
     }
 
@@ -207,6 +227,7 @@ impl GameMenuScene {
 
         ctx.language = language;
         self.language = language;
+        self.toast = None;
         self.text = GameMenuText::default();
         ctx.request_save();
     }
@@ -243,6 +264,65 @@ impl GameMenuScene {
         self.text = GameMenuText::default();
     }
 
+    fn show_toast(&mut self, message: impl Into<String>, tone: GameMenuToastTone) {
+        self.toast = Some(GameMenuToast {
+            message: message.into(),
+            tone,
+            remaining: MENU_TOAST_VISIBLE_TIME,
+        });
+        self.text = GameMenuText::default();
+    }
+
+    fn update_toast(&mut self, dt: f32) {
+        if let Some(toast) = &mut self.toast {
+            toast.remaining -= dt;
+            if toast.remaining <= 0.0 {
+                self.toast = None;
+                self.text = GameMenuText::default();
+            }
+        }
+    }
+
+    fn handle_bottom_action(&mut self, ctx: &mut GameContext, index: usize) {
+        match index {
+            0 => {
+                self.set_tab(ctx, GameMenuTab::Inventory);
+                self.show_toast(
+                    game_menu_tab_jump_message(self.language),
+                    GameMenuToastTone::Info,
+                );
+            }
+            2 => {
+                self.set_tab(ctx, GameMenuTab::Quests);
+                self.show_toast(
+                    game_menu_log_jump_message(self.language),
+                    GameMenuToastTone::Info,
+                );
+            }
+            index if index + 1 == BOTTOM_ACTIONS.len() => match ctx.save_now() {
+                Ok(()) => {
+                    self.sync_save_snapshot(ctx);
+                    self.show_toast(
+                        game_menu_save_success_message(self.language, &ctx.save_path),
+                        GameMenuToastTone::Success,
+                    );
+                }
+                Err(error) => {
+                    self.show_toast(
+                        game_menu_save_error_message(self.language, &error.to_string()),
+                        GameMenuToastTone::Error,
+                    );
+                }
+            },
+            _ => {
+                self.show_toast(
+                    game_menu_action_pending_message(self.language),
+                    GameMenuToastTone::Info,
+                );
+            }
+        }
+    }
+
     fn draw_menu(&self, ctx: &mut RenderContext<'_>) {
         let viewport = ctx.renderer.screen_size();
         let layout = MenuLayout::new(viewport);
@@ -257,6 +337,7 @@ impl GameMenuScene {
         self.draw_nav(ctx.renderer, viewport, &layout);
         self.draw_content(ctx.renderer, viewport, &layout);
         self.draw_bottom_bar(ctx.renderer, viewport, &layout);
+        self.draw_toast(ctx.renderer, viewport, &layout);
     }
 
     fn draw_shell(&self, renderer: &mut dyn Renderer, viewport: Vec2, layout: &MenuLayout) {
@@ -677,6 +758,29 @@ impl GameMenuScene {
                 false,
             );
         }
+    }
+
+    fn draw_toast(&self, renderer: &mut dyn Renderer, viewport: Vec2, layout: &MenuLayout) {
+        let (Some(toast), Some(text)) = (&self.toast, &self.text.toast) else {
+            return;
+        };
+        let rect = game_menu_toast_rect(layout);
+        draw_screen_rect(renderer, viewport, rect, game_menu_toast_fill(toast.tone));
+        draw_border(
+            renderer,
+            viewport,
+            rect,
+            1.0 * layout.scale,
+            game_menu_toast_border(toast.tone),
+        );
+        draw_text_centered(
+            renderer,
+            text,
+            viewport,
+            rect.origin.x + rect.size.x * 0.5,
+            centered_text_y(rect, text, 0.0),
+            game_menu_toast_text(toast.tone),
+        );
     }
 
     fn draw_content(&self, renderer: &mut dyn Renderer, viewport: Vec2, layout: &MenuLayout) {
@@ -2269,6 +2373,18 @@ impl GameMenuScene {
             placeholder_text(language),
             17.0,
         )?);
+        if let Some(toast) = &self.toast {
+            self.text.toast = Some(upload_text(
+                renderer,
+                font,
+                "game_menu_toast",
+                &toast.message,
+                match language {
+                    Language::Chinese => 20.0,
+                    Language::English => 18.0,
+                },
+            )?);
+        }
 
         Ok(())
     }
@@ -2303,9 +2419,10 @@ impl Scene for GameMenuScene {
     fn update(
         &mut self,
         ctx: &mut GameContext,
-        _dt: f32,
+        dt: f32,
         input: &InputState,
     ) -> Result<SceneCommand<SceneId>> {
+        self.update_toast(dt);
         self.sync_codex_snapshot(ctx);
         self.sync_save_snapshot(ctx);
 
@@ -2320,6 +2437,15 @@ impl Scene for GameMenuScene {
             if input.mouse_left_just_pressed() {
                 if screen_point_in_rect(cursor_position, layout.return_button()) {
                     return Ok(SceneCommand::Pop);
+                }
+                for index in 0..BOTTOM_ACTIONS.len() {
+                    if screen_point_in_rect(
+                        cursor_position,
+                        layout.bottom_action(index, BOTTOM_ACTIONS.len()),
+                    ) {
+                        self.handle_bottom_action(ctx, index);
+                        return Ok(SceneCommand::None);
+                    }
                 }
                 for (index, tab) in GameMenuTab::ALL.iter().copied().enumerate() {
                     if screen_point_in_rect(cursor_position, layout.nav_item(index)) {
@@ -2908,6 +3034,113 @@ fn centered_text_y(rect: Rect, text: &TextSprite, y_offset: f32) -> f32 {
     let text_padding = 8.0;
     let visual_height = (text.size.y - text_padding * 2.0).max(0.0);
     rect.origin.y + (rect.size.y - visual_height) * 0.5 + y_offset - text_padding
+}
+
+fn game_menu_toast_rect(layout: &MenuLayout) -> Rect {
+    let width = (MENU_TOAST_WIDTH * layout.scale).min(layout.root.size.x - 48.0 * layout.scale);
+    Rect::new(
+        Vec2::new(
+            layout.root.origin.x + (layout.root.size.x - width) * 0.5,
+            layout.bottom.origin.y - (MENU_TOAST_HEIGHT + 12.0) * layout.scale,
+        ),
+        Vec2::new(width, MENU_TOAST_HEIGHT * layout.scale),
+    )
+}
+
+fn game_menu_toast_fill(tone: GameMenuToastTone) -> Color {
+    match tone {
+        GameMenuToastTone::Info => Color::rgba(0.015, 0.052, 0.066, 0.94),
+        GameMenuToastTone::Success => Color::rgba(0.018, 0.090, 0.062, 0.95),
+        GameMenuToastTone::Error => Color::rgba(0.126, 0.032, 0.034, 0.95),
+    }
+}
+
+fn game_menu_toast_border(tone: GameMenuToastTone) -> Color {
+    match tone {
+        GameMenuToastTone::Info => Color::rgba(0.34, 0.90, 1.0, 0.88),
+        GameMenuToastTone::Success => Color::rgba(0.42, 1.0, 0.72, 0.90),
+        GameMenuToastTone::Error => Color::rgba(1.0, 0.42, 0.42, 0.92),
+    }
+}
+
+fn game_menu_toast_text(tone: GameMenuToastTone) -> Color {
+    match tone {
+        GameMenuToastTone::Info => Color::rgba(0.82, 0.96, 1.0, 1.0),
+        GameMenuToastTone::Success => Color::rgba(0.82, 1.0, 0.90, 1.0),
+        GameMenuToastTone::Error => Color::rgba(1.0, 0.82, 0.82, 1.0),
+    }
+}
+
+fn game_menu_tab_jump_message(language: Language) -> &'static str {
+    match language {
+        Language::Chinese => "已切到背包页",
+        Language::English => "Inventory page opened",
+    }
+}
+
+fn game_menu_log_jump_message(language: Language) -> &'static str {
+    match language {
+        Language::Chinese => "已切到外勤日志",
+        Language::English => "Field log opened",
+    }
+}
+
+fn game_menu_action_pending_message(language: Language) -> &'static str {
+    match language {
+        Language::Chinese => "这个动作还在接入中",
+        Language::English => "This action is still being wired in",
+    }
+}
+
+fn game_menu_save_success_message(language: Language, save_path: &Path) -> String {
+    let target = save_target_label(language, save_path);
+    match language {
+        Language::Chinese => format!("已手动保存到 {target}"),
+        Language::English => format!("Saved manually to {target}"),
+    }
+}
+
+fn game_menu_save_error_message(language: Language, detail: &str) -> String {
+    match language {
+        Language::Chinese => format!("手动保存失败：{}", short_menu_error_detail(detail)),
+        Language::English => format!("Manual save failed: {}", short_menu_error_detail(detail)),
+    }
+}
+
+fn save_target_label(language: Language, save_path: &Path) -> String {
+    if let Some(slot_index) = save_slot_index_from_path(save_path) {
+        return match language {
+            Language::Chinese => format!("槽位 {}", slot_index + 1),
+            Language::English => format!("Slot {}", slot_index + 1),
+        };
+    }
+
+    save_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("save")
+        .to_owned()
+}
+
+fn save_slot_index_from_path(save_path: &Path) -> Option<usize> {
+    let stem = save_path.file_stem()?.to_str()?;
+    let number = stem.strip_prefix("profile_")?.parse::<usize>().ok()?;
+    number.checked_sub(1)
+}
+
+fn short_menu_error_detail(detail: &str) -> &str {
+    const MAX_CHARS: usize = 42;
+    let trimmed = detail.trim();
+    if trimmed.chars().count() <= MAX_CHARS {
+        return trimmed;
+    }
+
+    let cut = trimmed
+        .char_indices()
+        .nth(MAX_CHARS)
+        .map_or(trimmed.len(), |(index, _)| index);
+    &trimmed[..cut]
 }
 
 fn draw_header_resources(
@@ -3998,6 +4231,19 @@ mod tests {
         assert!(layout.bottom.origin.y > layout.content.bottom());
         assert!(layout.bottom.bottom() <= layout.root.bottom());
         assert!(layout.return_button().right() <= layout.bottom.right());
+    }
+
+    #[test]
+    fn game_menu_save_feedback_names_fixed_slots() {
+        assert_eq!(
+            save_target_label(Language::Chinese, Path::new("saves/profile_02.ron")),
+            "槽位 2"
+        );
+        assert!(
+            game_menu_save_success_message(Language::English, Path::new("saves/profile_03.ron"))
+                .contains("Slot 3")
+        );
+        assert!(game_menu_save_error_message(Language::Chinese, "disk is full").contains("失败"));
     }
 
     #[test]

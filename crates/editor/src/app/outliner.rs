@@ -13,6 +13,9 @@ pub(crate) const EDITOR_KNOWN_ZONE_TYPES: &[&str] = &[
     "WalkSurface",
     "CollisionArea",
     "CollisionLine",
+    "HazardZone",
+    "PromptZone",
+    "Trigger",
 ];
 
 pub(crate) fn outliner_entry(

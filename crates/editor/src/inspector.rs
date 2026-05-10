@@ -541,6 +541,23 @@ impl EditorApp {
                             zone.surface = None;
                             changed = true;
                         }
+                        if ui.button("设为危险区").clicked() {
+                            zone.zone_type = "HazardZone".to_owned();
+                            if zone.hazard.is_none() {
+                                zone.hazard = Some(content::HazardRule {
+                                    effects: vec![content::HazardEffect::new("oxygen", -2.0)],
+                                    message: None,
+                                });
+                            }
+                            changed = true;
+                        }
+                        if ui.button("设为提示区").clicked() {
+                            zone.zone_type = "PromptZone".to_owned();
+                            if zone.prompt.is_none() {
+                                zone.prompt = Some(content::PromptRule::default());
+                            }
+                            changed = true;
+                        }
                     });
 
                     if zone.zone_type == "WalkSurface" || zone.surface.is_some() {
@@ -606,6 +623,16 @@ impl EditorApp {
                                 "圆台顶面和斜坡填同一个 Surface ID；只有斜坡入口能从地面切入台面。",
                             );
                         }
+                    }
+
+                    if zone.zone_type == "HazardZone" || zone.hazard.is_some() {
+                        ui.separator();
+                        draw_zone_hazard_editor(ui, zone, &mut changed);
+                    }
+
+                    if zone.zone_type == "PromptZone" || zone.prompt.is_some() {
+                        ui.separator();
+                        draw_zone_prompt_editor(ui, zone, &mut changed);
                     }
 
                     let unlock_id = format!("zone_unlock_{}", zone.id);
@@ -733,4 +760,116 @@ impl EditorApp {
             }
         }
     }
+}
+
+fn draw_zone_hazard_editor(
+    ui: &mut egui::Ui,
+    zone: &mut content::ZoneInstance,
+    changed: &mut bool,
+) {
+    ui.horizontal(|ui| {
+        ui.label("危险区域");
+        if zone.hazard.is_none() && ui.button("添加").clicked() {
+            zone.hazard = Some(content::HazardRule {
+                effects: vec![content::HazardEffect::new("oxygen", -2.0)],
+                message: None,
+            });
+            if zone.zone_type == "Trigger" {
+                zone.zone_type = "HazardZone".to_owned();
+            }
+            *changed = true;
+        }
+        if zone.hazard.is_some() && ui.button("清除").clicked() {
+            zone.hazard = None;
+            *changed = true;
+        }
+    });
+
+    let Some(hazard) = &mut zone.hazard else {
+        return;
+    };
+
+    let mut message = hazard.message.clone().unwrap_or_default();
+    if labeled_text_edit(ui, "进入提示", &mut message) {
+        set_optional_string(&mut hazard.message, message);
+        *changed = true;
+    }
+
+    let mut remove_index = None;
+    for (index, effect) in hazard.effects.iter_mut().enumerate() {
+        ui.horizontal(|ui| {
+            ui.label(format!("效果 #{}", index + 1));
+            if labeled_text_edit(ui, "Meter", &mut effect.meter) {
+                *changed = true;
+            }
+            *changed |= ui
+                .add(
+                    egui::DragValue::new(&mut effect.rate_per_second)
+                        .speed(0.1)
+                        .prefix("/秒 "),
+                )
+                .changed();
+            if ui.button("删除").clicked() {
+                remove_index = Some(index);
+            }
+        });
+    }
+    if let Some(index) = remove_index {
+        hazard.effects.remove(index);
+        *changed = true;
+    }
+    if ui.button("添加效果").clicked() {
+        hazard
+            .effects
+            .push(content::HazardEffect::new("oxygen", -2.0));
+        *changed = true;
+    }
+    ui.colored_label(
+        THEME_MUTED_TEXT,
+        "负数表示消耗，常用 meter：health / stamina / suit / oxygen / radiation / spores。",
+    );
+}
+
+fn draw_zone_prompt_editor(
+    ui: &mut egui::Ui,
+    zone: &mut content::ZoneInstance,
+    changed: &mut bool,
+) {
+    ui.horizontal(|ui| {
+        ui.label("提示区域");
+        if zone.prompt.is_none() && ui.button("添加").clicked() {
+            zone.prompt = Some(content::PromptRule::default());
+            if zone.zone_type == "Trigger" {
+                zone.zone_type = "PromptZone".to_owned();
+            }
+            *changed = true;
+        }
+        if zone.prompt.is_some() && ui.button("清除").clicked() {
+            zone.prompt = None;
+            *changed = true;
+        }
+    });
+
+    let Some(prompt) = &mut zone.prompt else {
+        return;
+    };
+
+    let mut message = prompt.message.clone().unwrap_or_default();
+    if labeled_text_edit(ui, "屏幕提示", &mut message) {
+        set_optional_string(&mut prompt.message, message);
+        *changed = true;
+    }
+    let mut log_title = prompt.log_title.clone().unwrap_or_default();
+    if labeled_text_edit(ui, "日志标题", &mut log_title) {
+        set_optional_string(&mut prompt.log_title, log_title);
+        *changed = true;
+    }
+    let mut log_detail = prompt.log_detail.clone().unwrap_or_default();
+    if labeled_text_edit(ui, "日志内容", &mut log_detail) {
+        set_optional_string(&mut prompt.log_detail, log_detail);
+        *changed = true;
+    }
+    *changed |= ui
+        .checkbox(&mut prompt.once, "只触发一次并写入存档")
+        .changed();
 }

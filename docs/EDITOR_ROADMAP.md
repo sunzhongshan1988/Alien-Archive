@@ -345,6 +345,7 @@ Godot 的 TileSet property painting 对我们很有参考价值：
 - P1 批量字段第一版接入多选 Inspector：支持批量设置 `Entity.entity_type`，以及对 Entity / Zone 批量设置或清除 `UnlockRule` 的扫描需求、物品需求和锁定提示。`codex_id` / `tags` 目前仍属于素材 metadata，暂不作为地图实例字段强行写入。
 - 多地图维护开始补强：实体/区域转场目标的“目标地图”字段现在可从项目地图列表中选择；编辑器校验会检查转场 `map_path` 是否存在、目标 RON 是否可读、指定 `spawn_id` 是否存在，帮助入口/出口关系在保存运行前暴露问题。
 - 多地图维护继续推进：单个实体/区域 Inspector 可直接打开转场目标地图，并在目标地图打开后定位到配置的 `spawn_id`；地图 Inspector 增加“转场关系”摘要，列出当前地图所有实体/区域转场、目标状态和快速打开入口。
+- 区域脚本第一版接入运行时和编辑器：`ZoneInstance` 新增 `hazard` / `prompt` 规则，`HazardZone` 可持续影响人物 meter，`PromptZone` 可显示一次性提示并写入存档；Inspector 支持设为危险区/提示区并编辑效果和文案，校验会检查缺规则、未知 meter 和空提示数据。
 
 ### 2026-05-09
 

@@ -238,7 +238,7 @@ impl Player {
         }
     }
 
-    fn topdown_collision_rect(&self) -> Rect {
+    pub fn topdown_collision_rect(&self) -> Rect {
         Rect::new(
             self.position + PLAYER_TOPDOWN_COLLISION_OFFSET,
             PLAYER_TOPDOWN_COLLISION_SIZE,

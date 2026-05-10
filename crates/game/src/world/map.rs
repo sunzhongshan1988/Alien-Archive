@@ -7,8 +7,9 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use content::{
-    AnchorKind, AssetDatabase, DEFAULT_ASSET_DB_PATH, InstanceRect, MapDocument as EditorMapFile,
-    ObjectInstance as EditorObjectInstance, TransitionTarget, UnlockRule,
+    AnchorKind, AssetDatabase, DEFAULT_ASSET_DB_PATH, HazardRule as EditorHazardRule, InstanceRect,
+    MapDocument as EditorMapFile, ObjectInstance as EditorObjectInstance,
+    PromptRule as EditorPromptRule, TransitionTarget, UnlockRule,
     WalkSurfaceKind as EditorWalkSurfaceKind, WalkSurfaceRule as EditorWalkSurfaceRule,
     ZoneInstance as EditorZoneInstance,
 };
@@ -69,6 +70,87 @@ impl Map {
 
         for drawable in self.sorted_depth_drawables(visible) {
             drawable.draw(renderer);
+        }
+    }
+
+    pub fn draw_debug_geometry(
+        &self,
+        renderer: &mut dyn Renderer,
+        active_scan_target_id: Option<&str>,
+        player_rect: Option<Rect>,
+    ) {
+        let visible = renderer.visible_world_rect();
+
+        for zone in self
+            .zones
+            .iter()
+            .filter(|zone| rects_overlap(zone.bounds, visible))
+        {
+            let (fill, border) = debug_zone_colors(zone);
+            draw_debug_rect(renderer, zone.bounds, fill, border, 2.0);
+        }
+
+        for rect in self
+            .solid_rects()
+            .filter(|rect| rects_overlap(*rect, visible))
+        {
+            draw_debug_rect(
+                renderer,
+                rect,
+                Color::rgba(1.0, 0.05, 0.02, 0.08),
+                Color::rgba(1.0, 0.12, 0.08, 0.80),
+                2.0,
+            );
+        }
+
+        for entity in self
+            .entities
+            .iter()
+            .filter(|entity| rects_overlap(entity.rect, visible))
+        {
+            let is_active_scan_target = active_scan_target_id == Some(entity.id.as_str());
+            let (fill, border, thickness) = if is_active_scan_target {
+                (
+                    Color::rgba(1.0, 0.84, 0.10, 0.14),
+                    Color::rgba(1.0, 0.88, 0.16, 0.95),
+                    3.0,
+                )
+            } else if entity.codex_id.is_some() {
+                (
+                    Color::rgba(0.08, 0.90, 1.0, 0.08),
+                    Color::rgba(0.16, 0.95, 1.0, 0.70),
+                    2.0,
+                )
+            } else {
+                (
+                    Color::rgba(0.06, 0.42, 1.0, 0.06),
+                    Color::rgba(0.18, 0.58, 1.0, 0.55),
+                    1.5,
+                )
+            };
+            draw_debug_rect(renderer, entity.rect, fill, border, thickness);
+
+            if let Some(collision_rect) = entity.collision_rect {
+                if rects_overlap(collision_rect, visible) {
+                    draw_debug_rect(
+                        renderer,
+                        collision_rect,
+                        Color::rgba(1.0, 0.45, 0.08, 0.07),
+                        Color::rgba(1.0, 0.58, 0.16, 0.70),
+                        1.5,
+                    );
+                }
+            }
+        }
+
+        if let Some(rect) = player_rect.filter(|rect| rects_overlap(*rect, visible)) {
+            draw_debug_rect(
+                renderer,
+                rect,
+                Color::rgba(0.20, 1.0, 0.36, 0.11),
+                Color::rgba(0.34, 1.0, 0.46, 0.92),
+                2.0,
+            );
         }
     }
 
@@ -588,6 +670,8 @@ impl Map {
                     zone_type: zone.zone_type,
                     points,
                     bounds,
+                    hazard: MapHazardRule::from_content(zone.hazard),
+                    prompt: MapPromptRule::from_content(zone.prompt),
                     surface,
                     unlock: MapUnlockRule::from_content(zone.unlock),
                     transition: MapTransitionTarget::from_content(zone.transition),
@@ -987,6 +1071,80 @@ fn draw_texture_region(
     }
 }
 
+fn debug_zone_colors(zone: &MapZone) -> (Color, Color) {
+    match zone.zone_type.as_str() {
+        "CollisionArea" | "CollisionLine" => (
+            Color::rgba(1.0, 0.02, 0.02, 0.06),
+            Color::rgba(1.0, 0.10, 0.08, 0.62),
+        ),
+        "MapTransition" => (
+            Color::rgba(1.0, 0.62, 0.08, 0.08),
+            Color::rgba(1.0, 0.72, 0.16, 0.76),
+        ),
+        "WalkSurface" => (
+            Color::rgba(0.12, 1.0, 0.42, 0.06),
+            Color::rgba(0.24, 1.0, 0.52, 0.66),
+        ),
+        "HazardZone" => (
+            Color::rgba(1.0, 0.10, 0.04, 0.08),
+            Color::rgba(1.0, 0.18, 0.10, 0.78),
+        ),
+        "PromptZone" => (
+            Color::rgba(0.14, 0.52, 1.0, 0.07),
+            Color::rgba(0.24, 0.62, 1.0, 0.70),
+        ),
+        _ => (
+            Color::rgba(0.72, 0.28, 1.0, 0.06),
+            Color::rgba(0.78, 0.40, 1.0, 0.58),
+        ),
+    }
+}
+
+fn draw_debug_rect(
+    renderer: &mut dyn Renderer,
+    rect: Rect,
+    fill: Color,
+    border: Color,
+    thickness: f32,
+) {
+    if rect.size.x <= 0.0 || rect.size.y <= 0.0 {
+        return;
+    }
+    if fill.a > 0.0 {
+        renderer.draw_rect(rect, fill);
+    }
+    draw_world_border(renderer, rect, thickness, border);
+}
+
+fn draw_world_border(renderer: &mut dyn Renderer, rect: Rect, thickness: f32, color: Color) {
+    let thickness = thickness.max(1.0);
+    let horizontal = thickness.min(rect.size.y);
+    let vertical = thickness.min(rect.size.x);
+
+    renderer.draw_rect(
+        Rect::new(rect.origin, Vec2::new(rect.size.x, horizontal)),
+        color,
+    );
+    renderer.draw_rect(
+        Rect::new(
+            Vec2::new(rect.origin.x, rect.bottom() - horizontal),
+            Vec2::new(rect.size.x, horizontal),
+        ),
+        color,
+    );
+    renderer.draw_rect(
+        Rect::new(rect.origin, Vec2::new(vertical, rect.size.y)),
+        color,
+    );
+    renderer.draw_rect(
+        Rect::new(
+            Vec2::new(rect.right() - vertical, rect.origin.y),
+            Vec2::new(vertical, rect.size.y),
+        ),
+        color,
+    );
+}
+
 #[derive(Clone, Debug)]
 struct MapTile {
     rect: Rect,
@@ -1114,9 +1272,76 @@ pub struct MapZone {
     pub zone_type: String,
     pub points: Vec<Vec2>,
     pub bounds: Rect,
+    pub hazard: Option<MapHazardRule>,
+    pub prompt: Option<MapPromptRule>,
     pub surface: Option<MapWalkSurface>,
     pub unlock: Option<MapUnlockRule>,
     pub transition: Option<MapTransitionTarget>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MapHazardRule {
+    pub effects: Vec<MapHazardEffect>,
+    pub message: Option<String>,
+}
+
+impl MapHazardRule {
+    fn from_content(hazard: Option<EditorHazardRule>) -> Option<Self> {
+        let hazard = hazard?;
+        let effects = hazard
+            .effects
+            .into_iter()
+            .filter_map(|effect| {
+                let meter_id = effect.meter.trim().to_owned();
+                (!meter_id.is_empty()).then_some(MapHazardEffect {
+                    meter_id,
+                    rate_per_second: effect.rate_per_second,
+                })
+            })
+            .collect::<Vec<_>>();
+        let message = clean_optional_string(hazard.message);
+        (!effects.is_empty() || message.is_some()).then_some(Self { effects, message })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MapHazardEffect {
+    pub meter_id: String,
+    pub rate_per_second: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MapPromptRule {
+    pub message: Option<String>,
+    pub log_title: Option<String>,
+    pub log_detail: Option<String>,
+    pub once: bool,
+}
+
+impl Default for MapPromptRule {
+    fn default() -> Self {
+        Self {
+            message: None,
+            log_title: None,
+            log_detail: None,
+            once: true,
+        }
+    }
+}
+
+impl MapPromptRule {
+    fn from_content(prompt: Option<EditorPromptRule>) -> Option<Self> {
+        let prompt = prompt?;
+        let message = clean_optional_string(prompt.message);
+        let log_title = clean_optional_string(prompt.log_title);
+        let log_detail = clean_optional_string(prompt.log_detail);
+        (message.is_some() || log_title.is_some() || log_detail.is_some()).then_some(Self {
+            message,
+            log_title,
+            log_detail,
+            once: prompt.once,
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1760,6 +1985,8 @@ mod tests {
             id: "mesa_wall".to_owned(),
             zone_type: "CollisionArea".to_owned(),
             points: vec![[1.0, 1.0], [3.0, 1.0], [3.0, 3.0], [1.0, 3.0]],
+            hazard: None,
+            prompt: None,
             surface: None,
             unlock: None,
             transition: None,
@@ -1782,6 +2009,8 @@ mod tests {
             id: "cliff_edge".to_owned(),
             zone_type: "CollisionLine".to_owned(),
             points: vec![[1.0, 1.0], [3.0, 1.0]],
+            hazard: None,
+            prompt: None,
             surface: None,
             unlock: None,
             transition: None,
@@ -1842,6 +2071,8 @@ mod tests {
                     Vec2::new(0.0, 10.0),
                 ],
                 bounds: Rect::new(Vec2::ZERO, Vec2::new(10.0, 10.0)),
+                hazard: None,
+                prompt: None,
                 surface: Some(MapWalkSurface {
                     surface_id: "platform_01".to_owned(),
                     kind: MapWalkSurfaceKind::Platform,
@@ -1869,6 +2100,65 @@ mod tests {
             })
         );
         assert_eq!(map.walk_surface_at(Vec2::new(12.0, 5.0)), None);
+    }
+
+    #[test]
+    fn debug_geometry_draws_world_collision_interaction_and_player_rects() {
+        let map = Map {
+            tiles: Vec::new(),
+            sprites: Vec::new(),
+            entities: vec![MapEntity {
+                id: "scan_target".to_owned(),
+                kind: MapEntityKind::Decoration,
+                rect: Rect::new(Vec2::new(20.0, 20.0), Vec2::new(24.0, 24.0)),
+                collision_rect: Some(Rect::new(Vec2::new(22.0, 36.0), Vec2::new(20.0, 8.0))),
+                sprite_rect: Rect::new(Vec2::new(12.0, 4.0), Vec2::new(40.0, 40.0)),
+                depth_y: 44.0,
+                color: Color::rgb(0.65, 0.35, 1.0),
+                solid: false,
+                z_index: 0,
+                asset_id: None,
+                codex_id: Some("codex.test.scan".to_owned()),
+                unlock: None,
+                transition: None,
+                texture_id: None,
+                source: None,
+                flip_x: false,
+                rotation: 0,
+            }],
+            zones: vec![MapZone {
+                id: "exit_zone".to_owned(),
+                zone_type: "MapTransition".to_owned(),
+                points: vec![
+                    Vec2::new(60.0, 60.0),
+                    Vec2::new(90.0, 60.0),
+                    Vec2::new(90.0, 90.0),
+                    Vec2::new(60.0, 90.0),
+                ],
+                bounds: Rect::new(Vec2::new(60.0, 60.0), Vec2::new(30.0, 30.0)),
+                hazard: None,
+                prompt: None,
+                surface: None,
+                unlock: None,
+                transition: None,
+            }],
+            collision_rects: vec![Rect::new(Vec2::new(0.0, 0.0), Vec2::new(16.0, 16.0))],
+            ground_cache: None,
+            textures: HashMap::new(),
+            texture_atlas: None,
+        };
+        let mut renderer = RecordingRenderer::default();
+
+        map.draw_debug_geometry(
+            &mut renderer,
+            Some("scan_target"),
+            Some(Rect::new(Vec2::new(4.0, 4.0), Vec2::new(8.0, 8.0))),
+        );
+
+        assert!(
+            renderer.commands.len() >= 20,
+            "debug layer should draw visible collision, interaction, zone, and player rects"
+        );
     }
 
     #[test]
@@ -2013,6 +2303,8 @@ mod tests {
                 Vec2::new(origin.x, origin.y + size.y),
             ],
             bounds: Rect::new(origin, size),
+            hazard: None,
+            prompt: None,
             surface: Some(MapWalkSurface {
                 surface_id: surface_id.to_owned(),
                 kind,

@@ -1,6 +1,6 @@
 # Alien Archive 项目状态
 
-最后更新：2026-05-09
+最后更新：2026-05-10
 
 ## 项目目标
 
@@ -56,6 +56,7 @@
 - 菜单 UI 拆出了 `game_menu_content`、`layout`、`menu_style`、`menu_widgets`、`text` 等模块，方便继续迭代。
 - 菜单皮肤、导航图标、底部动作图标、属性图标、图鉴缩略图集中登记在 `menu_style::TEXTURES`。
 - `tools/generate_menu_assets.py` 可以生成当前菜单需要的 AI 风格图标和缩略图。
+- 底部动作条里的 `存档` 现在会执行手动保存，并在菜单内显示成功/失败 toast；已接入的 `装备` / `日志` 动作会跳到对应页，未接入动作会显示轻量提示。
 
 2. 简单物品/目标扫描
 
@@ -81,6 +82,7 @@
 - 主菜单支持 3 个固定存档槽：`saves/profile_01.ron`、`saves/profile_02.ron`、`saves/profile_03.ron`。
 - `新建存档` / `读取存档` / `删除存档` 会打开槽位列表，显示空槽、损坏槽、等级、当前场景和已扫描数量。
 - 读取空槽或损坏槽会重建为新游戏；删除存档需要二次确认，避免误删。
+- 新建存档覆盖已有槽位前也需要二次确认；主菜单现在会对覆盖提示、空槽删除、删除成功和存档操作失败显示 toast。
 - Overworld / Facility 会持续记录玩家位置和当前地图，移动后按 5 秒间隔自动保存；退出时若有未保存状态会补写一次。
 - 扫描完成、语言切换、背包选择/分类状态变化会立即请求保存。
 - Profile 页和游戏内 Profile 面板读取 `SaveData.profile`；背包页和游戏内 Inventory 面板读取 `SaveData.inventory`。
@@ -162,6 +164,25 @@
 - `validate_map_with_codex` 会检查空转场目标、未知 scene、非 RON map path 和带空白的 spawn id。
 - 旧版 legacy RON 实体可选写入 `transition`，不写仍按旧逻辑运行。
 
+12. 运行时 Debug 几何层
+
+- `F3` Debug Overlay 打开时，Overworld / Facility 会在世界坐标中叠加调试几何。
+- 红色显示实际参与移动阻挡的 solid collision rect。
+- 蓝色显示实体 interaction rect；可扫描实体更亮，当前最近扫描目标会高亮为黄色。
+- 橙色显示地图转场 Zone，绿色显示 WalkSurface Zone，其他 Zone 用紫色辅助识别。
+- 角色自身 hitbox 以绿色显示；Overworld 使用脚底碰撞框，Facility 使用当前角色矩形。
+- 该层在游戏内菜单覆盖层打开时仍会绘制在底层场景上，便于排查 overlay 是否影响底层运行时状态。
+
+13. 区域脚本第一版
+
+- `ZoneInstance` 新增可选 `hazard` 和 `prompt` 规则，保持和现有 `surface` / `unlock` / `transition` 同层级。
+- `HazardZone` 会在玩家重叠时按 `effects` 持续修改人物 meter，当前支持 `health`、`stamina`、`suit`、`oxygen`、`radiation`、`spores`。
+- 玩家首次进入危险区会显示 notice 并写入活动日志；持续影响仍走现有人物状态、存档 dirty 和状态告警机制。
+- `PromptZone` 会在玩家进入时显示提示并写入活动日志；`once = true` 时会把触发状态保存到 `WorldSave.triggered_zones`，避免跨会话重复触发。
+- Overworld / Facility 共用 `zone_system`，后续扩展任务推进、一次性事件、环境暴露都可以继续挂在 Zone 语义上。
+- 编辑器 Inspector 已能把区域设为危险区/提示区，并编辑危险效果、提示文案和一次性触发选项。
+- 地图校验已认识 `HazardZone` / `PromptZone`，会检查缺失规则、空效果、未知 meter 和空提示数据。
+
 ## 已完成
 
 - 初始化 Rust workspace。
@@ -195,16 +216,18 @@
 - 实现 `SaveData` 本地存档层，保存语言、场景、地图、玩家位置、Codex 解锁、已收集实体、交互历史、人物档案、背包和快捷栏。
 - `MapDocument` 支持实体/区域级 `unlock` 规则，运行时入口/出口可按扫描记录或背包物品放行。
 - `MapDocument` 支持实体/区域级 `transition` 目标，运行时入口/出口和 `MapTransition` 区域可按目标场景、地图、出生点切换。
+- `MapDocument` 支持区域级 `hazard` / `prompt` 规则，运行时可用地图 Zone 驱动危险环境和一次性提示。
 - 运行时 `Map::load` 支持新的编辑器 RON 地图格式，并保留旧版 legacy RON 地图解析。
 - `World::solid_rects()` 提供 tile/entity/collision 碰撞矩形。
 - `World::codex_entities()` 提供扫描候选实体。
 - 运行时启动时加载 `content::CodexDatabase`，供扫描 UI 和游戏内 Codex 菜单共同使用。
 - 运行时启动时加载 `SaveData`，用于恢复语言、Codex 解锁、背包、人物档案和上次所在地图位置。
 - `SaveData` 已支持固定存档槽路径，主菜单可以读取、新建、删除并刷新槽位摘要。
+- `WorldSave` 已记录一次性区域触发状态，用于 `PromptZone` 这类跨会话不重复事件。
 - 运行时已接入人物状态更新：体力、负重、外骨骼、生命和环境抗性会受移动、跳跃、背包和场景环境影响并保存。
 - `crates/editor` 已作为专用 Overworld 地图编辑器入口存在，读写 `assets/data/maps/*.ron`。
 - 编辑器菜单和工具栏支持“保存并运行当前地图”，用于快速验证当前 RON 和出生点。
-- `SceneStack` 已接入全局 Debug Overlay，可在运行时检查场景、地图、扫描目标、存档和人物状态。
+- `SceneStack` 已接入全局 Debug Overlay，可在运行时检查场景、地图、扫描目标、存档、人物状态和世界调试几何。
 - 游戏内菜单 `日志` 页会读取 `SaveData.activity_log`，展示最近扫描、拾取、解锁和状态变化。
 - `SceneStack` 已接入外勤 HUD，可在 Overworld / Facility 画面直接查看人物状态、时间天气和快捷栏。
 - 外勤 HUD 现在读取 `assets/images/ui/hud/*.png` 组件；人物状态、时间和天气整合在 `hud_player_panel_1.png`，头像单独使用 `hud_player_avatar.png`，快捷栏保留独立底座和槽位图。
@@ -238,7 +261,7 @@
 - `Esc`：打开/关闭游戏内菜单
 - `I` / `Tab`：打开游戏内菜单并切到背包
 - `C`：打开游戏内菜单并切到属性
-- `F3`：显示/隐藏 Debug Overlay
+- `F3`：显示/隐藏 Debug Overlay；打开时会同时叠加 collision、interaction、zone 和角色 hitbox 调试框
 - 存档：移动、扫描、语言切换等会自动保存；当前没有手动存档 UI
 
 游戏内菜单：
@@ -469,11 +492,10 @@ $env:ALIEN_ARCHIVE_EXIT_AFTER_FRAMES='3'; cargo run -p alien_archive
 
 推荐下一阶段按这个顺序做：
 
-1. 给主菜单补手动保存/另存提示、删除后的 toast 或更完整的错误提示。
-2. 让 Debug Overlay 增加可选 collision/interaction rect 可视化层，用于调地图和扫描范围。
+1. 给 Debug Overlay 的世界几何层继续补开关/图例，按需要拆分 collision、interaction、zone、player 显示。
+2. 用编辑器在真实地图里铺第一组 `HazardZone` / `PromptZone`，验证探索节奏和提示文字。
 3. 给日志页补筛选/分页和“任务目标来自真实任务数据”的后续结构。
-4. 扩展 `MapTransition` 之外的区域脚本类型，例如危险环境、一次性提示、任务推进。
-5. 补目标地图/spawn 跨文件存在性校验，避免转场字段写错后运行时才发现。
+4. 在区域脚本上继续扩展 `ObjectiveZone` / `Checkpoint`，把任务推进从日志提示升级成真实目标状态。
 
 地图编辑器的长期改进清单单独记录在：
 

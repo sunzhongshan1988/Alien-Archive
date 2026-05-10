@@ -306,6 +306,38 @@ pub fn validate_map_with_codex(
                 )));
             }
         }
+        if zone.zone_type == "HazardZone" {
+            if let Some(hazard) = &zone.hazard {
+                validate_hazard_rule("zone", &zone.id, hazard, &mut issues);
+            } else {
+                issues.push(MapValidationIssue::warning(format!(
+                    "zone {} is HazardZone but has no hazard effects",
+                    zone.id
+                )));
+            }
+        } else if let Some(hazard) = &zone.hazard {
+            validate_hazard_rule("zone", &zone.id, hazard, &mut issues);
+            issues.push(MapValidationIssue::warning(format!(
+                "zone {} has hazard data but zone_type is {}",
+                zone.id, zone.zone_type
+            )));
+        }
+        if zone.zone_type == "PromptZone" {
+            if let Some(prompt) = &zone.prompt {
+                validate_prompt_rule("zone", &zone.id, prompt, &mut issues);
+            } else {
+                issues.push(MapValidationIssue::warning(format!(
+                    "zone {} is PromptZone but has no prompt message or log detail",
+                    zone.id
+                )));
+            }
+        } else if let Some(prompt) = &zone.prompt {
+            validate_prompt_rule("zone", &zone.id, prompt, &mut issues);
+            issues.push(MapValidationIssue::warning(format!(
+                "zone {} has prompt data but zone_type is {}",
+                zone.id, zone.zone_type
+            )));
+        }
         if let Some(unlock) = &zone.unlock {
             validate_unlock_rule("zone", &zone.id, unlock, codex, &mut issues);
         }
@@ -334,7 +366,67 @@ const KNOWN_ZONE_TYPES: &[&str] = &[
     "WalkSurface",
     "CollisionArea",
     "CollisionLine",
+    "HazardZone",
+    "PromptZone",
+    "Trigger",
 ];
+
+const KNOWN_HAZARD_METERS: &[&str] =
+    &["health", "stamina", "suit", "oxygen", "radiation", "spores"];
+
+fn validate_hazard_rule(
+    owner: &str,
+    id: &str,
+    hazard: &crate::HazardRule,
+    issues: &mut Vec<MapValidationIssue>,
+) {
+    if hazard.effects.is_empty() {
+        issues.push(MapValidationIssue::warning(format!(
+            "{owner} {id} has hazard data but no effects"
+        )));
+    }
+
+    for effect in &hazard.effects {
+        let meter = effect.meter.trim();
+        if meter.is_empty() {
+            issues.push(MapValidationIssue::warning(format!(
+                "{owner} {id} has hazard effect with empty meter"
+            )));
+        } else if !KNOWN_HAZARD_METERS.contains(&meter) {
+            issues.push(MapValidationIssue::warning(format!(
+                "{owner} {id} hazard effect meter {meter} is not a known runtime meter"
+            )));
+        }
+        if effect.rate_per_second.abs() <= f32::EPSILON {
+            issues.push(MapValidationIssue::warning(format!(
+                "{owner} {id} hazard effect {meter} has zero rate_per_second"
+            )));
+        }
+    }
+
+    if hazard
+        .message
+        .as_deref()
+        .is_some_and(|message| message.trim().is_empty())
+    {
+        issues.push(MapValidationIssue::warning(format!(
+            "{owner} {id} hazard message is empty"
+        )));
+    }
+}
+
+fn validate_prompt_rule(
+    owner: &str,
+    id: &str,
+    prompt: &crate::PromptRule,
+    issues: &mut Vec<MapValidationIssue>,
+) {
+    if prompt.is_empty() {
+        issues.push(MapValidationIssue::warning(format!(
+            "{owner} {id} has prompt data but no message, log_title, or log_detail"
+        )));
+    }
+}
 
 fn validate_unlock_rule(
     owner: &str,
@@ -561,8 +653,8 @@ fn validate_scale(
 mod tests {
     use crate::{
         AnchorKind, AssetDatabase, AssetDefinition, AssetKind, CodexDatabase, CodexEntry,
-        CollisionCell, LayerKind, MapDocument, SnapMode, UnlockRule, WalkSurfaceKind,
-        WalkSurfaceRule, ZoneInstance,
+        CollisionCell, HazardEffect, HazardRule, LayerKind, MapDocument, PromptRule, SnapMode,
+        UnlockRule, WalkSurfaceKind, WalkSurfaceRule, ZoneInstance,
     };
 
     use super::*;
@@ -819,6 +911,8 @@ mod tests {
             id: "ramp_surface".to_owned(),
             zone_type: "WalkSurface".to_owned(),
             points: vec![[1.0, 1.0], [3.0, 1.0], [3.0, 3.0], [1.0, 3.0]],
+            hazard: None,
+            prompt: None,
             surface: Some(WalkSurfaceRule {
                 surface_id: Some("platform_01".to_owned()),
                 kind: WalkSurfaceKind::Platform,
@@ -852,6 +946,8 @@ mod tests {
             id: "cliff_edge".to_owned(),
             zone_type: "CollisionLine".to_owned(),
             points: vec![[1.0, 1.0], [4.0, 1.0]],
+            hazard: None,
+            prompt: None,
             surface: None,
             unlock: None,
             transition: None,
@@ -869,6 +965,56 @@ mod tests {
             issues
                 .iter()
                 .all(|issue| !issue.message.contains("fewer than"))
+        );
+    }
+
+    #[test]
+    fn validates_hazard_and_prompt_zone_rules() {
+        let mut document = MapDocument::new_landing_site();
+        document.layers.zones.push(ZoneInstance {
+            id: "toxic_pocket".to_owned(),
+            zone_type: "HazardZone".to_owned(),
+            points: vec![[1.0, 1.0], [3.0, 1.0], [3.0, 3.0], [1.0, 3.0]],
+            hazard: Some(HazardRule {
+                effects: vec![HazardEffect::new("oxygen", -4.0)],
+                message: Some("空气质量异常".to_owned()),
+            }),
+            prompt: None,
+            surface: None,
+            unlock: None,
+            transition: None,
+        });
+        document.layers.zones.push(ZoneInstance {
+            id: "first_view".to_owned(),
+            zone_type: "PromptZone".to_owned(),
+            points: vec![[4.0, 1.0], [6.0, 1.0], [6.0, 3.0], [4.0, 3.0]],
+            hazard: None,
+            prompt: Some(PromptRule {
+                message: Some("前方发现遗迹轮廓".to_owned()),
+                ..PromptRule::default()
+            }),
+            surface: None,
+            unlock: None,
+            transition: None,
+        });
+        let database = test_database(Vec::new());
+
+        let issues = validate_map(&document, &database);
+
+        assert!(
+            issues
+                .iter()
+                .all(|issue| !issue.message.contains("unknown zone_type"))
+        );
+        assert!(
+            issues
+                .iter()
+                .all(|issue| !issue.message.contains("no hazard effects"))
+        );
+        assert!(
+            issues
+                .iter()
+                .all(|issue| !issue.message.contains("no prompt message"))
         );
     }
 

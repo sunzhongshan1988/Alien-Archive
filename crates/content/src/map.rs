@@ -399,6 +399,10 @@ pub struct ZoneInstance {
     pub id: String,
     pub zone_type: String,
     pub points: Vec<[f32; 2]>,
+    #[serde(default, skip_serializing_if = "option_hazard_rule_is_none_or_empty")]
+    pub hazard: Option<HazardRule>,
+    #[serde(default, skip_serializing_if = "option_prompt_rule_is_none_or_empty")]
+    pub prompt: Option<PromptRule>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<WalkSurfaceRule>,
     #[serde(default, skip_serializing_if = "option_unlock_rule_is_none_or_empty")]
@@ -408,6 +412,78 @@ pub struct ZoneInstance {
         skip_serializing_if = "option_transition_target_is_none_or_empty"
     )]
     pub transition: Option<TransitionTarget>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct HazardRule {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<HazardEffect>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+impl HazardRule {
+    pub fn is_empty(&self) -> bool {
+        self.effects.is_empty()
+            && self
+                .message
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct HazardEffect {
+    pub meter: String,
+    pub rate_per_second: f32,
+}
+
+impl HazardEffect {
+    pub fn new(meter: impl Into<String>, rate_per_second: f32) -> Self {
+        Self {
+            meter: meter.into(),
+            rate_per_second,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct PromptRule {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_detail: Option<String>,
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub once: bool,
+}
+
+impl Default for PromptRule {
+    fn default() -> Self {
+        Self {
+            message: None,
+            log_title: None,
+            log_detail: None,
+            once: true,
+        }
+    }
+}
+
+impl PromptRule {
+    pub fn is_empty(&self) -> bool {
+        self.message
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+            && self
+                .log_title
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+            && self
+                .log_detail
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -673,6 +749,14 @@ fn option_unlock_rule_is_none_or_empty(value: &Option<UnlockRule>) -> bool {
 
 fn option_transition_target_is_none_or_empty(value: &Option<TransitionTarget>) -> bool {
     value.as_ref().is_none_or(TransitionTarget::is_empty)
+}
+
+fn option_hazard_rule_is_none_or_empty(value: &Option<HazardRule>) -> bool {
+    value.as_ref().is_none_or(HazardRule::is_empty)
+}
+
+fn option_prompt_rule_is_none_or_empty(value: &Option<PromptRule>) -> bool {
+    value.as_ref().is_none_or(PromptRule::is_empty)
 }
 
 fn is_zero_i32(value: &i32) -> bool {

@@ -64,6 +64,10 @@ pub(super) struct DebugOverlay {
 }
 
 impl DebugOverlay {
+    pub(super) fn is_visible(&self) -> bool {
+        self.visible
+    }
+
     pub(super) fn toggle(&mut self) {
         self.visible = !self.visible;
         self.text_key.clear();
@@ -185,6 +189,8 @@ pub(super) fn debug_overlay_lines(
 
     vec![
         "F3 Debug Overlay".to_owned(),
+        "world layer: collision red | interaction cyan | zones color-coded | scan yellow"
+            .to_owned(),
         scene,
         player,
         map,
@@ -301,6 +307,7 @@ mod tests {
         assert!(lines.iter().any(|line| line.contains("hp 86/100")));
         assert!(lines.iter().any(|line| line.contains("ground_chunks 2")));
         assert!(lines.iter().any(|line| line.contains("draw_calls 6")));
+        assert!(lines.iter().any(|line| line.contains("world layer:")));
         assert!(
             lines
                 .iter()

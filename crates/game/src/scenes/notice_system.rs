@@ -54,6 +54,14 @@ impl NoticeState {
         self.push(stamina_low_message(language), NoticeTone::Warning);
     }
 
+    pub(super) fn push_info_message(&mut self, message: String) {
+        self.push(message, NoticeTone::Info);
+    }
+
+    pub(super) fn push_warning_message(&mut self, message: String) {
+        self.push(message, NoticeTone::Warning);
+    }
+
     pub(super) fn push_quick_item_use_result(
         &mut self,
         language: Language,

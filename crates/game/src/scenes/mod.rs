@@ -10,6 +10,7 @@ mod pause_scene;
 mod profile_scene;
 mod rewards;
 mod scan_system;
+mod zone_system;
 
 use anyhow::Result;
 use content::CodexDatabase;
@@ -17,7 +18,7 @@ use runtime::{Button, Camera2d, InputState, Renderer, SceneCommand, Vec2};
 use std::{collections::HashSet, path::PathBuf};
 
 use crate::save::{CodexSave, InventorySave, MeterSave, SaveData, SaveVec2, WorldSave};
-use crate::world::{MapTransitionTarget, MapUnlockRule};
+use crate::world::{MapPromptRule, MapTransitionTarget, MapUnlockRule};
 
 use facility_scene::FacilityScene;
 use game_menu_scene::GameMenuScene;
@@ -47,6 +48,7 @@ const LOG_CATEGORY_SCAN: &str = "scan";
 const LOG_CATEGORY_UNLOCK: &str = "unlock";
 const LOG_CATEGORY_STATUS: &str = "status";
 const LOG_CATEGORY_ITEM: &str = "item";
+const LOG_CATEGORY_ZONE: &str = "zone";
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -454,6 +456,42 @@ impl GameContext {
         inserted
     }
 
+    pub fn is_zone_triggered(&self, map_path: &str, zone_id: &str) -> bool {
+        self.save_data
+            .world
+            .triggered_zones
+            .contains(&zone_progress_key(map_path, zone_id))
+    }
+
+    pub fn mark_zone_triggered(&mut self, map_path: &str, zone_id: &str) -> bool {
+        let inserted = self
+            .save_data
+            .world
+            .triggered_zones
+            .insert(zone_progress_key(map_path, zone_id));
+        if inserted {
+            self.request_save();
+        }
+        inserted
+    }
+
+    pub fn apply_zone_meter_effect(
+        &mut self,
+        meter_id: &str,
+        rate_per_second: f32,
+        dt: f32,
+    ) -> bool {
+        if dt <= 0.0 || rate_per_second.abs() <= f32::EPSILON {
+            return false;
+        }
+
+        self.accumulate_profile_delta(meter_id, rate_per_second * dt)
+    }
+
+    pub fn update_zone_status_alerts(&mut self) {
+        self.update_activity_status_alerts();
+    }
+
     pub fn log_inventory_full(&mut self) {
         let (title, detail) = match self.language {
             Language::Chinese => ("背包已满", "没有空槽位，物品未收入背包"),
@@ -483,6 +521,27 @@ impl GameContext {
             Language::English => "Access blocked",
         };
         self.push_activity_log(LOG_CATEGORY_UNLOCK, title, detail);
+    }
+
+    pub fn log_zone_prompt(&mut self, prompt: &MapPromptRule, fallback: &str) {
+        let title = prompt.log_title.as_deref().unwrap_or(match self.language {
+            Language::Chinese => "区域提示",
+            Language::English => "Area note",
+        });
+        let detail = prompt.log_detail.as_deref().unwrap_or(fallback);
+        self.push_activity_log(LOG_CATEGORY_ZONE, title, detail);
+    }
+
+    pub fn log_zone_hazard(&mut self, zone_id: &str, detail: String) {
+        let title = match self.language {
+            Language::Chinese => "危险区域",
+            Language::English => "Hazard zone",
+        };
+        let detail = match self.language {
+            Language::Chinese => format!("{zone_id}：{detail}"),
+            Language::English => format!("{zone_id}: {detail}"),
+        };
+        self.push_activity_log(LOG_CATEGORY_ZONE, title, detail);
     }
 
     pub fn log_scene_transition(&mut self, scene_id: SceneId, map_path: &str) {
@@ -599,6 +658,7 @@ impl GameContext {
             },
             player_position: Some(position.into()),
             collected_entities: self.save_data.world.collected_entities.clone(),
+            triggered_zones: self.save_data.world.triggered_zones.clone(),
             field_time_minutes: self.save_data.world.field_time_minutes,
             weather: self.save_data.world.weather.clone(),
         };
@@ -968,6 +1028,8 @@ pub trait Scene {
 
     fn render(&mut self, ctx: &mut RenderContext<'_>) -> Result<()>;
 
+    fn render_debug_geometry(&self, _renderer: &mut dyn Renderer) {}
+
     fn camera(&self) -> Camera2d {
         Camera2d::default()
     }
@@ -1066,6 +1128,10 @@ impl SceneStack {
 
             renderer.set_camera(base.scene.camera());
             base.scene.render(&mut RenderContext { renderer })?;
+            if self.debug_overlay.is_visible() {
+                renderer.set_camera(base.scene.camera());
+                base.scene.render_debug_geometry(renderer);
+            }
             if is_field_scene(base.scene.id()) {
                 self.field_hud.draw(renderer, ctx, base.scene.id())?;
             }
@@ -1079,6 +1145,10 @@ impl SceneStack {
             }
             renderer.set_camera(current.scene.camera());
             current.scene.render(&mut RenderContext { renderer })?;
+            if self.debug_overlay.is_visible() {
+                renderer.set_camera(current.scene.camera());
+                current.scene.render_debug_geometry(renderer);
+            }
             if is_field_scene(current.scene.id()) {
                 self.field_hud.draw(renderer, ctx, current.scene.id())?;
             }
@@ -1318,6 +1388,10 @@ fn entity_progress_key(map_path: &str, entity_id: &str) -> String {
     format!("{map_path}::{entity_id}")
 }
 
+fn zone_progress_key(map_path: &str, zone_id: &str) -> String {
+    format!("{map_path}::{zone_id}")
+}
+
 fn bump_meter(meters: &mut [MeterSave], id: &str, amount: u32) {
     if let Some(meter) = meters.iter_mut().find(|meter| meter.id == id) {
         meter.value = (meter.value + amount).min(meter.max);
@@ -1383,6 +1457,22 @@ mod tests {
                 .into_iter()
                 .collect::<Vec<_>>(),
             vec!["pickup_001".to_owned()]
+        );
+    }
+
+    #[test]
+    fn triggered_zone_ids_are_scoped_to_map_path() {
+        let mut ctx = GameContext::default();
+
+        assert!(ctx.mark_zone_triggered("assets/data/maps/a.ron", "prompt_001"));
+        assert!(!ctx.mark_zone_triggered("assets/data/maps/a.ron", "prompt_001"));
+        assert!(ctx.is_zone_triggered("assets/data/maps/a.ron", "prompt_001"));
+        assert!(!ctx.is_zone_triggered("assets/data/maps/b.ron", "prompt_001"));
+        assert!(
+            ctx.save_data
+                .world
+                .triggered_zones
+                .contains("assets/data/maps/a.ron::prompt_001")
         );
     }
 
@@ -1481,6 +1571,17 @@ mod tests {
             },
         );
         assert_eq!(ctx.profile_meter_value("stamina"), 12);
+    }
+
+    #[test]
+    fn zone_meter_effects_accumulate_into_profile_meters() {
+        let mut ctx = GameContext::default();
+        ctx.save_data.profile.set_meter_value("oxygen", 62);
+
+        assert!(ctx.apply_zone_meter_effect("oxygen", -2.0, 1.0));
+
+        assert_eq!(ctx.profile_meter_value("oxygen"), 60);
+        assert!(ctx.save_dirty);
     }
 
     #[test]

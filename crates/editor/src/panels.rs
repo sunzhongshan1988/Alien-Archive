@@ -411,6 +411,18 @@ impl EditorApp {
                     color: THEME_ACCENT_STRONG,
                 });
             }
+            if zone.hazard.is_some() {
+                badges.push(OutlinerBadge {
+                    label: "hazard",
+                    color: THEME_ERROR,
+                });
+            }
+            if zone.prompt.is_some() {
+                badges.push(OutlinerBadge {
+                    label: "prompt",
+                    color: THEME_ACCENT,
+                });
+            }
             if zone
                 .unlock
                 .as_ref()
@@ -431,6 +443,31 @@ impl EditorApp {
                         surface.surface_id.as_deref().unwrap_or_default(),
                         surface.kind.label()
                     )
+                })
+                .unwrap_or_default();
+            let hazard_search = zone
+                .hazard
+                .as_ref()
+                .map(|hazard| {
+                    hazard
+                        .effects
+                        .iter()
+                        .map(|effect| format!("{} {}", effect.meter, effect.rate_per_second))
+                        .chain(hazard.message.clone())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .unwrap_or_default();
+            let prompt_search = zone
+                .prompt
+                .as_ref()
+                .map(|prompt| {
+                    [
+                        prompt.message.as_deref().unwrap_or_default(),
+                        prompt.log_title.as_deref().unwrap_or_default(),
+                        prompt.log_detail.as_deref().unwrap_or_default(),
+                    ]
+                    .join(" ")
                 })
                 .unwrap_or_default();
             let detail = if let Some(surface) = &zone.surface {
@@ -459,6 +496,8 @@ impl EditorApp {
                     zone.zone_type.as_str(),
                     unlock_search.as_str(),
                     surface_search.as_str(),
+                    hazard_search.as_str(),
+                    prompt_search.as_str(),
                 ]
                 .join(" "),
             ));

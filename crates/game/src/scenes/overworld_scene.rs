@@ -12,6 +12,7 @@ use super::{
     notice_system::NoticeState,
     rewards,
     scan_system::{ScanState, nearby_scan_target},
+    zone_system::ZoneRuntimeState,
 };
 
 const OVERWORLD_MAP: &str = "assets/data/maps/overworld_landing_site.ron";
@@ -27,6 +28,7 @@ pub struct OverworldScene {
     camera: Camera2d,
     scan: ScanState,
     notice: NoticeState,
+    zones: ZoneRuntimeState,
 }
 
 impl OverworldScene {
@@ -54,6 +56,7 @@ impl OverworldScene {
             active_walk_surface_id,
             scan: ScanState::default(),
             notice: NoticeState::default(),
+            zones: ZoneRuntimeState::default(),
         })
     }
 
@@ -208,6 +211,14 @@ impl Scene for OverworldScene {
             self.notice
                 .push_scan_complete(ctx.language, &codex_id, &ctx.codex_database);
         }
+        self.zones.update(
+            ctx,
+            &mut self.notice,
+            &self.world,
+            &self.map_path,
+            self.player.rect(),
+            dt,
+        );
 
         let status = ctx.update_field_status(
             dt,
@@ -273,6 +284,14 @@ impl Scene for OverworldScene {
         self.scan.draw(ctx.renderer)?;
         self.notice.draw(ctx.renderer)?;
         Ok(())
+    }
+
+    fn render_debug_geometry(&self, renderer: &mut dyn Renderer) {
+        self.world.draw_debug_geometry(
+            renderer,
+            nearby_scan_target(&self.world, self.player.rect()).map(|entity| entity.id.as_str()),
+            Some(self.player.topdown_collision_rect()),
+        );
     }
 
     fn camera(&self) -> Camera2d {

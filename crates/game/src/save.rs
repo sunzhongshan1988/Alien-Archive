@@ -396,6 +396,7 @@ pub struct WorldSave {
     pub spawn_id: Option<String>,
     pub player_position: Option<SaveVec2>,
     pub collected_entities: BTreeSet<String>,
+    pub triggered_zones: BTreeSet<String>,
     pub field_time_minutes: u32,
     pub weather: String,
 }
@@ -408,6 +409,7 @@ impl Default for WorldSave {
             spawn_id: Some("player_start".to_owned()),
             player_position: None,
             collected_entities: BTreeSet::new(),
+            triggered_zones: BTreeSet::new(),
             field_time_minutes: 8 * 60,
             weather: "clear".to_owned(),
         }
@@ -557,6 +559,7 @@ mod tests {
         assert_eq!(save.world.current_scene, "Overworld");
         assert_eq!(save.world.field_time_minutes, 8 * 60);
         assert_eq!(save.world.weather, "clear");
+        assert!(save.world.triggered_zones.is_empty());
         assert!(save.activity_log.entries.is_empty());
     }
 

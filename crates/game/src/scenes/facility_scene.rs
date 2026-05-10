@@ -1,5 +1,7 @@
 use anyhow::Result;
-use runtime::{Button, Camera2d, InputState, SceneCommand, Vec2, collision::rects_overlap};
+use runtime::{
+    Button, Camera2d, InputState, Renderer, SceneCommand, Vec2, collision::rects_overlap,
+};
 
 use crate::{
     player::Player,
@@ -12,6 +14,7 @@ use super::{
     notice_system::NoticeState,
     rewards,
     scan_system::{ScanState, nearby_scan_target},
+    zone_system::ZoneRuntimeState,
 };
 
 const FACILITY_MAP: &str = "assets/data/maps/facility_ruin_01.ron";
@@ -31,6 +34,7 @@ pub struct FacilityScene {
     grounded: bool,
     scan: ScanState,
     notice: NoticeState,
+    zones: ZoneRuntimeState,
 }
 
 impl FacilityScene {
@@ -57,6 +61,7 @@ impl FacilityScene {
             grounded: true,
             scan: ScanState::default(),
             notice: NoticeState::default(),
+            zones: ZoneRuntimeState::default(),
         })
     }
 
@@ -221,6 +226,14 @@ impl Scene for FacilityScene {
             self.notice
                 .push_scan_complete(ctx.language, &codex_id, &ctx.codex_database);
         }
+        self.zones.update(
+            ctx,
+            &mut self.notice,
+            &self.world,
+            &self.map_path,
+            self.player.rect(),
+            dt,
+        );
 
         let jump_requested = input.just_pressed(Button::Up)
             || (input.just_pressed(Button::Scan) && !self.scan.should_capture_scan_button());
@@ -253,6 +266,14 @@ impl Scene for FacilityScene {
         self.scan.draw(ctx.renderer)?;
         self.notice.draw(ctx.renderer)?;
         Ok(())
+    }
+
+    fn render_debug_geometry(&self, renderer: &mut dyn Renderer) {
+        self.world.draw_debug_geometry(
+            renderer,
+            nearby_scan_target(&self.world, self.player.rect()).map(|entity| entity.id.as_str()),
+            Some(self.player.rect()),
+        );
     }
 
     fn camera(&self) -> Camera2d {
