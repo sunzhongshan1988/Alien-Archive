@@ -14,9 +14,9 @@ mod util;
 use std::{
     collections::{BTreeSet, HashMap, VecDeque},
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use app::{
@@ -32,9 +32,11 @@ use app::{
         unlock_search_text, zone_focus_world,
     },
     state::{
-        ClipboardItem, EditorApp, LayerUiState, LeftSidebarTab, MoveOrigin, MultiMoveDrag,
-        NewMapDraft, OutlinerBadge, OutlinerEntry, ResizeDrag, SelectedItem, SelectionMarquee,
-        StampCaptureDrag, StampItem, StampPattern, ZoneVertexDrag, default_layer_states,
+        AssetCatalogEntry, AssetDependencyReport, AssetReferenceIssue, AutosaveRecovery,
+        BatchAlignMode, BatchDistributeMode, ClipboardItem, EditorApp, LayerUiState,
+        LeftSidebarTab, MoveOrigin, MultiMoveDrag, NewMapDraft, OutlinerBadge, OutlinerEntry,
+        ResizeDrag, SelectedItem, SelectionMarquee, StampCaptureDrag, StampItem, StampPattern,
+        ZoneVertexDrag, default_layer_states,
     },
 };
 use asset_registry::{AssetEntry, AssetRegistry};
@@ -76,6 +78,16 @@ const MENU_BAR_HEIGHT: f32 = 30.0;
 const MENU_BAR_BUTTON_HEIGHT: f32 = 24.0;
 const TOP_BAR_DIVIDER_HEIGHT: f32 = 1.0;
 
+#[derive(Clone, Debug)]
+struct TransitionLinkEntry {
+    source: String,
+    scene: String,
+    map_path: String,
+    spawn_id: String,
+    target_path: Option<PathBuf>,
+    problem: Option<String>,
+}
+
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -110,7 +122,7 @@ impl EditorApp {
         let document =
             MapDocument::load(&map_path).unwrap_or_else(|_| MapDocument::new_landing_site());
         let save_as_id = document.id.clone();
-        Self {
+        let mut app = Self {
             native_menu: native_menu::NativeMenu::install(),
             project_root: project_root.clone(),
             selected_map_path: map_path.clone(),
@@ -118,6 +130,7 @@ impl EditorApp {
             map_entries,
             pending_open_path: None,
             open_confirm_path: None,
+            pending_open_focus_spawn: None,
             delete_confirm_path: None,
             config,
             save_as_id,
@@ -129,6 +142,9 @@ impl EditorApp {
             codex_db_status,
             show_asset_dialog: false,
             show_unregistered_assets: false,
+            show_asset_dependency_report: false,
+            asset_dependency_report: AssetDependencyReport::default(),
+            autosave_recovery: None,
             asset_scan_root: project_root.join("assets").join("sprites"),
             asset_editing_id: None,
             asset_draft: AssetDraft::default(),
@@ -181,7 +197,9 @@ impl EditorApp {
             thumbnails: HashMap::new(),
             thumbnail_loader: ThumbnailLoader::new(),
             status: "Ready".to_owned(),
-        }
+        };
+        app.detect_autosave_recovery_for_current_map();
+        app
     }
 
     fn upload_ready_textures(&mut self, ctx: &EguiContext) -> usize {
@@ -319,6 +337,24 @@ impl EditorApp {
                 self.cancel_current_operation_or_select();
             }
 
+            if !input.modifiers.alt && !input.modifiers.mac_cmd {
+                let step = keyboard_nudge_step(input.modifiers);
+                let mut nudge = None;
+                if input.key_pressed(Key::ArrowLeft) {
+                    nudge = Some([-step, 0.0]);
+                } else if input.key_pressed(Key::ArrowRight) {
+                    nudge = Some([step, 0.0]);
+                } else if input.key_pressed(Key::ArrowUp) {
+                    nudge = Some([0.0, -step]);
+                } else if input.key_pressed(Key::ArrowDown) {
+                    nudge = Some([0.0, step]);
+                }
+                if let Some(delta) = nudge {
+                    self.nudge_current_selection(delta);
+                    return;
+                }
+            }
+
             let unmodified = !input.modifiers.alt
                 && !input.modifiers.ctrl
                 && !input.modifiers.command
@@ -419,6 +455,9 @@ impl EditorApp {
             MenuCommand::Paste => self.paste_clipboard(),
             MenuCommand::Duplicate => self.duplicate_selected_item(),
             MenuCommand::DeleteSelection => self.delete_current_selection(),
+            MenuCommand::AlignSelection(mode) => self.align_selected_items(mode),
+            MenuCommand::DistributeSelection(mode) => self.distribute_selected_items(mode),
+            MenuCommand::ReplaceSelectionAsset => self.replace_selected_assets_with_current(),
             MenuCommand::ToggleGrid => self.show_grid = !self.show_grid,
             MenuCommand::ToggleCollision => self.show_collision = !self.show_collision,
             MenuCommand::ToggleEntityBounds => self.show_entity_bounds = !self.show_entity_bounds,
@@ -446,6 +485,7 @@ impl EditorApp {
             MenuCommand::RemoveSelectedAsset => self.delete_selected_asset_definition(ctx),
             MenuCommand::SaveAssetDatabase => self.save_asset_database(),
             MenuCommand::ShowUnregisteredAssets => self.show_unregistered_assets = true,
+            MenuCommand::ShowAssetDependencyReport => self.open_asset_dependency_report(),
             MenuCommand::ReloadAssetDatabase => self.reload_asset_database(ctx),
         }
     }
@@ -469,6 +509,8 @@ impl EditorApp {
                 self.open_confirm_path = None;
                 self.refresh_map_entries();
                 self.push_recent_map(self.map_path.clone());
+                self.clear_current_autosave_file();
+                self.autosave_recovery = None;
                 self.status = format!(
                     "Saved {}",
                     display_project_path(&self.project_root, &self.map_path)
@@ -558,7 +600,24 @@ impl EditorApp {
             return;
         };
 
+        self.request_open_map(path, None);
+    }
+
+    pub(crate) fn request_open_map(&mut self, path: PathBuf, focus_spawn: Option<String>) {
         self.selected_map_path = path.clone();
+        self.pending_open_focus_spawn = focus_spawn;
+        if path == self.map_path {
+            if let Some(spawn_id) = self.pending_open_focus_spawn.take() {
+                self.status = if self.focus_spawn(&spawn_id) {
+                    format!("已定位当前地图出生点 {spawn_id}")
+                } else {
+                    format!("当前地图没有出生点 {spawn_id}")
+                };
+            } else {
+                self.status = "当前地图已打开".to_owned();
+            }
+            return;
+        }
         if self.dirty && path != self.map_path {
             self.open_confirm_path = Some(path);
         } else {
@@ -568,15 +627,11 @@ impl EditorApp {
 
     fn open_selected_map(&mut self) {
         let path = self.selected_map_path.clone();
-        if self.dirty && path != self.map_path {
-            self.open_confirm_path = Some(path);
-            return;
-        }
-
-        self.open_map(path);
+        self.request_open_map(path, None);
     }
 
     fn open_map(&mut self, path: PathBuf) {
+        let focus_spawn = self.pending_open_focus_spawn.take();
         match MapDocument::load(&path) {
             Ok(document) => {
                 self.map_path = path.clone();
@@ -591,10 +646,22 @@ impl EditorApp {
                 self.active_layer = LayerKind::Ground;
                 self.dirty = false;
                 self.push_recent_map(path.clone());
+                let spawn_note = focus_spawn
+                    .as_deref()
+                    .map(|spawn_id| {
+                        if self.focus_spawn(spawn_id) {
+                            format!("，已定位出生点 {spawn_id}")
+                        } else {
+                            format!("，但找不到出生点 {spawn_id}")
+                        }
+                    })
+                    .unwrap_or_default();
                 self.status = format!(
-                    "Opened {}",
-                    display_project_path(&self.project_root, &self.map_path)
+                    "Opened {}{}",
+                    display_project_path(&self.project_root, &self.map_path),
+                    spawn_note
                 );
+                self.detect_autosave_recovery_for_current_map();
             }
             Err(error) => {
                 self.status = format!(
@@ -603,6 +670,21 @@ impl EditorApp {
                 );
             }
         }
+    }
+
+    fn focus_spawn(&mut self, spawn_id: &str) -> bool {
+        let Some(spawn) = self
+            .document
+            .spawns
+            .iter()
+            .find(|spawn| spawn.id == spawn_id)
+        else {
+            return false;
+        };
+        let tile_size = self.document.tile_size as f32;
+        self.pending_focus_world = Some(vec2(spawn.x * tile_size, spawn.y * tile_size));
+        self.clear_selection();
+        true
     }
 
     fn refresh_map_entries(&mut self) {
@@ -689,11 +771,306 @@ impl EditorApp {
     }
 
     fn validate_current_map(&self) -> Vec<MapValidationIssue> {
-        validate_map_with_codex(
+        let mut issues = validate_map_with_codex(
             &self.document,
             &self.asset_database,
             self.codex_database.as_ref(),
-        )
+        );
+        issues.extend(self.validate_transition_links());
+        issues
+    }
+
+    fn open_asset_dependency_report(&mut self) {
+        self.asset_dependency_report = self.build_asset_dependency_report();
+        self.show_asset_dependency_report = true;
+        self.status = format!("资产依赖报告：{}", self.asset_dependency_report.summary());
+    }
+
+    fn build_asset_dependency_report(&self) -> AssetDependencyReport {
+        let mut report = AssetDependencyReport::default();
+        let mut referenced_assets = BTreeSet::new();
+
+        for tile in &self.document.layers.ground {
+            self.record_asset_reference(
+                LayerKind::Ground,
+                format!("({}, {})", tile.x, tile.y),
+                &tile.asset,
+                &mut referenced_assets,
+                &mut report,
+            );
+        }
+        for decal in &self.document.layers.decals {
+            self.record_asset_reference(
+                LayerKind::Decals,
+                decal.id.clone(),
+                &decal.asset,
+                &mut referenced_assets,
+                &mut report,
+            );
+        }
+        for object in &self.document.layers.objects {
+            self.record_asset_reference(
+                LayerKind::Objects,
+                object.id.clone(),
+                &object.asset,
+                &mut referenced_assets,
+                &mut report,
+            );
+        }
+        for entity in &self.document.layers.entities {
+            self.record_asset_reference(
+                LayerKind::Entities,
+                entity.id.clone(),
+                &entity.asset,
+                &mut referenced_assets,
+                &mut report,
+            );
+        }
+
+        report.unregistered_pngs = self.unregistered_sprite_paths();
+
+        for asset in self.asset_database.assets() {
+            let entry = AssetCatalogEntry {
+                asset_id: asset.id.clone(),
+                category: asset.category.clone(),
+                path: asset.path.clone(),
+            };
+            if !self.project_root.join(&asset.path).exists() {
+                report.missing_files.push(entry.clone());
+            }
+            if !referenced_assets.contains(&asset.id) {
+                report.unused_assets.push(entry);
+            }
+        }
+
+        report
+            .missing_files
+            .sort_by(|left, right| left.asset_id.cmp(&right.asset_id));
+        report.unregistered_pngs.sort();
+        report.unknown_references.sort_by(|left, right| {
+            left.layer
+                .label()
+                .cmp(right.layer.label())
+                .then_with(|| left.owner.cmp(&right.owner))
+                .then_with(|| left.asset_id.cmp(&right.asset_id))
+        });
+        report
+            .unused_assets
+            .sort_by(|left, right| left.asset_id.cmp(&right.asset_id));
+
+        report
+    }
+
+    fn record_asset_reference(
+        &self,
+        layer: LayerKind,
+        owner: String,
+        asset_id: &str,
+        referenced_assets: &mut BTreeSet<String>,
+        report: &mut AssetDependencyReport,
+    ) {
+        let asset_id = asset_id.trim();
+        if !asset_id.is_empty() {
+            referenced_assets.insert(asset_id.to_owned());
+        }
+        if asset_id.is_empty() || self.asset_database.get(asset_id).is_none() {
+            report.unknown_references.push(AssetReferenceIssue {
+                layer,
+                owner,
+                asset_id: if asset_id.is_empty() {
+                    "<空>".to_owned()
+                } else {
+                    asset_id.to_owned()
+                },
+            });
+        }
+    }
+
+    fn validate_transition_links(&self) -> Vec<MapValidationIssue> {
+        let mut issues = Vec::new();
+        for entity in &self.document.layers.entities {
+            if let Some(transition) = &entity.transition {
+                self.validate_transition_link("entity", &entity.id, transition, &mut issues);
+            }
+        }
+        for zone in &self.document.layers.zones {
+            if let Some(transition) = &zone.transition {
+                self.validate_transition_link("zone", &zone.id, transition, &mut issues);
+            }
+        }
+        issues
+    }
+
+    fn validate_transition_link(
+        &self,
+        owner: &str,
+        id: &str,
+        transition: &content::TransitionTarget,
+        issues: &mut Vec<MapValidationIssue>,
+    ) {
+        let map_path = transition
+            .map_path
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default();
+        let target_path = match self.transition_target_map_path(transition) {
+            Ok(target_path) => target_path,
+            Err(error) => {
+                if !map_path.is_empty() && map_path.ends_with(".ron") {
+                    issues.push(editor_validation_warning(format!(
+                        "{owner} {id} transition target map {map_path} {error}"
+                    )));
+                }
+                return;
+            }
+        };
+
+        let target = match MapDocument::load(&target_path) {
+            Ok(target) => target,
+            Err(error) => {
+                issues.push(editor_validation_warning(format!(
+                    "{owner} {id} transition target map {map_path} could not be read: {error:#}"
+                )));
+                return;
+            }
+        };
+
+        let Some(spawn_id) = transition
+            .spawn_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return;
+        };
+        if !target.spawns.iter().any(|spawn| spawn.id == spawn_id) {
+            issues.push(editor_validation_warning(format!(
+                "{owner} {id} transition target map {map_path} has no spawn {spawn_id}"
+            )));
+        }
+    }
+
+    pub(crate) fn transition_target_map_path(
+        &self,
+        transition: &content::TransitionTarget,
+    ) -> Result<PathBuf, String> {
+        let Some(map_path) = transition
+            .map_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return Err("没有目标地图".to_owned());
+        };
+        if !map_path.ends_with(".ron") {
+            return Err("不是 RON 地图".to_owned());
+        }
+
+        let target_path = resolve_transition_map_path(&self.project_root, map_path);
+        target_path
+            .exists()
+            .then_some(target_path)
+            .ok_or_else(|| "不存在".to_owned())
+    }
+
+    pub(crate) fn open_transition_target_map(&mut self, transition: &content::TransitionTarget) {
+        let target_path = match self.transition_target_map_path(transition) {
+            Ok(target_path) => target_path,
+            Err(error) => {
+                self.status = format!("无法打开转场目标：{error}");
+                return;
+            }
+        };
+        let focus_spawn = transition
+            .spawn_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        self.request_open_map(target_path, focus_spawn);
+    }
+
+    pub(crate) fn transition_link_entries(&self) -> Vec<TransitionLinkEntry> {
+        let mut entries = Vec::new();
+        for entity in &self.document.layers.entities {
+            if let Some(transition) = &entity.transition {
+                entries.push(self.transition_link_entry(format!("实体 {}", entity.id), transition));
+            }
+        }
+        for zone in &self.document.layers.zones {
+            if let Some(transition) = &zone.transition {
+                entries.push(self.transition_link_entry(format!("区域 {}", zone.id), transition));
+            }
+        }
+        entries
+    }
+
+    fn transition_link_entry(
+        &self,
+        source: String,
+        transition: &content::TransitionTarget,
+    ) -> TransitionLinkEntry {
+        let scene = transition
+            .scene
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("-")
+            .to_owned();
+        let map_path = transition
+            .map_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("-")
+            .to_owned();
+        let spawn_id = transition
+            .spawn_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("-")
+            .to_owned();
+
+        let mut problem = None;
+        let target_path = match self.transition_target_map_path(transition) {
+            Ok(target_path) => Some(target_path),
+            Err(error) => {
+                if map_path != "-" {
+                    problem = Some(error);
+                }
+                None
+            }
+        };
+
+        if let (Some(target_path), Some(spawn_id)) = (
+            target_path.as_ref(),
+            transition
+                .spawn_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty()),
+        ) {
+            match MapDocument::load(target_path) {
+                Ok(target) => {
+                    if !target.spawns.iter().any(|spawn| spawn.id == spawn_id) {
+                        problem = Some(format!("目标地图没有出生点 {spawn_id}"));
+                    }
+                }
+                Err(error) => {
+                    problem = Some(format!("目标地图无法读取：{error:#}"));
+                }
+            }
+        }
+
+        TransitionLinkEntry {
+            source,
+            scene,
+            map_path,
+            spawn_id,
+            target_path,
+            problem,
+        }
     }
 
     fn asset_db_path(&self) -> PathBuf {
@@ -1030,14 +1407,114 @@ impl EditorApp {
         }
     }
 
+    fn autosave_path_for_id(&self, document_id: &str) -> PathBuf {
+        maps_dir(&self.project_root)
+            .join(".autosave")
+            .join(format!("{document_id}.ron"))
+    }
+
+    fn autosave_path_for_current_document(&self) -> PathBuf {
+        self.autosave_path_for_id(&self.document.id)
+    }
+
+    fn detect_autosave_recovery_for_current_map(&mut self) {
+        self.autosave_recovery = None;
+
+        let autosave_path = self.autosave_path_for_current_document();
+        if !autosave_path.exists() {
+            return;
+        }
+
+        let Some(autosave_modified) = modified_time(&autosave_path) else {
+            return;
+        };
+        let map_modified = modified_time(&self.map_path);
+        if map_modified.is_some_and(|modified| autosave_modified <= modified) {
+            return;
+        }
+
+        let newer_by = map_modified
+            .and_then(|modified| autosave_modified.duration_since(modified).ok())
+            .unwrap_or_default();
+        self.autosave_recovery = Some(AutosaveRecovery {
+            map_path: self.map_path.clone(),
+            autosave_path: autosave_path.clone(),
+            newer_by,
+        });
+        self.status = format!(
+            "发现更新的 autosave：{}",
+            display_project_path(&self.project_root, &autosave_path)
+        );
+    }
+
+    fn restore_autosave(&mut self, recovery: AutosaveRecovery) {
+        match MapDocument::load(&recovery.autosave_path) {
+            Ok(document) => {
+                self.map_path = recovery.map_path;
+                self.selected_map_path = self.map_path.clone();
+                self.document = document;
+                self.save_as_id = self.document.id.clone();
+                self.clear_selection();
+                self.selected_asset = None;
+                self.pending_open_path = None;
+                self.open_confirm_path = None;
+                self.pending_open_focus_spawn = None;
+                self.undo_stack.clear();
+                self.redo_stack.clear();
+                self.active_layer = LayerKind::Ground;
+                self.dirty = true;
+                self.last_autosave = Instant::now();
+                self.autosave_recovery = None;
+                self.status = format!(
+                    "已恢复 autosave，请保存写回 {}",
+                    display_project_path(&self.project_root, &self.map_path)
+                );
+            }
+            Err(error) => {
+                self.status = format!(
+                    "恢复 autosave 失败 {}：{error:#}",
+                    display_project_path(&self.project_root, &recovery.autosave_path)
+                );
+            }
+        }
+    }
+
+    fn discard_autosave(&mut self, recovery: AutosaveRecovery) {
+        match fs::remove_file(&recovery.autosave_path) {
+            Ok(()) => {
+                self.autosave_recovery = None;
+                self.status = format!(
+                    "已丢弃 autosave：{}",
+                    display_project_path(&self.project_root, &recovery.autosave_path)
+                );
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                self.autosave_recovery = None;
+                self.status = "autosave 已不存在".to_owned();
+            }
+            Err(error) => {
+                self.status = format!(
+                    "丢弃 autosave 失败 {}：{error}",
+                    display_project_path(&self.project_root, &recovery.autosave_path)
+                );
+            }
+        }
+    }
+
+    fn clear_current_autosave_file(&self) {
+        match fs::remove_file(self.autosave_path_for_current_document()) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => {}
+        }
+    }
+
     fn autosave_if_needed(&mut self) {
         if !self.dirty || self.last_autosave.elapsed() < Duration::from_secs(60) {
             return;
         }
         self.last_autosave = Instant::now();
-        let path = maps_dir(&self.project_root)
-            .join(".autosave")
-            .join(format!("{}.ron", self.document.id));
+        let path = self.autosave_path_for_current_document();
         match self.document.save(&path) {
             Ok(()) => {
                 self.status = format!(
@@ -1373,6 +1850,13 @@ impl EditorApp {
         values.into_iter().collect()
     }
 
+    fn map_path_options(&self) -> Vec<String> {
+        self.map_entries
+            .iter()
+            .filter_map(|entry| project_relative_path(&self.project_root, &entry.path))
+            .collect()
+    }
+
     fn draw_top_bar(&mut self, ui: &mut egui::Ui) {
         ui.spacing_mut().item_spacing.y = 0.0;
         if !native_menu::NATIVE_MENU_ENABLED {
@@ -1490,6 +1974,44 @@ impl EditorApp {
                         self.delete_current_selection();
                         ui.close();
                     }
+                    ui.separator();
+                    let align_enabled =
+                        self.alignable_selection_count(&self.current_selection_list()) >= 2;
+                    ui.menu_button("批量对齐", |ui| {
+                        for mode in BatchAlignMode::ALL {
+                            if ui
+                                .add_enabled(align_enabled, egui::Button::new(mode.label()))
+                                .clicked()
+                            {
+                                self.align_selected_items(mode);
+                                ui.close();
+                            }
+                        }
+                    });
+                    let distribute_enabled =
+                        self.distributable_selection_count(&self.current_selection_list()) >= 3;
+                    ui.menu_button("均匀分布", |ui| {
+                        for mode in BatchDistributeMode::ALL {
+                            if ui
+                                .add_enabled(distribute_enabled, egui::Button::new(mode.label()))
+                                .clicked()
+                            {
+                                self.distribute_selected_items(mode);
+                                ui.close();
+                            }
+                        }
+                    });
+                    let current_asset = self.selected_asset().cloned();
+                    let replace_enabled = current_asset.as_ref().is_some_and(|asset| {
+                        self.replaceable_selection_count(&self.current_selection_list(), asset) > 0
+                    });
+                    if ui
+                        .add_enabled(replace_enabled, egui::Button::new("用当前素材替换所选"))
+                        .clicked()
+                    {
+                        self.replace_selected_assets_with_current();
+                        ui.close();
+                    }
                 });
 
                 menu_bar_button(ui, "视图", |ui| {
@@ -1602,6 +2124,10 @@ impl EditorApp {
                     }
                     if ui.button("未登记图片").clicked() {
                         self.show_unregistered_assets = true;
+                        ui.close();
+                    }
+                    if ui.button("资产依赖报告").clicked() {
+                        self.open_asset_dependency_report();
                         ui.close();
                     }
                     ui.separator();
@@ -1846,6 +2372,12 @@ fn draw_top_bar_divider(ui: &mut egui::Ui) {
     ui.painter().rect_filled(rect, 0.0, THEME_BORDER);
 }
 
+fn modified_time(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+}
+
 impl eframe::App for EditorApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
@@ -2074,6 +2606,36 @@ fn layer_shortcut(layer: LayerKind) -> &'static str {
     }
 }
 
+fn keyboard_nudge_step(modifiers: Modifiers) -> f32 {
+    if modifiers.ctrl || (modifiers.command && !modifiers.mac_cmd) {
+        4.0
+    } else if modifiers.shift {
+        0.5
+    } else {
+        1.0
+    }
+}
+
+fn editor_validation_warning(message: impl Into<String>) -> MapValidationIssue {
+    MapValidationIssue {
+        severity: MapValidationSeverity::Warning,
+        message: message.into(),
+    }
+}
+
+fn resolve_transition_map_path(project_root: &Path, map_path: &str) -> PathBuf {
+    let raw = PathBuf::from(map_path.trim());
+    if raw.is_absolute() {
+        return raw;
+    }
+
+    if raw.components().count() <= 1 {
+        maps_dir(project_root).join(raw)
+    } else {
+        project_root.join(raw)
+    }
+}
+
 fn object_instance_editor(
     ui: &mut egui::Ui,
     instance: &mut content::ObjectInstance,
@@ -2193,6 +2755,7 @@ fn draw_transition_target_editor(
     label: &str,
     id_prefix: &str,
     transition: &mut Option<content::TransitionTarget>,
+    map_path_options: &[String],
     changed: &mut bool,
 ) {
     const SCENE_OPTIONS: &[&str] = &["Overworld", "Facility"];
@@ -2236,7 +2799,13 @@ fn draw_transition_target_editor(
     }
 
     let mut map_path = target.map_path.clone().unwrap_or_default();
-    if labeled_text_edit(ui, "目标地图", &mut map_path) {
+    if labeled_text_edit_with_options(
+        ui,
+        "目标地图",
+        format!("{id_prefix}_map"),
+        &mut map_path,
+        map_path_options,
+    ) {
         set_optional_string(&mut target.map_path, map_path);
         *changed = true;
     }

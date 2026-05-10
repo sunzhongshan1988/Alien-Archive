@@ -49,6 +49,41 @@ impl EditorApp {
                 });
         }
 
+        if let Some(recovery) = self.autosave_recovery.clone() {
+            egui::Window::new("发现自动保存")
+                .collapsible(false)
+                .resizable(false)
+                .default_width(520.0)
+                .show(ctx, |ui| {
+                    ui.label("检测到比主文件更新的 autosave。");
+                    ui.separator();
+                    ui.label("主文件");
+                    ui.monospace(display_project_path(&self.project_root, &recovery.map_path));
+                    ui.label("自动保存");
+                    ui.monospace(display_project_path(
+                        &self.project_root,
+                        &recovery.autosave_path,
+                    ));
+                    ui.label(format!(
+                        "autosave 比主文件新 {}",
+                        format_duration(recovery.newer_by)
+                    ));
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui.button("恢复 autosave").clicked() {
+                            self.restore_autosave(recovery.clone());
+                        }
+                        if ui.button("丢弃 autosave").clicked() {
+                            self.discard_autosave(recovery.clone());
+                        }
+                        if ui.button("稍后").clicked() {
+                            self.autosave_recovery = None;
+                            self.status = "已暂时忽略 autosave，文件仍保留".to_owned();
+                        }
+                    });
+                });
+        }
+
         if let Some(path) = self.open_confirm_path.clone() {
             egui::Window::new("未保存的修改")
                 .collapsible(false)
@@ -70,6 +105,7 @@ impl EditorApp {
                         }
                         if ui.button("取消").clicked() {
                             self.open_confirm_path = None;
+                            self.pending_open_focus_spawn = None;
                         }
                     });
                 });
@@ -113,6 +149,56 @@ impl EditorApp {
                     }
                     if ui.button("关闭").clicked() {
                         self.show_validation_panel = false;
+                    }
+                });
+        }
+
+        if self.show_asset_dependency_report {
+            let report = self.asset_dependency_report.clone();
+            egui::Window::new("资产依赖报告")
+                .default_width(760.0)
+                .default_height(560.0)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("当前地图");
+                        ui.monospace(display_project_path(&self.project_root, &self.map_path));
+                    });
+                    ui.label(report.summary());
+                    ui.horizontal(|ui| {
+                        if ui.button("刷新").clicked() {
+                            self.open_asset_dependency_report();
+                        }
+                        if ui.button("打开未登记图片").clicked() {
+                            self.show_unregistered_assets = true;
+                        }
+                        if ui.button("关闭").clicked() {
+                            self.show_asset_dependency_report = false;
+                        }
+                    });
+                    ui.separator();
+                    if report.item_count() == 0 {
+                        ui.label("没有发现资产依赖问题。");
+                    } else {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            draw_asset_catalog_section(
+                                ui,
+                                "缺文件",
+                                &report.missing_files,
+                                &self.project_root,
+                            );
+                            draw_string_section(ui, "未登记 PNG", &report.unregistered_pngs);
+                            draw_asset_reference_section(
+                                ui,
+                                "地图引用未知 asset",
+                                &report.unknown_references,
+                            );
+                            draw_asset_catalog_section(
+                                ui,
+                                "地图未使用 asset",
+                                &report.unused_assets,
+                                &self.project_root,
+                            );
+                        });
                     }
                 });
         }
@@ -408,6 +494,82 @@ impl EditorApp {
         self.redo_stack.clear();
         self.dirty = true;
         self.show_new_map_dialog = false;
+        self.autosave_recovery = None;
         self.status = "已创建新地图".to_owned();
+    }
+}
+
+fn draw_asset_catalog_section(
+    ui: &mut egui::Ui,
+    title: &str,
+    entries: &[AssetCatalogEntry],
+    project_root: &std::path::Path,
+) {
+    egui::CollapsingHeader::new(format!("{title} ({})", entries.len()))
+        .default_open(!entries.is_empty())
+        .show(ui, |ui| {
+            if entries.is_empty() {
+                ui.label("无");
+                return;
+            }
+            for entry in entries {
+                ui.horizontal_wrapped(|ui| {
+                    ui.monospace(&entry.asset_id);
+                    ui.label(&entry.category);
+                    ui.monospace(display_report_asset_path(project_root, &entry.path));
+                });
+            }
+        });
+}
+
+fn draw_asset_reference_section(ui: &mut egui::Ui, title: &str, entries: &[AssetReferenceIssue]) {
+    egui::CollapsingHeader::new(format!("{title} ({})", entries.len()))
+        .default_open(!entries.is_empty())
+        .show(ui, |ui| {
+            if entries.is_empty() {
+                ui.label("无");
+                return;
+            }
+            for entry in entries {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(entry.layer.zh_label());
+                    ui.monospace(&entry.owner);
+                    ui.monospace(&entry.asset_id);
+                });
+            }
+        });
+}
+
+fn draw_string_section(ui: &mut egui::Ui, title: &str, entries: &[String]) {
+    egui::CollapsingHeader::new(format!("{title} ({})", entries.len()))
+        .default_open(!entries.is_empty())
+        .show(ui, |ui| {
+            if entries.is_empty() {
+                ui.label("无");
+                return;
+            }
+            for entry in entries {
+                ui.monospace(entry);
+            }
+        });
+}
+
+fn display_report_asset_path(project_root: &std::path::Path, path: &std::path::Path) -> String {
+    let absolute_path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        project_root.join(path)
+    };
+    display_project_path(project_root, &absolute_path)
+}
+
+fn format_duration(duration: std::time::Duration) -> String {
+    let seconds = duration.as_secs();
+    if seconds >= 3600 {
+        format!("{} 小时 {} 分钟", seconds / 3600, seconds % 3600 / 60)
+    } else if seconds >= 60 {
+        format!("{} 分钟 {} 秒", seconds / 60, seconds % 60)
+    } else {
+        format!("{seconds} 秒")
     }
 }

@@ -50,6 +50,123 @@ impl EditorApp {
             }
         });
 
+        let alignable_count = self.alignable_selection_count(&selections);
+        if alignable_count > 1 {
+            ui.separator();
+            inspector_section(ui, "批量对齐");
+            ui.label(format!("{} 个可对齐对象", alignable_count));
+            ui.horizontal_wrapped(|ui| {
+                for mode in BatchAlignMode::ALL {
+                    if ui.button(mode.label()).clicked() {
+                        self.align_selected_items(mode);
+                    }
+                }
+            });
+            ui.small("方向键微调；Shift = 半格，Ctrl = 4 格。");
+        }
+        let distributable_count = self.distributable_selection_count(&selections);
+        if distributable_count > 2 {
+            ui.horizontal_wrapped(|ui| {
+                for mode in BatchDistributeMode::ALL {
+                    if ui.button(mode.label()).clicked() {
+                        self.distribute_selected_items(mode);
+                    }
+                }
+            });
+        }
+
+        if let Some(asset) = self.selected_asset().cloned() {
+            let replaceable_count = self.replaceable_selection_count(&selections, &asset);
+            if replaceable_count > 0 {
+                ui.separator();
+                inspector_section(ui, "批量替换");
+                ui.label(format!("当前素材：{}", asset.id));
+                if ui
+                    .button(format!("替换 {} 个匹配对象", replaceable_count))
+                    .clicked()
+                {
+                    self.replace_selected_assets_with_current();
+                }
+            }
+        }
+
+        let entity_count = self.editable_entity_selection_count(&selections);
+        if entity_count > 0 {
+            ui.separator();
+            inspector_section(ui, "批量实体字段");
+            ui.label(format!("{} 个实体可编辑", entity_count));
+            let (mut entity_type, mixed) = self.common_entity_type_for_selection(&selections);
+            if mixed {
+                ui.colored_label(THEME_MUTED_TEXT, "当前实体类型：混合");
+            }
+            if labeled_text_edit_with_options(
+                ui,
+                "实体类型",
+                "batch_entity_type",
+                &mut entity_type,
+                &self.entity_type_options(),
+            ) {
+                self.set_entity_type_for_selection(&selections, entity_type);
+            }
+        }
+
+        let unlockable_count = self.unlockable_selection_count(&selections);
+        if unlockable_count > 0 {
+            ui.separator();
+            inspector_section(ui, "批量解锁条件");
+            ui.label(format!("{} 个实体/区域可编辑", unlockable_count));
+
+            let codex_id_options = self.codex_id_options();
+            let item_id_options = self.item_id_options();
+
+            let (mut codex_id, codex_mixed) = self.common_unlock_codex_for_selection(&selections);
+            if codex_mixed {
+                ui.colored_label(THEME_MUTED_TEXT, "扫描需求：混合");
+            }
+            if labeled_text_edit_with_options(
+                ui,
+                "扫描需求",
+                "batch_unlock_codex",
+                &mut codex_id,
+                &codex_id_options,
+            ) {
+                self.set_unlock_codex_for_selection(&selections, codex_id.clone());
+            }
+            if !codex_mixed && !codex_id.trim().is_empty() {
+                draw_codex_entry_preview(ui, codex_id.trim(), self.codex_database.as_ref());
+            }
+
+            let (mut item_id, item_mixed) = self.common_unlock_item_for_selection(&selections);
+            if item_mixed {
+                ui.colored_label(THEME_MUTED_TEXT, "物品需求：混合");
+            }
+            if labeled_text_edit_with_options(
+                ui,
+                "物品需求",
+                "batch_unlock_item",
+                &mut item_id,
+                &item_id_options,
+            ) {
+                self.set_unlock_item_for_selection(&selections, item_id);
+            }
+
+            let (mut locked_message, message_mixed) =
+                self.common_unlock_message_for_selection(&selections);
+            if message_mixed {
+                ui.colored_label(THEME_MUTED_TEXT, "锁定提示：混合");
+            }
+            if labeled_text_edit(ui, "锁定提示", &mut locked_message) {
+                self.set_unlock_message_for_selection(&selections, locked_message);
+            }
+
+            ui.horizontal(|ui| {
+                if ui.button("清除解锁条件").clicked() {
+                    self.clear_unlock_for_selection(&selections);
+                }
+            });
+            ui.small("空值会清除对应字段；混合值时输入会覆盖所有可编辑对象。");
+        }
+
         let object_like_count = selections
             .iter()
             .filter(|selection| {
@@ -140,6 +257,8 @@ impl EditorApp {
             self.save_as_id = self.document.id.clone();
             self.mark_dirty();
         }
+
+        self.draw_transition_links_inspector(ui);
     }
 
     fn draw_asset_inspector(&mut self, ui: &mut egui::Ui, asset: &AssetEntry) {
@@ -208,9 +327,11 @@ impl EditorApp {
         let entity_type_options = self.entity_type_options();
         let codex_id_options = self.codex_id_options();
         let item_id_options = self.item_id_options();
+        let map_path_options = self.map_path_options();
         let mut next = self.document.clone();
         let mut changed = false;
         let mut next_selection = selection.clone();
+        let mut open_transition_target = None;
 
         match selection.layer {
             LayerKind::Ground => {
@@ -342,8 +463,12 @@ impl EditorApp {
                         "转场目标",
                         &transition_id,
                         &mut instance.transition,
+                        &map_path_options,
                         &mut changed,
                     );
+                    if self.draw_transition_target_action(ui, instance.transition.as_ref()) {
+                        open_transition_target = instance.transition.clone();
+                    }
                     changed |= ui
                         .add(
                             egui::DragValue::new(&mut instance.x)
@@ -500,8 +625,12 @@ impl EditorApp {
                         "转场目标",
                         &transition_id,
                         &mut zone.transition,
+                        &map_path_options,
                         &mut changed,
                     );
+                    if self.draw_transition_target_action(ui, zone.transition.as_ref()) {
+                        open_transition_target = zone.transition.clone();
+                    }
                     next_selection.id = zone.id.clone();
                     ui.label(format!("点数：{}", zone.points.len()));
                     for (index, point) in zone.points.iter_mut().enumerate() {
@@ -542,6 +671,66 @@ impl EditorApp {
             self.document = next;
             self.set_single_selection(Some(next_selection));
             self.mark_dirty();
+        }
+
+        if let Some(transition) = open_transition_target {
+            self.open_transition_target_map(&transition);
+        }
+    }
+
+    fn draw_transition_target_action(
+        &self,
+        ui: &mut egui::Ui,
+        transition: Option<&content::TransitionTarget>,
+    ) -> bool {
+        let Some(transition) = transition else {
+            return false;
+        };
+        match self.transition_target_map_path(transition) {
+            Ok(path) => {
+                ui.horizontal(|ui| {
+                    let clicked = ui.button("打开目标地图").clicked();
+                    ui.small(display_project_path(&self.project_root, &path));
+                    clicked
+                })
+                .inner
+            }
+            Err(error) => {
+                ui.colored_label(THEME_WARNING, format!("目标地图不可打开：{error}"));
+                false
+            }
+        }
+    }
+
+    fn draw_transition_links_inspector(&mut self, ui: &mut egui::Ui) {
+        let links = self.transition_link_entries();
+        ui.separator();
+        inspector_section(ui, "转场关系");
+        if links.is_empty() {
+            ui.colored_label(THEME_MUTED_TEXT, "当前地图没有实体/区域转场目标。");
+            return;
+        }
+
+        for link in links {
+            ui.separator();
+            ui.label(&link.source);
+            ui.small(format!(
+                "scene: {} | map: {} | spawn: {}",
+                link.scene, link.map_path, link.spawn_id
+            ));
+            if let Some(problem) = &link.problem {
+                ui.colored_label(THEME_WARNING, problem);
+            } else if link.target_path.is_some() {
+                ui.colored_label(THEME_ACCENT_STRONG, "目标地图可打开");
+            } else {
+                ui.colored_label(THEME_MUTED_TEXT, "未指定目标地图，运行时会使用默认路径。");
+            }
+            if let Some(path) = link.target_path {
+                if ui.button("打开目标地图").clicked() {
+                    let focus_spawn = (link.spawn_id != "-").then_some(link.spawn_id);
+                    self.request_open_map(path, focus_spawn);
+                }
+            }
         }
     }
 }

@@ -3,6 +3,8 @@ use content::LayerKind;
 
 use crate::app::commands::MenuCommand;
 #[cfg(target_os = "macos")]
+use crate::app::state::{BatchAlignMode, BatchDistributeMode};
+#[cfg(target_os = "macos")]
 use crate::tools::ToolKind;
 
 #[cfg(target_os = "macos")]
@@ -116,6 +118,17 @@ fn build_menu() -> muda::Result<muda::Menu> {
             &menu_item("edit.paste", "粘贴", Some("CmdOrCtrl+v")),
             &menu_item("edit.duplicate", "复制一份", Some("CmdOrCtrl+d")),
             &menu_item("edit.delete", "删除", None),
+            &PredefinedMenuItem::separator(),
+            &menu_item("edit.align_left", "左对齐", None),
+            &menu_item("edit.align_center_x", "水平居中", None),
+            &menu_item("edit.align_right", "右对齐", None),
+            &menu_item("edit.align_top", "顶对齐", None),
+            &menu_item("edit.align_center_y", "垂直居中", None),
+            &menu_item("edit.align_bottom", "底对齐", None),
+            &PredefinedMenuItem::separator(),
+            &menu_item("edit.distribute_horizontal", "水平分布", None),
+            &menu_item("edit.distribute_vertical", "垂直分布", None),
+            &menu_item("edit.replace_asset", "用当前素材替换所选", None),
         ],
     )?;
 
@@ -184,6 +197,7 @@ fn build_menu() -> muda::Result<muda::Menu> {
             &menu_item("asset.save_db", "保存素材库", None),
             &PredefinedMenuItem::separator(),
             &menu_item("asset.unregistered", "未登记图片", None),
+            &menu_item("asset.dependency_report", "资产依赖报告", None),
             &menu_item("asset.reload", "重新扫描 Metadata", None),
         ],
     )?;
@@ -231,6 +245,19 @@ fn command_for_id(id: &str) -> Option<MenuCommand> {
         "edit.paste" => MenuCommand::Paste,
         "edit.duplicate" => MenuCommand::Duplicate,
         "edit.delete" => MenuCommand::DeleteSelection,
+        "edit.align_left" => MenuCommand::AlignSelection(BatchAlignMode::Left),
+        "edit.align_center_x" => MenuCommand::AlignSelection(BatchAlignMode::CenterX),
+        "edit.align_right" => MenuCommand::AlignSelection(BatchAlignMode::Right),
+        "edit.align_top" => MenuCommand::AlignSelection(BatchAlignMode::Top),
+        "edit.align_center_y" => MenuCommand::AlignSelection(BatchAlignMode::CenterY),
+        "edit.align_bottom" => MenuCommand::AlignSelection(BatchAlignMode::Bottom),
+        "edit.distribute_horizontal" => {
+            MenuCommand::DistributeSelection(BatchDistributeMode::Horizontal)
+        }
+        "edit.distribute_vertical" => {
+            MenuCommand::DistributeSelection(BatchDistributeMode::Vertical)
+        }
+        "edit.replace_asset" => MenuCommand::ReplaceSelectionAsset,
         "view.grid" => MenuCommand::ToggleGrid,
         "view.collision" => MenuCommand::ToggleCollision,
         "view.entity_bounds" => MenuCommand::ToggleEntityBounds,
@@ -260,6 +287,7 @@ fn command_for_id(id: &str) -> Option<MenuCommand> {
         "asset.remove" => MenuCommand::RemoveSelectedAsset,
         "asset.save_db" => MenuCommand::SaveAssetDatabase,
         "asset.unregistered" => MenuCommand::ShowUnregisteredAssets,
+        "asset.dependency_report" => MenuCommand::ShowAssetDependencyReport,
         "asset.reload" => MenuCommand::ReloadAssetDatabase,
         _ => return None,
     })

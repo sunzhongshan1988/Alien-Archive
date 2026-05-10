@@ -1,5 +1,6 @@
 use content::LayerKind;
 
+use super::state::{BatchAlignMode, BatchDistributeMode};
 use crate::tools::ToolKind;
 
 #[allow(dead_code)]
@@ -20,6 +21,9 @@ pub(crate) enum MenuCommand {
     Paste,
     Duplicate,
     DeleteSelection,
+    AlignSelection(BatchAlignMode),
+    DistributeSelection(BatchDistributeMode),
+    ReplaceSelectionAsset,
     ToggleGrid,
     ToggleCollision,
     ToggleEntityBounds,
@@ -34,5 +38,6 @@ pub(crate) enum MenuCommand {
     RemoveSelectedAsset,
     SaveAssetDatabase,
     ShowUnregisteredAssets,
+    ShowAssetDependencyReport,
     ReloadAssetDatabase,
 }

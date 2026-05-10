@@ -1,4 +1,8 @@
-use std::{collections::HashMap, path::PathBuf, time::Instant};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use content::{self, AssetDatabase, CodexDatabase, LayerKind, MapDocument};
 use eframe::egui::{Color32, Pos2, Rect, TextureHandle, Vec2};
@@ -162,6 +166,55 @@ impl MoveOrigin {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum BatchAlignMode {
+    Left,
+    CenterX,
+    Right,
+    Top,
+    CenterY,
+    Bottom,
+}
+
+impl BatchAlignMode {
+    pub(crate) const ALL: [Self; 6] = [
+        Self::Left,
+        Self::CenterX,
+        Self::Right,
+        Self::Top,
+        Self::CenterY,
+        Self::Bottom,
+    ];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Left => "左对齐",
+            Self::CenterX => "水平居中",
+            Self::Right => "右对齐",
+            Self::Top => "顶对齐",
+            Self::CenterY => "垂直居中",
+            Self::Bottom => "底对齐",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum BatchDistributeMode {
+    Horizontal,
+    Vertical,
+}
+
+impl BatchDistributeMode {
+    pub(crate) const ALL: [Self; 2] = [Self::Horizontal, Self::Vertical];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Horizontal => "水平分布",
+            Self::Vertical => "垂直分布",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SelectedItem {
     pub(crate) layer: LayerKind,
@@ -191,6 +244,54 @@ pub(crate) struct OutlinerEntry {
     pub(crate) badges: Vec<OutlinerBadge>,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct AssetCatalogEntry {
+    pub(crate) asset_id: String,
+    pub(crate) category: String,
+    pub(crate) path: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct AssetReferenceIssue {
+    pub(crate) layer: LayerKind,
+    pub(crate) owner: String,
+    pub(crate) asset_id: String,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct AssetDependencyReport {
+    pub(crate) missing_files: Vec<AssetCatalogEntry>,
+    pub(crate) unregistered_pngs: Vec<String>,
+    pub(crate) unknown_references: Vec<AssetReferenceIssue>,
+    pub(crate) unused_assets: Vec<AssetCatalogEntry>,
+}
+
+impl AssetDependencyReport {
+    pub(crate) fn item_count(&self) -> usize {
+        self.missing_files.len()
+            + self.unregistered_pngs.len()
+            + self.unknown_references.len()
+            + self.unused_assets.len()
+    }
+
+    pub(crate) fn summary(&self) -> String {
+        format!(
+            "缺文件 {} / 未登记 PNG {} / 未知引用 {} / 未使用 {}",
+            self.missing_files.len(),
+            self.unregistered_pngs.len(),
+            self.unknown_references.len(),
+            self.unused_assets.len()
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct AutosaveRecovery {
+    pub(crate) map_path: PathBuf,
+    pub(crate) autosave_path: PathBuf,
+    pub(crate) newer_by: Duration,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum LeftSidebarTab {
     Assets,
@@ -218,6 +319,7 @@ pub(crate) struct EditorApp {
     pub(crate) selected_map_path: PathBuf,
     pub(crate) pending_open_path: Option<PathBuf>,
     pub(crate) open_confirm_path: Option<PathBuf>,
+    pub(crate) pending_open_focus_spawn: Option<String>,
     pub(crate) delete_confirm_path: Option<PathBuf>,
     pub(crate) config: EditorConfig,
     pub(crate) save_as_id: String,
@@ -229,6 +331,9 @@ pub(crate) struct EditorApp {
     pub(crate) codex_db_status: String,
     pub(crate) show_asset_dialog: bool,
     pub(crate) show_unregistered_assets: bool,
+    pub(crate) show_asset_dependency_report: bool,
+    pub(crate) asset_dependency_report: AssetDependencyReport,
+    pub(crate) autosave_recovery: Option<AutosaveRecovery>,
     pub(crate) asset_scan_root: PathBuf,
     pub(crate) asset_editing_id: Option<String>,
     pub(crate) asset_draft: AssetDraft,

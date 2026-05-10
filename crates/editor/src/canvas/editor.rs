@@ -1,5 +1,198 @@
 use crate::*;
 
+#[derive(Clone, Copy, Debug)]
+struct SelectionMapBounds {
+    min_x: f32,
+    min_y: f32,
+    max_x: f32,
+    max_y: f32,
+}
+
+impl SelectionMapBounds {
+    fn from_min_max(min_x: f32, min_y: f32, max_x: f32, max_y: f32) -> Self {
+        Self {
+            min_x,
+            min_y,
+            max_x,
+            max_y,
+        }
+    }
+
+    fn include(&mut self, other: Self) {
+        self.min_x = self.min_x.min(other.min_x);
+        self.min_y = self.min_y.min(other.min_y);
+        self.max_x = self.max_x.max(other.max_x);
+        self.max_y = self.max_y.max(other.max_y);
+    }
+
+    fn center_x(self) -> f32 {
+        (self.min_x + self.max_x) * 0.5
+    }
+
+    fn center_y(self) -> f32 {
+        (self.min_y + self.max_y) * 0.5
+    }
+
+    fn width(self) -> f32 {
+        self.max_x - self.min_x
+    }
+
+    fn height(self) -> f32 {
+        self.max_y - self.min_y
+    }
+}
+
+fn align_target(mode: BatchAlignMode, bounds: SelectionMapBounds) -> f32 {
+    match mode {
+        BatchAlignMode::Left => bounds.min_x,
+        BatchAlignMode::CenterX => bounds.center_x(),
+        BatchAlignMode::Right => bounds.max_x,
+        BatchAlignMode::Top => bounds.min_y,
+        BatchAlignMode::CenterY => bounds.center_y(),
+        BatchAlignMode::Bottom => bounds.max_y,
+    }
+}
+
+fn align_delta(mode: BatchAlignMode, bounds: SelectionMapBounds, target: f32) -> [f32; 2] {
+    match mode {
+        BatchAlignMode::Left => [target - bounds.min_x, 0.0],
+        BatchAlignMode::CenterX => [target - bounds.center_x(), 0.0],
+        BatchAlignMode::Right => [target - bounds.max_x, 0.0],
+        BatchAlignMode::Top => [0.0, target - bounds.min_y],
+        BatchAlignMode::CenterY => [0.0, target - bounds.center_y()],
+        BatchAlignMode::Bottom => [0.0, target - bounds.max_y],
+    }
+}
+
+fn zone_map_bounds(points: &[[f32; 2]]) -> Option<SelectionMapBounds> {
+    let first = points.first()?;
+    let mut bounds = SelectionMapBounds::from_min_max(first[0], first[1], first[0], first[1]);
+    for point in points.iter().skip(1) {
+        bounds.include(SelectionMapBounds::from_min_max(
+            point[0], point[1], point[0], point[1],
+        ));
+    }
+    Some(bounds)
+}
+
+fn is_meaningful_delta(delta: [f32; 2]) -> bool {
+    delta[0].abs() > 0.001 || delta[1].abs() > 0.001
+}
+
+fn trimmed_optional(value: &str) -> Option<String> {
+    let value = value.trim().to_owned();
+    (!value.is_empty()).then_some(value)
+}
+
+fn normalized_optional(value: Option<&String>) -> Option<String> {
+    value.and_then(|value| trimmed_optional(value))
+}
+
+fn common_text_value<I>(values: I) -> (String, bool)
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut values = values.into_iter();
+    let Some(first) = values.next() else {
+        return (String::new(), false);
+    };
+    if values.any(|value| value != first) {
+        (String::new(), true)
+    } else {
+        (first, false)
+    }
+}
+
+fn common_optional_text_value<I>(values: I) -> (String, bool)
+where
+    I: IntoIterator<Item = Option<String>>,
+{
+    let mut values = values.into_iter();
+    let Some(first) = values.next() else {
+        return (String::new(), false);
+    };
+    if values.any(|value| value != first) {
+        (String::new(), true)
+    } else {
+        (first.unwrap_or_default(), false)
+    }
+}
+
+fn distribute_deltas(
+    mode: BatchDistributeMode,
+    mut candidates: Vec<(usize, SelectionMapBounds)>,
+) -> Vec<(usize, [f32; 2])> {
+    if candidates.len() < 3 {
+        return Vec::new();
+    }
+
+    match mode {
+        BatchDistributeMode::Horizontal => {
+            candidates.sort_by(|left, right| left.1.min_x.total_cmp(&right.1.min_x));
+            let min = candidates
+                .iter()
+                .map(|(_, bounds)| bounds.min_x)
+                .fold(f32::INFINITY, f32::min);
+            let max = candidates
+                .iter()
+                .map(|(_, bounds)| bounds.max_x)
+                .fold(f32::NEG_INFINITY, f32::max);
+            let total_size = candidates
+                .iter()
+                .map(|(_, bounds)| bounds.width().max(0.0))
+                .sum::<f32>();
+            let gap = (max - min - total_size) / (candidates.len() - 1) as f32;
+            let mut cursor = min;
+            candidates
+                .into_iter()
+                .filter_map(|(index, bounds)| {
+                    let delta = [cursor - bounds.min_x, 0.0];
+                    cursor += bounds.width().max(0.0) + gap;
+                    is_meaningful_delta(delta).then_some((index, delta))
+                })
+                .collect()
+        }
+        BatchDistributeMode::Vertical => {
+            candidates.sort_by(|left, right| left.1.min_y.total_cmp(&right.1.min_y));
+            let min = candidates
+                .iter()
+                .map(|(_, bounds)| bounds.min_y)
+                .fold(f32::INFINITY, f32::min);
+            let max = candidates
+                .iter()
+                .map(|(_, bounds)| bounds.max_y)
+                .fold(f32::NEG_INFINITY, f32::max);
+            let total_size = candidates
+                .iter()
+                .map(|(_, bounds)| bounds.height().max(0.0))
+                .sum::<f32>();
+            let gap = (max - min - total_size) / (candidates.len() - 1) as f32;
+            let mut cursor = min;
+            candidates
+                .into_iter()
+                .filter_map(|(index, bounds)| {
+                    let delta = [0.0, cursor - bounds.min_y];
+                    cursor += bounds.height().max(0.0) + gap;
+                    is_meaningful_delta(delta).then_some((index, delta))
+                })
+                .collect()
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BatchUnlockField {
+    Codex,
+    Item,
+    Message,
+}
+
+static EMPTY_UNLOCK_RULE: UnlockRule = UnlockRule {
+    requires_codex_id: None,
+    requires_item_id: None,
+    locked_message: None,
+};
+
 impl EditorApp {
     pub(crate) fn draw_canvas(&mut self, ui: &mut egui::Ui, ctx: &EguiContext) {
         let desired_size = ui.available_size_before_wrap();
@@ -1878,6 +2071,789 @@ impl EditorApp {
         }
 
         self.set_selection(next_selection);
+    }
+
+    pub(crate) fn alignable_selection_count(&self, selections: &[SelectedItem]) -> usize {
+        selections
+            .iter()
+            .filter(|selection| {
+                !self.layer_state(selection.layer).locked
+                    && self.selection_map_bounds(selection).is_some()
+            })
+            .count()
+    }
+
+    pub(crate) fn distributable_selection_count(&self, selections: &[SelectedItem]) -> usize {
+        self.alignable_selection_count(selections)
+    }
+
+    pub(crate) fn align_selected_items(&mut self, mode: BatchAlignMode) {
+        let selections = self.current_selection_list();
+        if selections.is_empty() {
+            self.status = "请先选择对象".to_owned();
+            return;
+        }
+
+        let candidates = selections
+            .iter()
+            .filter(|selection| !self.layer_state(selection.layer).locked)
+            .filter_map(|selection| {
+                self.selection_map_bounds(selection)
+                    .map(|bounds| (selection.clone(), bounds))
+            })
+            .collect::<Vec<_>>();
+
+        if candidates.len() < 2 {
+            self.status = "至少选择两个可对齐对象".to_owned();
+            return;
+        }
+
+        let mut group_bounds = candidates[0].1;
+        for (_, bounds) in candidates.iter().skip(1) {
+            group_bounds.include(*bounds);
+        }
+        let target = align_target(mode, group_bounds);
+        let moves = candidates
+            .into_iter()
+            .filter_map(|(selection, bounds)| {
+                let delta = align_delta(mode, bounds, target);
+                is_meaningful_delta(delta).then_some((selection, delta))
+            })
+            .collect::<Vec<_>>();
+        if moves.is_empty() {
+            self.status = format!("所选对象已经{}", mode.label());
+            return;
+        }
+
+        let mut next_selection = selections;
+        let mut changed = 0;
+
+        self.push_undo_snapshot();
+        for (selection, delta) in moves {
+            if let Some(updated) = self.offset_selection_by_delta(&selection, delta) {
+                if let Some(index) = next_selection.iter().position(|item| item == &selection) {
+                    next_selection[index] = updated;
+                }
+                changed += 1;
+            }
+        }
+
+        if changed == 0 {
+            self.status = format!("所选对象已经{}", mode.label());
+            return;
+        }
+
+        self.set_selection(next_selection);
+        self.mark_dirty();
+        self.status = format!("已{} {} 个对象", mode.label(), changed);
+    }
+
+    pub(crate) fn distribute_selected_items(&mut self, mode: BatchDistributeMode) {
+        let selections = self.current_selection_list();
+        if selections.is_empty() {
+            self.status = "请先选择对象".to_owned();
+            return;
+        }
+
+        let candidates = selections
+            .iter()
+            .enumerate()
+            .filter(|(_, selection)| !self.layer_state(selection.layer).locked)
+            .filter_map(|(index, selection)| {
+                self.selection_map_bounds(selection)
+                    .map(|bounds| (index, bounds))
+            })
+            .collect::<Vec<_>>();
+
+        if candidates.len() < 3 {
+            self.status = "至少选择三个可分布对象".to_owned();
+            return;
+        }
+
+        let moves = distribute_deltas(mode, candidates);
+        if moves.is_empty() {
+            self.status = format!("所选对象已经{}", mode.label());
+            return;
+        }
+
+        let mut next_selection = selections;
+        let mut changed = 0;
+
+        self.push_undo_snapshot();
+        for (index, delta) in moves {
+            let selection = next_selection[index].clone();
+            if let Some(updated) = self.offset_selection_by_delta(&selection, delta) {
+                next_selection[index] = updated;
+                changed += 1;
+            }
+        }
+
+        if changed == 0 {
+            self.status = format!("所选对象已经{}", mode.label());
+            return;
+        }
+
+        self.set_selection(next_selection);
+        self.mark_dirty();
+        self.status = format!("已{} {} 个对象", mode.label(), changed);
+    }
+
+    pub(crate) fn nudge_current_selection(&mut self, delta: [f32; 2]) {
+        let selections = self.current_selection_list();
+        if selections.is_empty() {
+            return;
+        }
+
+        let editable = selections
+            .iter()
+            .filter(|selection| {
+                !self.layer_state(selection.layer).locked
+                    && self.selection_map_bounds(selection).is_some()
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+
+        if editable.is_empty() {
+            self.status = "所选图层已锁定或不能微调".to_owned();
+            return;
+        }
+
+        let mut next_selection = selections;
+        let mut changed = 0;
+
+        self.push_undo_snapshot();
+        for selection in editable {
+            if let Some(updated) = self.offset_selection_by_delta(&selection, delta) {
+                if let Some(index) = next_selection.iter().position(|item| item == &selection) {
+                    next_selection[index] = updated;
+                }
+                changed += 1;
+            }
+        }
+
+        if changed == 0 {
+            return;
+        }
+
+        self.set_selection(next_selection);
+        self.mark_dirty();
+        self.status = format!(
+            "微调 {} 个对象：{:+.1}, {:+.1}",
+            changed, delta[0], delta[1]
+        );
+    }
+
+    pub(crate) fn replaceable_selection_count(
+        &self,
+        selections: &[SelectedItem],
+        asset: &AssetEntry,
+    ) -> usize {
+        selections
+            .iter()
+            .filter(|selection| {
+                !self.layer_state(selection.layer).locked
+                    && self.selection_accepts_asset(selection, asset)
+                    && self.asset_for_selection(selection).as_deref() != Some(asset.id.as_str())
+            })
+            .count()
+    }
+
+    pub(crate) fn replace_selected_assets_with_current(&mut self) {
+        let selections = self.current_selection_list();
+        if selections.is_empty() {
+            self.status = "请先选择对象".to_owned();
+            return;
+        }
+
+        let Some(asset) = self.selected_asset().cloned() else {
+            self.status = "请先在素材库选择一个素材".to_owned();
+            return;
+        };
+
+        let replaceable = selections
+            .iter()
+            .filter(|selection| {
+                !self.layer_state(selection.layer).locked
+                    && self.selection_accepts_asset(selection, &asset)
+                    && self.asset_for_selection(selection).as_deref() != Some(asset.id.as_str())
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+
+        if replaceable.is_empty() {
+            self.status = format!("没有可替换为 {} 的选中对象", asset.id);
+            return;
+        }
+
+        self.push_undo_snapshot();
+        let mut changed = 0;
+        for selection in &replaceable {
+            if self.replace_asset_for_selection(selection, &asset) {
+                changed += 1;
+            }
+        }
+
+        if changed == 0 {
+            self.status = format!("没有可替换为 {} 的选中对象", asset.id);
+            return;
+        }
+
+        self.mark_dirty();
+        self.status = format!("已用 {} 替换 {} 个对象", asset.id, changed);
+    }
+
+    pub(crate) fn editable_entity_selection_count(&self, selections: &[SelectedItem]) -> usize {
+        selections
+            .iter()
+            .filter(|selection| {
+                selection.layer == LayerKind::Entities
+                    && !self.layer_state(selection.layer).locked
+                    && self.entity_type_for_selection(selection).is_some()
+            })
+            .count()
+    }
+
+    pub(crate) fn common_entity_type_for_selection(
+        &self,
+        selections: &[SelectedItem],
+    ) -> (String, bool) {
+        common_text_value(selections.iter().filter_map(|selection| {
+            if selection.layer != LayerKind::Entities || self.layer_state(selection.layer).locked {
+                return None;
+            }
+            self.entity_type_for_selection(selection)
+        }))
+    }
+
+    pub(crate) fn set_entity_type_for_selection(
+        &mut self,
+        selections: &[SelectedItem],
+        entity_type: String,
+    ) {
+        let entity_type = entity_type.trim().to_owned();
+        let targets = selections
+            .iter()
+            .filter(|selection| {
+                selection.layer == LayerKind::Entities
+                    && !self.layer_state(selection.layer).locked
+                    && self.entity_type_for_selection(selection).as_deref() != Some(&entity_type)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+
+        if targets.is_empty() {
+            self.status = "没有需要修改实体类型的对象".to_owned();
+            return;
+        }
+
+        self.push_undo_snapshot();
+        let mut changed = 0;
+        for selection in &targets {
+            if let Some(instance) = self
+                .document
+                .layers
+                .entities
+                .iter_mut()
+                .find(|instance| instance.id == selection.id)
+            {
+                instance.entity_type = entity_type.clone();
+                changed += 1;
+            }
+        }
+
+        self.mark_dirty();
+        self.status = format!("已批量设置 {} 个实体类型", changed);
+    }
+
+    pub(crate) fn unlockable_selection_count(&self, selections: &[SelectedItem]) -> usize {
+        selections
+            .iter()
+            .filter(|selection| {
+                matches!(selection.layer, LayerKind::Entities | LayerKind::Zones)
+                    && !self.layer_state(selection.layer).locked
+                    && self.unlock_for_selection(selection).is_some()
+            })
+            .count()
+    }
+
+    pub(crate) fn common_unlock_codex_for_selection(
+        &self,
+        selections: &[SelectedItem],
+    ) -> (String, bool) {
+        common_optional_text_value(self.unlockable_selections(selections).map(|selection| {
+            self.unlock_for_selection(selection)
+                .and_then(|unlock| normalized_optional(unlock.requires_codex_id.as_ref()))
+        }))
+    }
+
+    pub(crate) fn common_unlock_item_for_selection(
+        &self,
+        selections: &[SelectedItem],
+    ) -> (String, bool) {
+        common_optional_text_value(self.unlockable_selections(selections).map(|selection| {
+            self.unlock_for_selection(selection)
+                .and_then(|unlock| normalized_optional(unlock.requires_item_id.as_ref()))
+        }))
+    }
+
+    pub(crate) fn common_unlock_message_for_selection(
+        &self,
+        selections: &[SelectedItem],
+    ) -> (String, bool) {
+        common_optional_text_value(self.unlockable_selections(selections).map(|selection| {
+            self.unlock_for_selection(selection)
+                .and_then(|unlock| normalized_optional(unlock.locked_message.as_ref()))
+        }))
+    }
+
+    pub(crate) fn set_unlock_codex_for_selection(
+        &mut self,
+        selections: &[SelectedItem],
+        value: String,
+    ) {
+        self.set_unlock_field_for_selection(selections, BatchUnlockField::Codex, value);
+    }
+
+    pub(crate) fn set_unlock_item_for_selection(
+        &mut self,
+        selections: &[SelectedItem],
+        value: String,
+    ) {
+        self.set_unlock_field_for_selection(selections, BatchUnlockField::Item, value);
+    }
+
+    pub(crate) fn set_unlock_message_for_selection(
+        &mut self,
+        selections: &[SelectedItem],
+        value: String,
+    ) {
+        self.set_unlock_field_for_selection(selections, BatchUnlockField::Message, value);
+    }
+
+    pub(crate) fn clear_unlock_for_selection(&mut self, selections: &[SelectedItem]) {
+        let targets = self
+            .unlockable_selections(selections)
+            .filter(|selection| {
+                self.unlock_for_selection(selection)
+                    .is_some_and(|unlock| !unlock.is_empty())
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+
+        if targets.is_empty() {
+            self.status = "所选对象没有解锁条件".to_owned();
+            return;
+        }
+
+        self.push_undo_snapshot();
+        let mut changed = 0;
+        for selection in &targets {
+            changed += usize::from(self.set_unlock_for_selection(selection, None));
+        }
+        self.mark_dirty();
+        self.status = format!("已清除 {} 个解锁条件", changed);
+    }
+
+    fn selection_accepts_asset(&self, selection: &SelectedItem, asset: &AssetEntry) -> bool {
+        expected_asset_kind_for_layer(selection.layer).is_some_and(|kind| kind == asset.kind)
+    }
+
+    fn replace_asset_for_selection(
+        &mut self,
+        selection: &SelectedItem,
+        asset: &AssetEntry,
+    ) -> bool {
+        match selection.layer {
+            LayerKind::Ground => {
+                let Some([x, y]) = parse_ground_selection_id(&selection.id) else {
+                    return false;
+                };
+                let Some(tile) = self
+                    .document
+                    .layers
+                    .ground
+                    .iter_mut()
+                    .find(|tile| tile.x == x && tile.y == y)
+                else {
+                    return false;
+                };
+                if tile.asset == asset.id {
+                    return false;
+                }
+                tile.asset = asset.id.clone();
+                true
+            }
+            LayerKind::Decals => {
+                let Some(instance) = self
+                    .document
+                    .layers
+                    .decals
+                    .iter_mut()
+                    .find(|instance| instance.id == selection.id)
+                else {
+                    return false;
+                };
+                if instance.asset == asset.id {
+                    return false;
+                }
+                instance.asset = asset.id.clone();
+                true
+            }
+            LayerKind::Objects => {
+                let Some(instance) = self
+                    .document
+                    .layers
+                    .objects
+                    .iter_mut()
+                    .find(|instance| instance.id == selection.id)
+                else {
+                    return false;
+                };
+                if instance.asset == asset.id {
+                    return false;
+                }
+                instance.asset = asset.id.clone();
+                true
+            }
+            LayerKind::Entities => {
+                let Some(instance) = self
+                    .document
+                    .layers
+                    .entities
+                    .iter_mut()
+                    .find(|instance| instance.id == selection.id)
+                else {
+                    return false;
+                };
+                if instance.asset == asset.id {
+                    return false;
+                }
+                instance.asset = asset.id.clone();
+                if let Some(entity_type) = &asset.entity_type {
+                    instance.entity_type = entity_type.clone();
+                }
+                true
+            }
+            LayerKind::Zones | LayerKind::Collision => false,
+        }
+    }
+
+    fn entity_type_for_selection(&self, selection: &SelectedItem) -> Option<String> {
+        if selection.layer != LayerKind::Entities {
+            return None;
+        }
+        self.document
+            .layers
+            .entities
+            .iter()
+            .find(|instance| instance.id == selection.id)
+            .map(|instance| instance.entity_type.clone())
+    }
+
+    fn unlockable_selections<'a>(
+        &'a self,
+        selections: &'a [SelectedItem],
+    ) -> impl Iterator<Item = &'a SelectedItem> + 'a {
+        selections.iter().filter(|selection| {
+            matches!(selection.layer, LayerKind::Entities | LayerKind::Zones)
+                && !self.layer_state(selection.layer).locked
+                && self.unlock_for_selection(selection).is_some()
+        })
+    }
+
+    fn unlock_for_selection(&self, selection: &SelectedItem) -> Option<&UnlockRule> {
+        match selection.layer {
+            LayerKind::Entities => self
+                .document
+                .layers
+                .entities
+                .iter()
+                .find(|instance| instance.id == selection.id)
+                .map(|instance| instance.unlock.as_ref().unwrap_or(&EMPTY_UNLOCK_RULE)),
+            LayerKind::Zones => self
+                .document
+                .layers
+                .zones
+                .iter()
+                .find(|zone| zone.id == selection.id)
+                .map(|zone| zone.unlock.as_ref().unwrap_or(&EMPTY_UNLOCK_RULE)),
+            LayerKind::Ground | LayerKind::Decals | LayerKind::Objects | LayerKind::Collision => {
+                None
+            }
+        }
+    }
+
+    fn set_unlock_field_for_selection(
+        &mut self,
+        selections: &[SelectedItem],
+        field: BatchUnlockField,
+        value: String,
+    ) {
+        let value = trimmed_optional(&value);
+        let targets = self
+            .unlockable_selections(selections)
+            .filter(|selection| self.unlock_field_for_selection(selection, field) != value)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        if targets.is_empty() {
+            self.status = "没有需要修改的解锁字段".to_owned();
+            return;
+        }
+
+        self.push_undo_snapshot();
+        let mut changed = 0;
+        for selection in &targets {
+            let mut unlock = self
+                .unlock_for_selection(selection)
+                .cloned()
+                .unwrap_or_default();
+            match field {
+                BatchUnlockField::Codex => unlock.requires_codex_id = value.clone(),
+                BatchUnlockField::Item => unlock.requires_item_id = value.clone(),
+                BatchUnlockField::Message => unlock.locked_message = value.clone(),
+            }
+            let next = (!unlock.is_empty()).then_some(unlock);
+            changed += usize::from(self.set_unlock_for_selection(selection, next));
+        }
+
+        self.mark_dirty();
+        self.status = format!("已批量设置 {} 个解锁字段", changed);
+    }
+
+    fn unlock_field_for_selection(
+        &self,
+        selection: &SelectedItem,
+        field: BatchUnlockField,
+    ) -> Option<String> {
+        let unlock = self.unlock_for_selection(selection)?;
+        match field {
+            BatchUnlockField::Codex => normalized_optional(unlock.requires_codex_id.as_ref()),
+            BatchUnlockField::Item => normalized_optional(unlock.requires_item_id.as_ref()),
+            BatchUnlockField::Message => normalized_optional(unlock.locked_message.as_ref()),
+        }
+    }
+
+    fn set_unlock_for_selection(
+        &mut self,
+        selection: &SelectedItem,
+        unlock: Option<UnlockRule>,
+    ) -> bool {
+        match selection.layer {
+            LayerKind::Entities => {
+                let Some(instance) = self
+                    .document
+                    .layers
+                    .entities
+                    .iter_mut()
+                    .find(|instance| instance.id == selection.id)
+                else {
+                    return false;
+                };
+                if instance.unlock == unlock {
+                    return false;
+                }
+                instance.unlock = unlock;
+                true
+            }
+            LayerKind::Zones => {
+                let Some(zone) = self
+                    .document
+                    .layers
+                    .zones
+                    .iter_mut()
+                    .find(|zone| zone.id == selection.id)
+                else {
+                    return false;
+                };
+                if zone.unlock == unlock {
+                    return false;
+                }
+                zone.unlock = unlock;
+                true
+            }
+            LayerKind::Ground | LayerKind::Decals | LayerKind::Objects | LayerKind::Collision => {
+                false
+            }
+        }
+    }
+
+    fn selection_map_bounds(&self, selection: &SelectedItem) -> Option<SelectionMapBounds> {
+        match selection.layer {
+            LayerKind::Ground => {
+                let [x, y] = parse_ground_selection_id(&selection.id)?;
+                self.document
+                    .layers
+                    .ground
+                    .iter()
+                    .find(|tile| tile.x == x && tile.y == y)
+                    .map(|tile| {
+                        let width = tile.w.max(1) as f32;
+                        let height = tile.h.max(1) as f32;
+                        SelectionMapBounds::from_min_max(
+                            tile.x as f32,
+                            tile.y as f32,
+                            tile.x as f32 + width,
+                            tile.y as f32 + height,
+                        )
+                    })
+            }
+            LayerKind::Decals => self
+                .document
+                .layers
+                .decals
+                .iter()
+                .find(|instance| instance.id == selection.id)
+                .map(|instance| self.object_like_map_bounds(&instance.asset, instance)),
+            LayerKind::Objects => self
+                .document
+                .layers
+                .objects
+                .iter()
+                .find(|instance| instance.id == selection.id)
+                .map(|instance| self.object_like_map_bounds(&instance.asset, instance)),
+            LayerKind::Entities => self
+                .document
+                .layers
+                .entities
+                .iter()
+                .find(|instance| instance.id == selection.id)
+                .map(|instance| {
+                    self.object_like_map_bounds_from_parts(
+                        &instance.asset,
+                        instance.x,
+                        instance.y,
+                        instance.scale_x,
+                        instance.scale_y,
+                    )
+                }),
+            LayerKind::Zones => self
+                .document
+                .layers
+                .zones
+                .iter()
+                .find(|zone| zone.id == selection.id)
+                .and_then(|zone| zone_map_bounds(&zone.points)),
+            LayerKind::Collision => None,
+        }
+    }
+
+    fn object_like_map_bounds(
+        &self,
+        asset_id: &str,
+        instance: &content::ObjectInstance,
+    ) -> SelectionMapBounds {
+        self.object_like_map_bounds_from_parts(
+            asset_id,
+            instance.x,
+            instance.y,
+            instance.scale_x,
+            instance.scale_y,
+        )
+    }
+
+    fn object_like_map_bounds_from_parts(
+        &self,
+        asset_id: &str,
+        x: f32,
+        y: f32,
+        scale_x: f32,
+        scale_y: f32,
+    ) -> SelectionMapBounds {
+        let Some(asset) = self.registry.get(asset_id) else {
+            return SelectionMapBounds::from_min_max(x, y, x + 1.0, y + 1.0);
+        };
+        let tile_size = self.document.tile_size.max(1) as f32;
+        let width = asset.default_size[0] * scale_x.max(0.05) / tile_size;
+        let height = asset.default_size[1] * scale_y.max(0.05) / tile_size;
+        match asset.anchor {
+            AnchorKind::TopLeft => SelectionMapBounds::from_min_max(x, y, x + width, y + height),
+            AnchorKind::Center => SelectionMapBounds::from_min_max(
+                x + 0.5 - width * 0.5,
+                y + 0.5 - height * 0.5,
+                x + 0.5 + width * 0.5,
+                y + 0.5 + height * 0.5,
+            ),
+            AnchorKind::BottomCenter => SelectionMapBounds::from_min_max(
+                x + 0.5 - width * 0.5,
+                y + 1.0 - height,
+                x + 0.5 + width * 0.5,
+                y + 1.0,
+            ),
+        }
+    }
+
+    fn offset_selection_by_delta(
+        &mut self,
+        selection: &SelectedItem,
+        delta: [f32; 2],
+    ) -> Option<SelectedItem> {
+        match selection.layer {
+            LayerKind::Ground => {
+                let [x, y] = parse_ground_selection_id(&selection.id)?;
+                let updated = self.move_selected_item(
+                    selection,
+                    (x as f32 + delta[0]).round(),
+                    (y as f32 + delta[1]).round(),
+                )?;
+                Some(SelectedItem {
+                    layer: LayerKind::Ground,
+                    id: ground_selection_id(updated[0], updated[1]),
+                })
+            }
+            LayerKind::Decals | LayerKind::Objects | LayerKind::Entities => {
+                let [x, y] = self.object_like_position(selection)?;
+                self.move_selected_item(
+                    selection,
+                    (x + delta[0]).clamp(0.0, self.document.width as f32),
+                    (y + delta[1]).clamp(0.0, self.document.height as f32),
+                );
+                Some(selection.clone())
+            }
+            LayerKind::Zones => {
+                let max_x = self.document.width as f32;
+                let max_y = self.document.height as f32;
+                let zone = self
+                    .document
+                    .layers
+                    .zones
+                    .iter_mut()
+                    .find(|zone| zone.id == selection.id)?;
+                for point in &mut zone.points {
+                    point[0] = (point[0] + delta[0]).clamp(0.0, max_x);
+                    point[1] = (point[1] + delta[1]).clamp(0.0, max_y);
+                }
+                Some(selection.clone())
+            }
+            LayerKind::Collision => None,
+        }
+    }
+
+    fn object_like_position(&self, selection: &SelectedItem) -> Option<[f32; 2]> {
+        match selection.layer {
+            LayerKind::Decals => self
+                .document
+                .layers
+                .decals
+                .iter()
+                .find(|instance| instance.id == selection.id)
+                .map(|instance| [instance.x, instance.y]),
+            LayerKind::Objects => self
+                .document
+                .layers
+                .objects
+                .iter()
+                .find(|instance| instance.id == selection.id)
+                .map(|instance| [instance.x, instance.y]),
+            LayerKind::Entities => self
+                .document
+                .layers
+                .entities
+                .iter()
+                .find(|instance| instance.id == selection.id)
+                .map(|instance| [instance.x, instance.y]),
+            LayerKind::Ground | LayerKind::Zones | LayerKind::Collision => None,
+        }
     }
 
     pub(crate) fn selections_in_screen_rect(
@@ -4073,6 +5049,81 @@ mod tests {
         assert!(!tile_intersects_rect(&bottom_neighbor, 9, 9, 11, 11));
         assert!(tile_intersects_rect(&right_neighbor, 9, 9, 12, 12));
         assert!(tile_intersects_rect(&bottom_neighbor, 9, 9, 12, 12));
+    }
+
+    #[test]
+    fn align_delta_uses_requested_group_edge_or_center() {
+        let item = SelectionMapBounds::from_min_max(2.0, 4.0, 6.0, 10.0);
+
+        assert_eq!(align_delta(BatchAlignMode::Left, item, 1.0), [-1.0, 0.0]);
+        assert_eq!(align_delta(BatchAlignMode::Right, item, 12.0), [6.0, 0.0]);
+        assert_eq!(align_delta(BatchAlignMode::CenterX, item, 8.0), [4.0, 0.0]);
+        assert_eq!(align_delta(BatchAlignMode::Top, item, 3.0), [0.0, -1.0]);
+        assert_eq!(align_delta(BatchAlignMode::Bottom, item, 12.0), [0.0, 2.0]);
+        assert_eq!(align_delta(BatchAlignMode::CenterY, item, 9.0), [0.0, 2.0]);
+    }
+
+    #[test]
+    fn zone_bounds_cover_all_points() {
+        let bounds = zone_map_bounds(&[[3.0, 4.0], [1.0, 8.0], [5.0, 2.0]]).unwrap();
+
+        assert_eq!(bounds.min_x, 1.0);
+        assert_eq!(bounds.min_y, 2.0);
+        assert_eq!(bounds.max_x, 5.0);
+        assert_eq!(bounds.max_y, 8.0);
+    }
+
+    #[test]
+    fn distribute_deltas_preserve_outer_span_with_equal_gaps() {
+        let moves = distribute_deltas(
+            BatchDistributeMode::Horizontal,
+            vec![
+                (0, SelectionMapBounds::from_min_max(0.0, 0.0, 1.0, 1.0)),
+                (1, SelectionMapBounds::from_min_max(4.0, 0.0, 5.0, 1.0)),
+                (2, SelectionMapBounds::from_min_max(10.0, 0.0, 12.0, 1.0)),
+            ],
+        );
+
+        assert_eq!(moves, vec![(1, [1.0, 0.0])]);
+    }
+
+    #[test]
+    fn distribute_deltas_vertical_uses_current_order() {
+        let moves = distribute_deltas(
+            BatchDistributeMode::Vertical,
+            vec![
+                (0, SelectionMapBounds::from_min_max(0.0, 0.0, 1.0, 2.0)),
+                (1, SelectionMapBounds::from_min_max(0.0, 6.0, 1.0, 7.0)),
+                (2, SelectionMapBounds::from_min_max(0.0, 9.0, 1.0, 10.0)),
+            ],
+        );
+
+        assert_eq!(moves, vec![(1, [0.0, -1.0])]);
+    }
+
+    #[test]
+    fn common_optional_text_value_reports_mixed() {
+        assert_eq!(
+            common_optional_text_value(vec![Some("a".to_owned()), Some("a".to_owned())]),
+            ("a".to_owned(), false)
+        );
+        assert_eq!(
+            common_optional_text_value(vec![Some("a".to_owned()), None]),
+            (String::new(), true)
+        );
+        assert_eq!(
+            common_optional_text_value(vec![None, None]),
+            (String::new(), false)
+        );
+    }
+
+    #[test]
+    fn trimmed_optional_drops_blank_values() {
+        assert_eq!(
+            trimmed_optional("  codex.entry  "),
+            Some("codex.entry".to_owned())
+        );
+        assert_eq!(trimmed_optional("   "), None);
     }
 
     fn tile_at(x: i32, y: i32) -> content::TileInstance {
