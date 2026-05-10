@@ -1,6 +1,9 @@
-# Editor tool icons
+# Legacy Editor Tool Icons
 
-Put SVG toolbar icons in this folder. Use these exact file names:
+Toolbar icons now use Lucide SVGs from `../lucide`. Keep this folder only as a historical fallback/reference for the earlier hand-drawn tool icons.
+
+Deprecated file names:
+
 
 - `select.svg`
 - `brush.svg`

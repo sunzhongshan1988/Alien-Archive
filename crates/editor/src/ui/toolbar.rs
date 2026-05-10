@@ -12,7 +12,18 @@ use crate::ui::theme::{THEME_ACCENT_STRONG, THEME_MUTED_TEXT};
 pub(crate) const TOOLBAR_HEIGHT: f32 = 32.0;
 const TOOLBAR_CONTROL_HEIGHT: f32 = 26.0;
 const TOOL_BUTTON_SIZE: Vec2 = Vec2::new(34.0, 28.0);
-const TOOL_ICON_FALLBACK_URI: &str = "bytes://editor/tools/fallback.svg";
+const TOOL_ICON_SELECT_URI: &str = "bytes://editor/lucide/mouse-pointer-2.svg";
+const TOOL_ICON_BRUSH_URI: &str = "bytes://editor/lucide/paintbrush.svg";
+const TOOL_ICON_BUCKET_URI: &str = "bytes://editor/lucide/paint-bucket.svg";
+const TOOL_ICON_RECTANGLE_URI: &str = "bytes://editor/lucide/square.svg";
+const TOOL_ICON_ERASE_URI: &str = "bytes://editor/lucide/eraser.svg";
+const TOOL_ICON_EYEDROPPER_URI: &str = "bytes://editor/lucide/pipette.svg";
+const TOOL_ICON_STAMP_URI: &str = "bytes://editor/lucide/stamp.svg";
+const TOOL_ICON_COLLISION_URI: &str = "bytes://editor/lucide/brick-wall.svg";
+const TOOL_ICON_ZONE_URI: &str = "bytes://editor/lucide/scan.svg";
+const TOOL_ICON_PAN_URI: &str = "bytes://editor/lucide/hand.svg";
+const TOOL_ICON_ZOOM_URI: &str = "bytes://editor/lucide/zoom-in.svg";
+const TOOL_ICON_FALLBACK_URI: &str = TOOL_ICON_SELECT_URI;
 
 pub(crate) fn toolbar_label(ui: &mut egui::Ui, text: &str) {
     let width = toolbar_label_width(text);
@@ -99,17 +110,17 @@ fn draw_tool_icon(ui: &egui::Ui, tool: ToolKind, rect: Rect, color: Color32) {
 
 fn tool_icon_uri(tool: ToolKind) -> &'static str {
     match tool {
-        ToolKind::Select => "bytes://editor/tools/select.svg",
-        ToolKind::Brush => "bytes://editor/tools/brush.svg",
-        ToolKind::Bucket => "bytes://editor/tools/bucket.svg",
-        ToolKind::Rectangle => "bytes://editor/tools/rectangle.svg",
-        ToolKind::Erase => "bytes://editor/tools/erase.svg",
-        ToolKind::Eyedropper => "bytes://editor/tools/eyedropper.svg",
-        ToolKind::Stamp => "bytes://editor/tools/stamp.svg",
-        ToolKind::Collision => "bytes://editor/tools/collision.svg",
-        ToolKind::Zone => "bytes://editor/tools/zone.svg",
-        ToolKind::Pan => "bytes://editor/tools/pan.svg",
-        ToolKind::Zoom => "bytes://editor/tools/zoom.svg",
+        ToolKind::Select => TOOL_ICON_SELECT_URI,
+        ToolKind::Brush => TOOL_ICON_BRUSH_URI,
+        ToolKind::Bucket => TOOL_ICON_BUCKET_URI,
+        ToolKind::Rectangle => TOOL_ICON_RECTANGLE_URI,
+        ToolKind::Erase => TOOL_ICON_ERASE_URI,
+        ToolKind::Eyedropper => TOOL_ICON_EYEDROPPER_URI,
+        ToolKind::Stamp => TOOL_ICON_STAMP_URI,
+        ToolKind::Collision => TOOL_ICON_COLLISION_URI,
+        ToolKind::Zone => TOOL_ICON_ZONE_URI,
+        ToolKind::Pan => TOOL_ICON_PAN_URI,
+        ToolKind::Zoom => TOOL_ICON_ZOOM_URI,
     }
 }
 
@@ -118,52 +129,48 @@ pub(crate) fn configure_tool_icons(ctx: &EguiContext) {
 
     for (uri, svg) in [
         (
-            TOOL_ICON_FALLBACK_URI,
-            include_str!("../../assets/icons/tools/fallback.svg"),
+            TOOL_ICON_SELECT_URI,
+            include_str!("../../assets/icons/lucide/mouse-pointer-2.svg"),
         ),
         (
-            "bytes://editor/tools/select.svg",
-            include_str!("../../assets/icons/tools/select.svg"),
+            TOOL_ICON_BRUSH_URI,
+            include_str!("../../assets/icons/lucide/paintbrush.svg"),
         ),
         (
-            "bytes://editor/tools/brush.svg",
-            include_str!("../../assets/icons/tools/brush.svg"),
+            TOOL_ICON_BUCKET_URI,
+            include_str!("../../assets/icons/lucide/paint-bucket.svg"),
         ),
         (
-            "bytes://editor/tools/bucket.svg",
-            include_str!("../../assets/icons/tools/bucket.svg"),
+            TOOL_ICON_RECTANGLE_URI,
+            include_str!("../../assets/icons/lucide/square.svg"),
         ),
         (
-            "bytes://editor/tools/rectangle.svg",
-            include_str!("../../assets/icons/tools/rectangle.svg"),
+            TOOL_ICON_ERASE_URI,
+            include_str!("../../assets/icons/lucide/eraser.svg"),
         ),
         (
-            "bytes://editor/tools/erase.svg",
-            include_str!("../../assets/icons/tools/erase.svg"),
+            TOOL_ICON_EYEDROPPER_URI,
+            include_str!("../../assets/icons/lucide/pipette.svg"),
         ),
         (
-            "bytes://editor/tools/eyedropper.svg",
-            include_str!("../../assets/icons/tools/eyedropper.svg"),
+            TOOL_ICON_STAMP_URI,
+            include_str!("../../assets/icons/lucide/stamp.svg"),
         ),
         (
-            "bytes://editor/tools/stamp.svg",
-            include_str!("../../assets/icons/tools/stamp.svg"),
+            TOOL_ICON_COLLISION_URI,
+            include_str!("../../assets/icons/lucide/brick-wall.svg"),
         ),
         (
-            "bytes://editor/tools/collision.svg",
-            include_str!("../../assets/icons/tools/collision.svg"),
+            TOOL_ICON_ZONE_URI,
+            include_str!("../../assets/icons/lucide/scan.svg"),
         ),
         (
-            "bytes://editor/tools/zone.svg",
-            include_str!("../../assets/icons/tools/zone.svg"),
+            TOOL_ICON_PAN_URI,
+            include_str!("../../assets/icons/lucide/hand.svg"),
         ),
         (
-            "bytes://editor/tools/pan.svg",
-            include_str!("../../assets/icons/tools/pan.svg"),
-        ),
-        (
-            "bytes://editor/tools/zoom.svg",
-            include_str!("../../assets/icons/tools/zoom.svg"),
+            TOOL_ICON_ZOOM_URI,
+            include_str!("../../assets/icons/lucide/zoom-in.svg"),
         ),
         (
             LUCIDE_EYE_URI,
