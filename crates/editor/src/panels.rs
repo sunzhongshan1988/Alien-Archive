@@ -149,6 +149,17 @@ impl EditorApp {
             visible_entries.len(),
             scan_count
         ));
+        if self.hidden_item_count() > 0 {
+            ui.horizontal(|ui| {
+                ui.colored_label(
+                    THEME_MUTED_TEXT,
+                    format!("隐藏 {} 个对象", self.hidden_item_count()),
+                );
+                if ui.small_button("全部显示").clicked() {
+                    self.clear_hidden_items();
+                }
+            });
+        }
 
         for group in OUTLINER_GROUPS {
             let group_entries = visible_entries
@@ -160,8 +171,13 @@ impl EditorApp {
                 continue;
             }
 
+            let default_open = if search.is_empty() {
+                *group == "Objects"
+            } else {
+                true
+            };
             egui::CollapsingHeader::new(format!("{group} ({})", group_entries.len()))
-                .default_open(matches!(*group, "Entities" | "Objects" | "Zones"))
+                .default_open(default_open)
                 .show(ui, |ui| {
                     for entry in group_entries {
                         self.draw_outliner_row(ui, entry);
@@ -176,27 +192,54 @@ impl EditorApp {
                 .iter()
                 .any(|current| current == selection)
         });
-        let response = tree_row(
-            ui,
-            selected,
-            &entry.label,
-            &entry.detail,
-            entry.badges.iter().map(|badge| TreeBadge {
+        let hidden = entry
+            .selection
+            .as_ref()
+            .is_some_and(|selection| self.item_hidden(selection));
+        let badges = entry
+            .badges
+            .iter()
+            .map(|badge| TreeBadge {
                 label: badge.label,
                 color: badge.color,
-            }),
-        );
+            })
+            .collect::<Vec<_>>();
+        let response = tree_row(ui, selected, &entry.label, &entry.detail, badges);
         let response = response.on_hover_text(&entry.search_text);
 
         if let Some(selection) = entry.selection.clone() {
             let size = egui::vec2(22.0, 22.0);
-            let rect = egui::Rect::from_center_size(
+            let hide_rect = egui::Rect::from_center_size(
+                egui::pos2(response.rect.right() - 39.0, response.rect.center().y),
+                size,
+            );
+            let delete_rect = egui::Rect::from_center_size(
                 egui::pos2(response.rect.right() - 13.0, response.rect.center().y),
                 size,
             );
-            let delete_response = ui
-                .put(rect, egui::Button::new("×").frame(false))
-                .on_hover_text("删除对象");
+            let hide_icon = if hidden {
+                LUCIDE_EYE_URI
+            } else {
+                LUCIDE_EYE_OFF_URI
+            };
+            let hide_tip = if hidden {
+                "显示对象"
+            } else {
+                "隐藏对象"
+            };
+            let hide_response = editor_svg_icon_button_at(ui, hide_rect, hide_icon, hide_tip);
+            if hide_response.clicked() {
+                let label = selection.label();
+                self.set_item_hidden(selection, !hidden);
+                self.status = if hidden {
+                    format!("已显示 {label}")
+                } else {
+                    format!("已隐藏 {label}")
+                };
+                return;
+            }
+            let delete_response =
+                editor_svg_icon_button_at(ui, delete_rect, LUCIDE_TRASH_2_URI, "删除对象");
             if delete_response.clicked() {
                 self.set_single_selection(Some(selection));
                 self.delete_current_selection();
@@ -402,11 +445,12 @@ impl EditorApp {
                     color: THEME_WARNING,
                 });
             }
-            let min_zone_points = if zone.zone_type == "CollisionLine" {
-                2
-            } else {
-                3
-            };
+            let min_zone_points =
+                if matches!(zone.zone_type.as_str(), "CollisionLine" | "SurfaceGate") {
+                    2
+                } else {
+                    3
+                };
             if zone.points.len() < min_zone_points {
                 badges.push(OutlinerBadge {
                     label: "few points",
@@ -423,6 +467,18 @@ impl EditorApp {
                             content::WalkSurfaceKind::Ramp => "ramp",
                         })
                         .unwrap_or("surface"),
+                    color: THEME_ACCENT_STRONG,
+                });
+            }
+            if zone.gate.is_some() {
+                badges.push(OutlinerBadge {
+                    label: "gate",
+                    color: THEME_WARNING,
+                });
+            }
+            if zone.collision.is_some() {
+                badges.push(OutlinerBadge {
+                    label: "surface collision",
                     color: THEME_ACCENT_STRONG,
                 });
             }
@@ -460,6 +516,16 @@ impl EditorApp {
                     )
                 })
                 .unwrap_or_default();
+            let gate_search = zone
+                .gate
+                .as_ref()
+                .and_then(|gate| gate.surface_id.as_deref())
+                .unwrap_or_default();
+            let collision_search = zone
+                .collision
+                .as_ref()
+                .and_then(|collision| collision.surface_id.as_deref())
+                .unwrap_or_default();
             let hazard_search = zone
                 .hazard
                 .as_ref()
@@ -493,6 +559,20 @@ impl EditorApp {
                     surface.kind.zh_label(),
                     surface.surface_id.as_deref().unwrap_or("-")
                 )
+            } else if let Some(gate) = &zone.gate {
+                format!(
+                    "{} | {} points | gate {}",
+                    zone.zone_type,
+                    zone.points.len(),
+                    gate.surface_id.as_deref().unwrap_or("-")
+                )
+            } else if let Some(collision) = &zone.collision {
+                format!(
+                    "{} | {} points | surface {}",
+                    zone.zone_type,
+                    zone.points.len(),
+                    collision.surface_id.as_deref().unwrap_or("-")
+                )
             } else {
                 format!("{} | {} points", zone.zone_type, zone.points.len())
             };
@@ -511,6 +591,8 @@ impl EditorApp {
                     zone.zone_type.as_str(),
                     unlock_search.as_str(),
                     surface_search.as_str(),
+                    gate_search,
+                    collision_search,
                     hazard_search.as_str(),
                     prompt_search.as_str(),
                 ]

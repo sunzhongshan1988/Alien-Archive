@@ -20,6 +20,8 @@ impl EditorApp {
 
     fn draw_multi_selection_inspector(&mut self, ui: &mut egui::Ui, selections: Vec<SelectedItem>) {
         ui.label(format!("多选：{} 个对象", selections.len()));
+        let hidden_count = self.hidden_selection_count(&selections);
+        ui.label(format!("画布隐藏：{} / {}", hidden_count, selections.len()));
         for layer in LayerKind::ALL {
             let count = selections
                 .iter()
@@ -39,6 +41,14 @@ impl EditorApp {
 
         ui.separator();
         ui.horizontal(|ui| {
+            let hidden_label = if hidden_count == selections.len() {
+                "显示所选"
+            } else {
+                "隐藏所选"
+            };
+            if ui.button(hidden_label).clicked() {
+                self.toggle_current_selection_hidden();
+            }
             if ui.button("复制").clicked() {
                 self.copy_selected_item();
             }
@@ -320,6 +330,15 @@ impl EditorApp {
 
     fn draw_selection_inspector(&mut self, ui: &mut egui::Ui, selection: SelectedItem) {
         ui.label(format!("选中：{}", selection.label()));
+        let mut visible_on_canvas = !self.item_hidden(&selection);
+        if ui.checkbox(&mut visible_on_canvas, "画布显示").changed() {
+            self.set_item_hidden(selection.clone(), !visible_on_canvas);
+            self.status = if visible_on_canvas {
+                format!("已显示 {}", selection.label())
+            } else {
+                format!("已隐藏 {}", selection.label())
+            };
+        }
         if self.layer_state(selection.layer).locked {
             ui.colored_label(THEME_WARNING, "当前图层已锁定");
         }
@@ -585,6 +604,63 @@ impl EditorApp {
                         }
                     }
 
+                    if zone.zone_type == "SurfaceGate" || zone.gate.is_some() {
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            ui.label("表面门");
+                            if zone.gate.is_none() && ui.button("添加").clicked() {
+                                zone.gate = Some(content::SurfaceGateRule::default());
+                                if zone.zone_type == "Trigger" {
+                                    zone.zone_type = "SurfaceGate".to_owned();
+                                }
+                                changed = true;
+                            }
+                            if zone.gate.is_some() && ui.button("清除").clicked() {
+                                zone.gate = None;
+                                changed = true;
+                            }
+                        });
+                        if let Some(gate) = &mut zone.gate {
+                            let mut surface_id = gate.surface_id.clone().unwrap_or_default();
+                            if labeled_text_edit(ui, "Surface ID", &mut surface_id) {
+                                set_optional_string(&mut gate.surface_id, surface_id);
+                                changed = true;
+                            }
+                            ui.colored_label(
+                                THEME_MUTED_TEXT,
+                                "画在斜坡坡脚。脚点移动线段穿过这条线，才会在地面和对应台面之间切换。",
+                            );
+                        }
+                    }
+
+                    if matches!(zone.zone_type.as_str(), "CollisionArea" | "CollisionLine")
+                        || zone.collision.is_some()
+                    {
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            ui.label("碰撞作用域");
+                            if zone.collision.is_none() && ui.button("添加").clicked() {
+                                zone.collision = Some(content::CollisionZoneRule::default());
+                                changed = true;
+                            }
+                            if zone.collision.is_some() && ui.button("清除").clicked() {
+                                zone.collision = None;
+                                changed = true;
+                            }
+                        });
+                        if let Some(collision) = &mut zone.collision {
+                            let mut surface_id = collision.surface_id.clone().unwrap_or_default();
+                            if labeled_text_edit(ui, "Surface ID", &mut surface_id) {
+                                set_optional_string(&mut collision.surface_id, surface_id);
+                                changed = true;
+                            }
+                        }
+                        ui.colored_label(
+                            THEME_MUTED_TEXT,
+                            "留空表示地面/底部碰撞；填圆台 Surface ID 后，只在玩家站在该表面时生效。",
+                        );
+                    }
+
                     if zone.zone_type == "HazardZone" || zone.hazard.is_some() {
                         ui.separator();
                         draw_zone_hazard_editor(ui, zone, &mut changed);
@@ -644,7 +720,13 @@ impl EditorApp {
                             zone.points.push([point[0] + 1.0, point[1]]);
                             changed = true;
                         }
-                        if ui.button("删末点").clicked() && zone.points.len() > 3 {
+                        let min_points =
+                            if matches!(zone.zone_type.as_str(), "CollisionLine" | "SurfaceGate") {
+                                2
+                            } else {
+                                3
+                            };
+                        if ui.button("删末点").clicked() && zone.points.len() > min_points {
                             zone.points.pop();
                             changed = true;
                         }
@@ -732,6 +814,7 @@ impl EditorApp {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ZoneTypePreset {
     WalkSurface,
+    SurfaceGate,
     CollisionArea,
     CollisionLine,
     MapTransition,
@@ -742,8 +825,9 @@ enum ZoneTypePreset {
 }
 
 impl ZoneTypePreset {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 9] = [
         Self::WalkSurface,
+        Self::SurfaceGate,
         Self::CollisionArea,
         Self::CollisionLine,
         Self::MapTransition,
@@ -756,6 +840,7 @@ impl ZoneTypePreset {
     fn label(self) -> &'static str {
         match self {
             Self::WalkSurface => "可走表面",
+            Self::SurfaceGate => "表面门",
             Self::CollisionArea => "碰撞区域",
             Self::CollisionLine => "碰撞线",
             Self::MapTransition => "转场",
@@ -769,6 +854,7 @@ impl ZoneTypePreset {
     fn zone_type(self) -> &'static str {
         match self {
             Self::WalkSurface => "WalkSurface",
+            Self::SurfaceGate => "SurfaceGate",
             Self::CollisionArea => "CollisionArea",
             Self::CollisionLine => "CollisionLine",
             Self::MapTransition => "MapTransition",
@@ -804,6 +890,28 @@ fn apply_zone_type_preset(zone: &mut content::ZoneInstance, preset: ZoneTypePres
                 zone.surface = Some(content::WalkSurfaceRule::default());
                 changed = true;
             }
+            if zone.gate.take().is_some() {
+                changed = true;
+            }
+            if zone.collision.take().is_some() {
+                changed = true;
+            }
+        }
+        ZoneTypePreset::SurfaceGate => {
+            let surface_id = zone
+                .surface
+                .as_ref()
+                .and_then(|surface| surface.surface_id.clone());
+            if zone.surface.take().is_some() {
+                changed = true;
+            }
+            if zone.gate.is_none() {
+                zone.gate = Some(content::SurfaceGateRule { surface_id });
+                changed = true;
+            }
+            if zone.collision.take().is_some() {
+                changed = true;
+            }
         }
         ZoneTypePreset::CollisionArea
         | ZoneTypePreset::CollisionLine
@@ -811,8 +919,20 @@ fn apply_zone_type_preset(zone: &mut content::ZoneInstance, preset: ZoneTypePres
             if zone.surface.take().is_some() {
                 changed = true;
             }
+            if zone.gate.take().is_some() {
+                changed = true;
+            }
+            if preset == ZoneTypePreset::MapTransition && zone.collision.take().is_some() {
+                changed = true;
+            }
         }
         ZoneTypePreset::HazardZone => {
+            if zone.gate.take().is_some() {
+                changed = true;
+            }
+            if zone.collision.take().is_some() {
+                changed = true;
+            }
             if zone.hazard.is_none() {
                 zone.hazard = Some(content::HazardRule {
                     effects: vec![content::HazardEffect::new("oxygen", -2.0)],
@@ -822,12 +942,24 @@ fn apply_zone_type_preset(zone: &mut content::ZoneInstance, preset: ZoneTypePres
             }
         }
         ZoneTypePreset::PromptZone => {
+            if zone.gate.take().is_some() {
+                changed = true;
+            }
+            if zone.collision.take().is_some() {
+                changed = true;
+            }
             if zone.prompt.is_none() {
                 zone.prompt = Some(content::PromptRule::default());
                 changed = true;
             }
         }
         ZoneTypePreset::ObjectiveZone | ZoneTypePreset::Checkpoint => {
+            if zone.gate.take().is_some() {
+                changed = true;
+            }
+            if zone.collision.take().is_some() {
+                changed = true;
+            }
             if zone.objective.is_none() {
                 zone.objective = Some(content::ObjectiveRule::default());
                 changed = true;
@@ -1026,10 +1158,19 @@ mod tests {
 
         assert!(apply_zone_type_preset(
             &mut zone,
+            ZoneTypePreset::SurfaceGate
+        ));
+        assert_eq!(zone.zone_type, "SurfaceGate");
+        assert!(zone.gate.is_some());
+        assert!(zone.surface.is_none());
+
+        assert!(apply_zone_type_preset(
+            &mut zone,
             ZoneTypePreset::CollisionLine
         ));
         assert_eq!(zone.zone_type, "CollisionLine");
         assert!(zone.surface.is_none());
+        assert!(zone.gate.is_none());
 
         assert!(apply_zone_type_preset(
             &mut zone,
@@ -1062,6 +1203,16 @@ mod tests {
             &mut zone,
             ZoneTypePreset::WalkSurface
         ));
+
+        let mut zone = test_zone("SurfaceGate");
+        zone.gate = None;
+
+        assert!(apply_zone_type_preset(
+            &mut zone,
+            ZoneTypePreset::SurfaceGate
+        ));
+        assert_eq!(zone.zone_type, "SurfaceGate");
+        assert!(zone.gate.is_some());
     }
 
     fn test_zone(zone_type: &str) -> content::ZoneInstance {
@@ -1073,6 +1224,8 @@ mod tests {
             prompt: None,
             objective: None,
             surface: None,
+            gate: None,
+            collision: None,
             unlock: None,
             transition: None,
         }

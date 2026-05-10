@@ -271,7 +271,7 @@ pub fn validate_map_with_codex(
                 zone.id, zone.zone_type
             )));
         }
-        let min_zone_points = if zone.zone_type == "CollisionLine" {
+        let min_zone_points = if zone_type_is_line_like(&zone.zone_type) {
             2
         } else {
             3
@@ -302,6 +302,48 @@ pub fn validate_map_with_codex(
             if surface.kind == crate::WalkSurfaceKind::Ramp && surface_id.is_none() {
                 issues.push(MapValidationIssue::warning(format!(
                     "zone {} is a WalkSurface ramp but has no surface_id; it will not connect to a platform",
+                    zone.id
+                )));
+            }
+        }
+        if zone.zone_type == "SurfaceGate" {
+            if let Some(gate) = &zone.gate {
+                if gate
+                    .surface_id
+                    .as_deref()
+                    .is_none_or(|value| value.trim().is_empty())
+                {
+                    issues.push(MapValidationIssue::warning(format!(
+                        "zone {} is SurfaceGate but has no surface_id",
+                        zone.id
+                    )));
+                }
+            } else {
+                issues.push(MapValidationIssue::warning(format!(
+                    "zone {} is SurfaceGate but has no gate settings",
+                    zone.id
+                )));
+            }
+        } else if zone.gate.is_some() {
+            issues.push(MapValidationIssue::warning(format!(
+                "zone {} has surface gate data but zone_type is {}",
+                zone.id, zone.zone_type
+            )));
+        }
+        if let Some(collision) = &zone.collision {
+            if !matches!(zone.zone_type.as_str(), "CollisionArea" | "CollisionLine") {
+                issues.push(MapValidationIssue::warning(format!(
+                    "zone {} has collision scope data but zone_type is {}",
+                    zone.id, zone.zone_type
+                )));
+            }
+            if collision
+                .surface_id
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+            {
+                issues.push(MapValidationIssue::warning(format!(
+                    "zone {} has collision scope data but no surface_id",
                     zone.id
                 )));
             }
@@ -380,6 +422,7 @@ const KNOWN_ZONE_TYPES: &[&str] = &[
     "NoSpawn",
     "CameraBounds",
     "WalkSurface",
+    "SurfaceGate",
     "CollisionArea",
     "CollisionLine",
     "HazardZone",
@@ -394,6 +437,10 @@ const KNOWN_HAZARD_METERS: &[&str] =
 
 fn zone_type_allows_surface(zone_type: &str) -> bool {
     matches!(zone_type, "WalkSurface" | "ObjectiveZone" | "Checkpoint")
+}
+
+fn zone_type_is_line_like(zone_type: &str) -> bool {
+    matches!(zone_type, "CollisionLine" | "SurfaceGate")
 }
 
 fn validate_hazard_rule(
@@ -700,8 +747,9 @@ fn validate_scale(
 mod tests {
     use crate::{
         AnchorKind, AssetDatabase, AssetDefinition, AssetKind, CodexDatabase, CodexEntry,
-        CollisionCell, HazardEffect, HazardRule, LayerKind, MapDocument, ObjectiveRule, PromptRule,
-        SnapMode, UnlockRule, WalkSurfaceKind, WalkSurfaceRule, ZoneInstance,
+        CollisionCell, CollisionZoneRule, HazardEffect, HazardRule, LayerKind, MapDocument,
+        ObjectiveRule, PromptRule, SnapMode, SurfaceGateRule, UnlockRule, WalkSurfaceKind,
+        WalkSurfaceRule, ZoneInstance,
     };
 
     use super::*;
@@ -968,6 +1016,8 @@ mod tests {
                 z_index: 48,
                 depth_offset: -8.0,
             }),
+            gate: None,
+            collision: None,
             unlock: None,
             transition: None,
         });
@@ -998,6 +1048,8 @@ mod tests {
             prompt: None,
             objective: None,
             surface: None,
+            gate: None,
+            collision: None,
             unlock: None,
             transition: None,
         });
@@ -1018,6 +1070,74 @@ mod tests {
     }
 
     #[test]
+    fn validates_surface_scoped_collision_zone() {
+        let mut document = MapDocument::new_landing_site();
+        document.layers.zones.push(ZoneInstance {
+            id: "crystal_base_collision".to_owned(),
+            zone_type: "CollisionArea".to_owned(),
+            points: vec![[1.0, 1.0], [3.0, 1.0], [3.0, 3.0], [1.0, 3.0]],
+            hazard: None,
+            prompt: None,
+            objective: None,
+            surface: None,
+            gate: None,
+            collision: Some(CollisionZoneRule {
+                surface_id: Some("platform_01".to_owned()),
+            }),
+            unlock: None,
+            transition: None,
+        });
+        let database = test_database(Vec::new());
+
+        let issues = validate_map(&document, &database);
+
+        assert!(
+            issues
+                .iter()
+                .all(|issue| !issue.message.contains("collision scope data"))
+        );
+    }
+
+    #[test]
+    fn validates_surface_gate_zone_with_two_points() {
+        let mut document = MapDocument::new_landing_site();
+        document.layers.zones.push(ZoneInstance {
+            id: "platform_gate".to_owned(),
+            zone_type: "SurfaceGate".to_owned(),
+            points: vec![[1.0, 1.0], [4.0, 1.0]],
+            hazard: None,
+            prompt: None,
+            objective: None,
+            surface: None,
+            gate: Some(SurfaceGateRule {
+                surface_id: Some("platform_01".to_owned()),
+            }),
+            collision: None,
+            unlock: None,
+            transition: None,
+        });
+        let database = test_database(Vec::new());
+
+        let issues = validate_map(&document, &database);
+
+        assert!(
+            issues
+                .iter()
+                .all(|issue| !issue.message.contains("unknown zone_type"))
+        );
+        assert!(
+            issues
+                .iter()
+                .all(|issue| !issue.message.contains("fewer than"))
+        );
+        assert!(
+            issues
+                .iter()
+                .all(|issue| !issue.message.contains("SurfaceGate but has no"))
+        );
+    }
+
+    #[test]
     fn validates_hazard_and_prompt_zone_rules() {
         let mut document = MapDocument::new_landing_site();
         document.layers.zones.push(ZoneInstance {
@@ -1031,6 +1151,8 @@ mod tests {
             prompt: None,
             objective: None,
             surface: None,
+            gate: None,
+            collision: None,
             unlock: None,
             transition: None,
         });
@@ -1045,6 +1167,8 @@ mod tests {
             }),
             objective: None,
             surface: None,
+            gate: None,
+            collision: None,
             unlock: None,
             transition: None,
         });
@@ -1083,6 +1207,8 @@ mod tests {
                 ..ObjectiveRule::default()
             }),
             surface: None,
+            gate: None,
+            collision: None,
             unlock: None,
             transition: None,
         });
@@ -1104,6 +1230,8 @@ mod tests {
                 z_index: 64,
                 depth_offset: 0.0,
             }),
+            gate: None,
+            collision: None,
             unlock: None,
             transition: None,
         });

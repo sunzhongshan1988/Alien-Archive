@@ -15,31 +15,33 @@ pub(crate) fn tree_row<'a>(
     detail: &str,
     badges: impl IntoIterator<Item = TreeBadge<'a>>,
 ) -> Response {
-    let row_height = if detail.is_empty() { 28.0 } else { 42.0 };
+    let row_height = if detail.is_empty() { 34.0 } else { 52.0 };
     let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), row_height), Sense::click());
     if response.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
 
+    let background_rect = rect.shrink2(vec2(0.0, 3.0));
     if selected {
         ui.painter()
-            .rect_filled(rect.expand(1.0), 2.0, THEME_ACCENT_DIM);
+            .rect_filled(background_rect.expand(1.0), 2.0, THEME_ACCENT_DIM);
     } else if response.hovered() {
         ui.painter()
-            .rect_filled(rect.expand(1.0), 2.0, THEME_PANEL_BG_SOFT);
+            .rect_filled(background_rect.expand(1.0), 2.0, THEME_PANEL_BG_SOFT);
     }
 
-    let clip_rect = rect.shrink2(vec2(4.0, 1.0)).intersect(ui.clip_rect());
+    let content_rect = rect.shrink2(vec2(4.0, 5.0));
+    let clip_rect = content_rect.intersect(ui.clip_rect());
     let painter = ui.painter().with_clip_rect(clip_rect);
     let label_font = FontId::proportional(14.0);
     let detail_font = FontId::proportional(12.0);
     let label_y = if detail.is_empty() {
-        rect.center().y
+        content_rect.center().y
     } else {
-        rect.top() + 10.0
+        content_rect.top() + 11.0
     };
-    let label_pos = Pos2::new(rect.left() + 6.0, label_y);
+    let label_pos = Pos2::new(content_rect.left() + 2.0, label_y);
     painter.text(
         label_pos,
         Align2::LEFT_CENTER,
@@ -48,7 +50,7 @@ pub(crate) fn tree_row<'a>(
         THEME_TEXT,
     );
 
-    let mut badge_right = rect.right() - 6.0;
+    let mut badge_right = content_rect.right() - 58.0;
     for badge in badges.into_iter().collect::<Vec<_>>().into_iter().rev() {
         let width = badge_width(badge.label);
         let badge_pos = Pos2::new(badge_right, label_y);
@@ -64,7 +66,7 @@ pub(crate) fn tree_row<'a>(
 
     if !detail.is_empty() {
         painter.text(
-            Pos2::new(rect.left() + 6.0, rect.bottom() - 11.0),
+            Pos2::new(content_rect.left() + 2.0, content_rect.bottom() - 10.0),
             Align2::LEFT_CENTER,
             detail,
             detail_font,

@@ -308,6 +308,13 @@ impl EditorApp {
 
         if self.layer_state(LayerKind::Ground).visible {
             for tile in &self.document.layers.ground {
+                let selection = SelectedItem {
+                    layer: LayerKind::Ground,
+                    id: ground_selection_id(tile.x, tile.y),
+                };
+                if self.item_hidden(&selection) {
+                    continue;
+                }
                 if tile_intersects_rect(
                     tile,
                     visible_tiles.min_x,
@@ -323,6 +330,13 @@ impl EditorApp {
 
         if self.layer_state(LayerKind::Decals).visible {
             for decal in &self.document.layers.decals {
+                let selection = SelectedItem {
+                    layer: LayerKind::Decals,
+                    id: decal.id.clone(),
+                };
+                if self.item_hidden(&selection) {
+                    continue;
+                }
                 let Some(rect) = self.object_instance_screen_rect(canvas_rect, decal) else {
                     continue;
                 };
@@ -334,6 +348,13 @@ impl EditorApp {
 
         if self.layer_state(LayerKind::Objects).visible {
             for object in &self.document.layers.objects {
+                let selection = SelectedItem {
+                    layer: LayerKind::Objects,
+                    id: object.id.clone(),
+                };
+                if self.item_hidden(&selection) {
+                    continue;
+                }
                 let Some(rect) = self.object_instance_screen_rect(canvas_rect, object) else {
                     continue;
                 };
@@ -345,6 +366,13 @@ impl EditorApp {
 
         if self.layer_state(LayerKind::Entities).visible {
             for entity in &self.document.layers.entities {
+                let selection = SelectedItem {
+                    layer: LayerKind::Entities,
+                    id: entity.id.clone(),
+                };
+                if self.item_hidden(&selection) {
+                    continue;
+                }
                 let Some(rect) = self.entity_instance_screen_rect(canvas_rect, entity) else {
                     continue;
                 };
@@ -465,6 +493,16 @@ impl EditorApp {
                 }
             }
             ui.separator();
+            let hidden_count = self.hidden_selection_count(&selections);
+            let hidden_label = if hidden_count == selections.len() {
+                "显示所选"
+            } else {
+                "隐藏所选"
+            };
+            if ui.button(hidden_label).clicked() {
+                self.toggle_current_selection_hidden();
+                ui.close();
+            }
             if ui.button("复制").clicked() {
                 self.copy_selected_item();
                 ui.close();
@@ -1379,6 +1417,8 @@ impl EditorApp {
             prompt: None,
             objective: None,
             surface: None,
+            gate: None,
+            collision: None,
             unlock: None,
             transition: None,
         });
@@ -2876,6 +2916,9 @@ impl EditorApp {
                             layer,
                             id: ground_selection_id(tile.x, tile.y),
                         };
+                        if self.item_hidden(&selection) {
+                            continue;
+                        }
                         if self
                             .selection_screen_rect(canvas_rect, &selection)
                             .is_some_and(|rect| rect.intersects(selection_rect))
@@ -2890,6 +2933,9 @@ impl EditorApp {
                             layer,
                             id: instance.id.clone(),
                         };
+                        if self.item_hidden(&selection) {
+                            continue;
+                        }
                         if self
                             .selection_screen_rect(canvas_rect, &selection)
                             .is_some_and(|rect| rect.intersects(selection_rect))
@@ -2904,6 +2950,9 @@ impl EditorApp {
                             layer,
                             id: instance.id.clone(),
                         };
+                        if self.item_hidden(&selection) {
+                            continue;
+                        }
                         if self
                             .selection_screen_rect(canvas_rect, &selection)
                             .is_some_and(|rect| rect.intersects(selection_rect))
@@ -2918,6 +2967,9 @@ impl EditorApp {
                             layer,
                             id: instance.id.clone(),
                         };
+                        if self.item_hidden(&selection) {
+                            continue;
+                        }
                         if self
                             .selection_screen_rect(canvas_rect, &selection)
                             .is_some_and(|rect| rect.intersects(selection_rect))
@@ -2932,6 +2984,9 @@ impl EditorApp {
                             layer,
                             id: zone.id.clone(),
                         };
+                        if self.item_hidden(&selection) {
+                            continue;
+                        }
                         if self
                             .selection_screen_rect(canvas_rect, &selection)
                             .is_some_and(|rect| rect.intersects(selection_rect))
@@ -2952,62 +3007,82 @@ impl EditorApp {
         pointer_pos: Pos2,
     ) -> Option<SelectedItem> {
         for entity in self.document.layers.entities.iter().rev() {
+            let selection = SelectedItem {
+                layer: LayerKind::Entities,
+                id: entity.id.clone(),
+            };
+            if self.item_hidden(&selection) {
+                continue;
+            }
             if self
                 .entity_instance_screen_rect(canvas_rect, entity)
                 .is_some_and(|rect| rect.contains(pointer_pos))
             {
-                return Some(SelectedItem {
-                    layer: LayerKind::Entities,
-                    id: entity.id.clone(),
-                });
+                return Some(selection);
             }
         }
 
         for object in self.document.layers.objects.iter().rev() {
+            let selection = SelectedItem {
+                layer: LayerKind::Objects,
+                id: object.id.clone(),
+            };
+            if self.item_hidden(&selection) {
+                continue;
+            }
             if self
                 .object_instance_screen_rect(canvas_rect, object)
                 .is_some_and(|rect| rect.contains(pointer_pos))
             {
-                return Some(SelectedItem {
-                    layer: LayerKind::Objects,
-                    id: object.id.clone(),
-                });
+                return Some(selection);
             }
         }
 
         for decal in self.document.layers.decals.iter().rev() {
+            let selection = SelectedItem {
+                layer: LayerKind::Decals,
+                id: decal.id.clone(),
+            };
+            if self.item_hidden(&selection) {
+                continue;
+            }
             if self
                 .object_instance_screen_rect(canvas_rect, decal)
                 .is_some_and(|rect| rect.contains(pointer_pos))
             {
-                return Some(SelectedItem {
-                    layer: LayerKind::Decals,
-                    id: decal.id.clone(),
-                });
+                return Some(selection);
             }
         }
 
         for zone in self.document.layers.zones.iter().rev() {
+            let selection = SelectedItem {
+                layer: LayerKind::Zones,
+                id: zone.id.clone(),
+            };
+            if self.item_hidden(&selection) {
+                continue;
+            }
             if self
                 .zone_screen_rect(canvas_rect, zone)
                 .is_some_and(|rect| rect.contains(pointer_pos))
             {
-                return Some(SelectedItem {
-                    layer: LayerKind::Zones,
-                    id: zone.id.clone(),
-                });
+                return Some(selection);
             }
         }
 
         for tile in self.document.layers.ground.iter().rev() {
+            let selection = SelectedItem {
+                layer: LayerKind::Ground,
+                id: ground_selection_id(tile.x, tile.y),
+            };
+            if self.item_hidden(&selection) {
+                continue;
+            }
             if self
                 .tile_screen_rect(canvas_rect, tile.x, tile.y, tile.w, tile.h)
                 .contains(pointer_pos)
             {
-                return Some(SelectedItem {
-                    layer: LayerKind::Ground,
-                    id: ground_selection_id(tile.x, tile.y),
-                });
+                return Some(selection);
             }
         }
 
@@ -3404,6 +3479,13 @@ impl EditorApp {
         let visible_tiles = self.visible_tile_bounds(canvas_rect);
         if self.layer_state(LayerKind::Ground).visible {
             for tile in &self.document.layers.ground {
+                let selection = SelectedItem {
+                    layer: LayerKind::Ground,
+                    id: ground_selection_id(tile.x, tile.y),
+                };
+                if self.item_hidden(&selection) {
+                    continue;
+                }
                 if !tile_intersects_rect(
                     tile,
                     visible_tiles.min_x,
@@ -3420,6 +3502,13 @@ impl EditorApp {
 
         if self.layer_state(LayerKind::Decals).visible {
             for decal in &self.document.layers.decals {
+                let selection = SelectedItem {
+                    layer: LayerKind::Decals,
+                    id: decal.id.clone(),
+                };
+                if self.item_hidden(&selection) {
+                    continue;
+                }
                 let Some(rect) = self.object_instance_screen_rect(canvas_rect, decal) else {
                     continue;
                 };
@@ -3443,6 +3532,13 @@ impl EditorApp {
                 .objects
                 .iter()
                 .filter_map(|object| {
+                    let selection = SelectedItem {
+                        layer: LayerKind::Objects,
+                        id: object.id.clone(),
+                    };
+                    if self.item_hidden(&selection) {
+                        return None;
+                    }
                     self.object_instance_screen_rect(canvas_rect, object)
                         .filter(|rect| rect.intersects(canvas_rect))
                         .map(|rect| (object, rect))
@@ -3472,6 +3568,13 @@ impl EditorApp {
                 .entities
                 .iter()
                 .filter_map(|entity| {
+                    let selection = SelectedItem {
+                        layer: LayerKind::Entities,
+                        id: entity.id.clone(),
+                    };
+                    if self.item_hidden(&selection) {
+                        return None;
+                    }
                     self.entity_instance_screen_rect(canvas_rect, entity)
                         .filter(|rect| rect.intersects(canvas_rect))
                         .map(|rect| (entity, rect))
@@ -3502,6 +3605,13 @@ impl EditorApp {
     pub(crate) fn draw_zones(&self, canvas_rect: Rect, painter: &egui::Painter) {
         let tile_size = self.document.tile_size as f32;
         for zone in &self.document.layers.zones {
+            let selection = SelectedItem {
+                layer: LayerKind::Zones,
+                id: zone.id.clone(),
+            };
+            if self.item_hidden(&selection) {
+                continue;
+            }
             if !self
                 .zone_screen_rect(canvas_rect, zone)
                 .is_some_and(|rect| rect.intersects(canvas_rect))
@@ -3522,7 +3632,7 @@ impl EditorApp {
             if points.len() < 2 {
                 continue;
             }
-            if zone.zone_type == "CollisionLine" {
+            if matches!(zone.zone_type.as_str(), "CollisionLine" | "SurfaceGate") {
                 for pair in points.windows(2) {
                     painter.line_segment([pair[0], pair[1]], Stroke::new(3.0, stroke_color));
                 }
@@ -3631,7 +3741,12 @@ impl EditorApp {
             max.x = max.x.max(point.x);
             max.y = max.y.max(point.y);
         }
-        Some(Rect::from_min_max(min, max))
+        let rect = Rect::from_min_max(min, max);
+        if matches!(zone.zone_type.as_str(), "CollisionLine" | "SurfaceGate") {
+            Some(rect.expand(6.0))
+        } else {
+            Some(rect)
+        }
     }
 
     pub(crate) fn draw_asset_image(
@@ -3727,6 +3842,13 @@ impl EditorApp {
         }
 
         for tile in &self.document.layers.ground {
+            let selection = SelectedItem {
+                layer: LayerKind::Ground,
+                id: ground_selection_id(tile.x, tile.y),
+            };
+            if self.item_hidden(&selection) {
+                continue;
+            }
             if !tile_intersects_rect(
                 tile,
                 visible_tiles.min_x,
@@ -3752,6 +3874,13 @@ impl EditorApp {
         }
 
         for instance in &self.document.layers.objects {
+            let selection = SelectedItem {
+                layer: LayerKind::Objects,
+                id: instance.id.clone(),
+            };
+            if self.item_hidden(&selection) {
+                continue;
+            }
             if !self
                 .object_instance_screen_rect(canvas_rect, instance)
                 .is_some_and(|rect| rect.intersects(canvas_rect))
@@ -3775,6 +3904,13 @@ impl EditorApp {
         }
 
         for entity in &self.document.layers.entities {
+            let selection = SelectedItem {
+                layer: LayerKind::Entities,
+                id: entity.id.clone(),
+            };
+            if self.item_hidden(&selection) {
+                continue;
+            }
             if !self
                 .entity_instance_screen_rect(canvas_rect, entity)
                 .is_some_and(|rect| rect.intersects(canvas_rect))
@@ -3832,6 +3968,13 @@ impl EditorApp {
         let tile_size = self.document.tile_size as f32;
         let visible_tiles = self.visible_tile_bounds(canvas_rect);
         for entity in &self.document.layers.entities {
+            let selection = SelectedItem {
+                layer: LayerKind::Entities,
+                id: entity.id.clone(),
+            };
+            if self.item_hidden(&selection) {
+                continue;
+            }
             if !bounds_intersects_tile_rect(entity.x, entity.y, 1.0, 1.0, visible_tiles) {
                 continue;
             }
@@ -3859,7 +4002,11 @@ impl EditorApp {
         }
 
         let mut group_rect: Option<Rect> = None;
-        for (index, selection) in selections.iter().enumerate() {
+        let mut visible_index = 0usize;
+        for selection in &selections {
+            if self.item_hidden(selection) {
+                continue;
+            }
             let Some(rect) = self.selection_screen_rect(canvas_rect, selection) else {
                 continue;
             };
@@ -3867,11 +4014,12 @@ impl EditorApp {
                 Some(group) => group.union(rect),
                 None => rect,
             });
-            let color = if index == 0 {
+            let color = if visible_index == 0 {
                 THEME_SELECTION
             } else {
                 THEME_MULTI_SELECTION
             };
+            visible_index += 1;
             painter.rect_stroke(
                 rect.expand(3.0),
                 2.0,
@@ -3882,6 +4030,9 @@ impl EditorApp {
 
         if selections.len() == 1 {
             let selection = &selections[0];
+            if self.item_hidden(selection) {
+                return;
+            }
             let Some(rect) = self.selection_screen_rect(canvas_rect, selection) else {
                 return;
             };
@@ -3943,6 +4094,9 @@ impl EditorApp {
         selection: &SelectedItem,
         painter: &egui::Painter,
     ) {
+        if self.item_hidden(selection) {
+            return;
+        }
         let Some(zone) = self
             .document
             .layers
@@ -5265,6 +5419,8 @@ mod tests {
             prompt: None,
             objective: None,
             surface: None,
+            gate: None,
+            collision: None,
             unlock: None,
             transition: None,
         }

@@ -128,6 +128,14 @@ impl World {
         self.map.walk_surface_allows_ground_movement(previous, next)
     }
 
+    pub fn walk_surface_ground_entry(&self, previous: Vec2, next: Vec2) -> Option<MapWalkSurface> {
+        self.map.walk_surface_ground_entry(previous, next)
+    }
+
+    pub fn walk_surface_allows_ground_entry(&self, previous: Vec2, next: Vec2) -> bool {
+        self.map.walk_surface_allows_ground_entry(previous, next)
+    }
+
     pub fn walk_surface_allows_movement(
         &self,
         surface_id: &str,
@@ -136,6 +144,10 @@ impl World {
     ) -> bool {
         self.map
             .walk_surface_allows_movement(surface_id, previous, next)
+    }
+
+    pub fn walk_surface_exits(&self, surface_id: &str, previous: Vec2, next: Vec2) -> bool {
+        self.map.walk_surface_exits(surface_id, previous, next)
     }
 
     pub fn codex_entities(&self) -> impl Iterator<Item = &MapEntity> + '_ {
@@ -148,6 +160,21 @@ impl World {
     #[allow(dead_code)]
     pub fn solid_rects(&self) -> impl Iterator<Item = Rect> + '_ {
         self.map.solid_rects()
+    }
+
+    pub fn solid_rects_without_zone_collision(&self) -> impl Iterator<Item = Rect> + '_ {
+        self.map.solid_rects_without_zone_collision()
+    }
+
+    pub fn zone_collision_rects(&self) -> impl Iterator<Item = Rect> + '_ {
+        self.map.zone_collision_rects()
+    }
+
+    pub fn surface_collision_rects<'a>(
+        &'a self,
+        surface_id: &'a str,
+    ) -> impl Iterator<Item = Rect> + 'a {
+        self.map.surface_collision_rects(surface_id)
     }
 
     pub fn remove_entities_by_id(&mut self, ids: &std::collections::BTreeSet<String>) {

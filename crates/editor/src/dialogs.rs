@@ -489,6 +489,7 @@ impl EditorApp {
         self.selected_map_path = self.map_path.clone();
         self.save_as_id = id;
         self.clear_selection();
+        self.hidden_items.clear();
         self.selected_asset = None;
         self.undo_stack.clear();
         self.redo_stack.clear();

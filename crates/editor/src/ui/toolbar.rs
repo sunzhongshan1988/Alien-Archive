@@ -6,6 +6,7 @@ use eframe::egui::{
 };
 
 use crate::ToolKind;
+use crate::ui::buttons::{LUCIDE_EYE_OFF_URI, LUCIDE_EYE_URI, LUCIDE_TRASH_2_URI};
 use crate::ui::theme::{THEME_ACCENT_STRONG, THEME_MUTED_TEXT};
 
 pub(crate) const TOOLBAR_HEIGHT: f32 = 32.0;
@@ -163,6 +164,18 @@ pub(crate) fn configure_tool_icons(ctx: &EguiContext) {
         (
             "bytes://editor/tools/zoom.svg",
             include_str!("../../assets/icons/tools/zoom.svg"),
+        ),
+        (
+            LUCIDE_EYE_URI,
+            include_str!("../../assets/icons/lucide/eye.svg"),
+        ),
+        (
+            LUCIDE_EYE_OFF_URI,
+            include_str!("../../assets/icons/lucide/eye-off.svg"),
+        ),
+        (
+            LUCIDE_TRASH_2_URI,
+            include_str!("../../assets/icons/lucide/trash-2.svg"),
         ),
     ] {
         let bytes = normalize_svg_icon(svg).into_bytes().into_boxed_slice();

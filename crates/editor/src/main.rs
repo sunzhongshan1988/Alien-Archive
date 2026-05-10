@@ -58,7 +58,10 @@ use eframe::egui::{
 use terrain::{TerrainNeighborFamilies, TerrainRules};
 use tools::ToolKind;
 use ui::asset_grid::{asset_grid_columns, asset_tile};
-use ui::buttons::editor_icon_button;
+use ui::buttons::{
+    LUCIDE_EYE_OFF_URI, LUCIDE_EYE_URI, LUCIDE_TRASH_2_URI, editor_icon_button,
+    editor_svg_icon_button_at,
+};
 use ui::fields::{property_options, property_text_edit};
 use ui::header::panel_header;
 use ui::layer_row::layer_row;
@@ -455,6 +458,7 @@ impl EditorApp {
             MenuCommand::Copy => self.copy_selected_item(),
             MenuCommand::Paste => self.paste_clipboard(),
             MenuCommand::Duplicate => self.duplicate_selected_item(),
+            MenuCommand::ToggleSelectionHidden => self.toggle_current_selection_hidden(),
             MenuCommand::DeleteSelection => self.delete_current_selection(),
             MenuCommand::AlignSelection(mode) => self.align_selected_items(mode),
             MenuCommand::DistributeSelection(mode) => self.distribute_selected_items(mode),
@@ -1390,9 +1394,9 @@ impl EditorApp {
                         self.map_path = maps_dir(&self.project_root).join(format!("{id}.ron"));
                         self.selected_map_path = self.map_path.clone();
                         self.save_as_id = id;
-        self.clear_selection();
-        self.hidden_items.clear();
-        self.selected_asset = None;
+                        self.clear_selection();
+                        self.hidden_items.clear();
+                        self.selected_asset = None;
                         self.undo_stack.clear();
                         self.redo_stack.clear();
                         self.dirty = true;
@@ -1582,6 +1586,36 @@ impl EditorApp {
         } else {
             self.hidden_items.remove(&selection);
         }
+    }
+
+    fn hidden_selection_count(&self, selections: &[SelectedItem]) -> usize {
+        selections
+            .iter()
+            .filter(|selection| self.item_hidden(selection))
+            .count()
+    }
+
+    fn set_items_hidden(&mut self, selections: &[SelectedItem], hidden: bool) {
+        if selections.is_empty() {
+            self.status = "请先选择对象".to_owned();
+            return;
+        }
+        for selection in selections {
+            self.set_item_hidden(selection.clone(), hidden);
+        }
+        self.status = if hidden {
+            format!("已隐藏 {} 个对象", selections.len())
+        } else {
+            format!("已显示 {} 个对象", selections.len())
+        };
+    }
+
+    fn toggle_current_selection_hidden(&mut self) {
+        let selections = self.current_selection_list();
+        let hide = selections
+            .iter()
+            .any(|selection| !self.item_hidden(selection));
+        self.set_items_hidden(&selections, hide);
     }
 
     fn clear_hidden_items(&mut self) {
@@ -2005,6 +2039,21 @@ impl EditorApp {
                     }
                     if ui.button("复制一份").clicked() {
                         self.duplicate_selected_item();
+                        ui.close();
+                    }
+                    let selections = self.current_selection_list();
+                    let hidden_count = self.hidden_selection_count(&selections);
+                    let hidden_label = if !selections.is_empty() && hidden_count == selections.len()
+                    {
+                        "显示所选"
+                    } else {
+                        "隐藏所选"
+                    };
+                    if ui
+                        .add_enabled(!selections.is_empty(), egui::Button::new(hidden_label))
+                        .clicked()
+                    {
+                        self.toggle_current_selection_hidden();
                         ui.close();
                     }
                     if ui.button("删除").clicked() {

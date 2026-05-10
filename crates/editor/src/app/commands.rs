@@ -20,6 +20,7 @@ pub(crate) enum MenuCommand {
     Copy,
     Paste,
     Duplicate,
+    ToggleSelectionHidden,
     DeleteSelection,
     AlignSelection(BatchAlignMode),
     DistributeSelection(BatchDistributeMode),

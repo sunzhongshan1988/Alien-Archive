@@ -105,17 +105,26 @@ impl OverworldScene {
         true
     }
 
-    fn refresh_active_walk_surface(&mut self) {
+    fn refresh_active_walk_surface(&mut self, ground_entry_from: Option<runtime::Vec2>) {
         let feet = self.player.topdown_feet_position();
 
         if let Some(surface_id) = self.active_walk_surface_id.clone() {
-            if self.world.walk_surface_contains(&surface_id, feet) {
+            if ground_entry_from
+                .is_some_and(|previous| self.world.walk_surface_exits(&surface_id, previous, feet))
+            {
+                self.active_walk_surface_id = None;
+            } else if self.world.walk_surface_contains(&surface_id, feet) {
                 return;
+            } else {
+                self.active_walk_surface_id = None;
             }
-            self.active_walk_surface_id = None;
         }
 
-        if let Some(surface) = self.world.walk_surface_entry_at(feet) {
+        let Some(previous) = ground_entry_from else {
+            return;
+        };
+
+        if let Some(surface) = self.world.walk_surface_ground_entry(previous, feet) {
             self.active_walk_surface_id = Some(surface.surface_id);
         }
     }
@@ -229,7 +238,7 @@ impl Scene for OverworldScene {
                 environment: FieldEnvironment::Overworld,
             },
         );
-        self.refresh_active_walk_surface();
+        self.refresh_active_walk_surface(None);
         let previous_feet = self.player.topdown_feet_position();
         let active_surface_id = self.active_walk_surface_id.clone();
         let world = &self.world;
@@ -237,23 +246,42 @@ impl Scene for OverworldScene {
             .as_deref()
             .and_then(|surface_id| world.walk_surface_for_id_at(surface_id, previous_feet))
             .is_none_or(|surface| surface.constrain_movement);
+        let mut solid_rects = self
+            .world
+            .solid_rects_without_zone_collision()
+            .collect::<Vec<_>>();
+        if let Some(surface_id) = active_surface_id.as_deref() {
+            solid_rects.extend(self.world.surface_collision_rects(surface_id));
+        }
+        let zone_collision_rects = self.world.zone_collision_rects().collect::<Vec<_>>();
 
-        self.player.update_topdown_with_speed_and_constraint(
-            dt,
-            input,
-            self.world.solid_rects(),
-            status.movement_speed_multiplier,
-            |feet| {
-                let Some(surface_id) = active_surface_id.as_deref() else {
-                    return world.walk_surface_allows_ground_movement(previous_feet, feet);
-                };
-                if !active_surface_constrained {
-                    return true;
-                }
-                world.walk_surface_allows_movement(surface_id, previous_feet, feet)
-            },
-        );
-        self.refresh_active_walk_surface();
+        self.player
+            .update_topdown_with_speed_and_conditional_collision(
+                dt,
+                input,
+                solid_rects,
+                zone_collision_rects,
+                status.movement_speed_multiplier,
+                |feet| {
+                    let Some(surface_id) = active_surface_id.as_deref() else {
+                        return world.walk_surface_allows_ground_movement(previous_feet, feet);
+                    };
+                    if !active_surface_constrained {
+                        return true;
+                    }
+                    world.walk_surface_allows_movement(surface_id, previous_feet, feet)
+                },
+                |previous, feet| {
+                    let Some(surface_id) = active_surface_id.as_deref() else {
+                        return !world.walk_surface_allows_ground_entry(previous, feet);
+                    };
+                    if !active_surface_constrained {
+                        return false;
+                    }
+                    !world.walk_surface_allows_movement(surface_id, previous, feet)
+                },
+            );
+        self.refresh_active_walk_surface(Some(previous_feet));
         self.camera.position = self.player.position;
         ctx.record_world_location(SceneId::Overworld, &self.map_path, self.player.position);
 

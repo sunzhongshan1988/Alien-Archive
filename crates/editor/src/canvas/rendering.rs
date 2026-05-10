@@ -131,6 +131,10 @@ pub(crate) fn zone_colors(zone_type: &str) -> (Color32, Color32) {
             Color32::from_rgb(100, 184, 170),
             Color32::from_rgba_unmultiplied(100, 184, 170, 34),
         ),
+        "SurfaceGate" => (
+            Color32::from_rgb(248, 198, 86),
+            Color32::from_rgba_unmultiplied(248, 198, 86, 28),
+        ),
         "CollisionArea" => (
             THEME_ERROR,
             Color32::from_rgba_unmultiplied(THEME_ERROR.r(), THEME_ERROR.g(), THEME_ERROR.b(), 28),

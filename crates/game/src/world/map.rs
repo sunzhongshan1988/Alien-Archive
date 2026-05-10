@@ -9,8 +9,9 @@ use anyhow::{Context, Result, bail};
 use content::{
     AnchorKind, AssetDatabase, DEFAULT_ASSET_DB_PATH, HazardRule as EditorHazardRule, InstanceRect,
     MapDocument as EditorMapFile, ObjectInstance as EditorObjectInstance,
-    ObjectiveRule as EditorObjectiveRule, PromptRule as EditorPromptRule, TransitionTarget,
-    UnlockRule, WalkSurfaceKind as EditorWalkSurfaceKind, WalkSurfaceRule as EditorWalkSurfaceRule,
+    ObjectiveRule as EditorObjectiveRule, PromptRule as EditorPromptRule,
+    SurfaceGateRule as EditorSurfaceGateRule, TransitionTarget, UnlockRule,
+    WalkSurfaceKind as EditorWalkSurfaceKind, WalkSurfaceRule as EditorWalkSurfaceRule,
     ZoneInstance as EditorZoneInstance,
 };
 use image::{RgbaImage, imageops};
@@ -24,7 +25,8 @@ const DEFAULT_OBJECT_DEPTH_INSET_TILES: f32 = 0.5;
 const COLLISION_LINE_WIDTH_TILES: f32 = 0.25;
 const COLLISION_LINE_SAMPLE_STEP_TILES: f32 = COLLISION_LINE_WIDTH_TILES * 0.5;
 const WALK_SURFACE_EDGE_TOLERANCE: f32 = 4.0;
-const WALK_SURFACE_RAMP_EXIT_DOT_THRESHOLD: f32 = 0.55;
+const WALK_SURFACE_GATE_SIDE_TOLERANCE_PIXELS: f32 = 0.25;
+const WALK_SURFACE_GATE_INTERSECTION_TOLERANCE_PIXELS: f32 = 0.25;
 
 #[derive(Clone, Debug)]
 pub struct Map {
@@ -33,7 +35,10 @@ pub struct Map {
     sprites: Vec<MapSprite>,
     entities: Vec<MapEntity>,
     zones: Vec<MapZone>,
+    surface_gates: Vec<MapSurfaceGate>,
     collision_rects: Vec<Rect>,
+    zone_collision_rects: Vec<Rect>,
+    surface_collision_rects: Vec<MapSurfaceCollisionRect>,
     textures: HashMap<String, PathBuf>,
     texture_atlas: Option<MapTextureAtlas>,
 }
@@ -313,6 +318,16 @@ impl Map {
     }
 
     pub fn solid_rects(&self) -> impl Iterator<Item = Rect> + '_ {
+        self.solid_rects_without_zone_collision()
+            .chain(self.zone_collision_rects.iter().copied())
+            .chain(
+                self.surface_collision_rects
+                    .iter()
+                    .map(|collision| collision.rect),
+            )
+    }
+
+    pub fn solid_rects_without_zone_collision(&self) -> impl Iterator<Item = Rect> + '_ {
         self.tiles
             .iter()
             .filter(|tile| tile.solid)
@@ -324,6 +339,20 @@ impl Map {
                     .filter(|entity| entity.solid)
                     .map(|entity| entity.collision_rect.unwrap_or(entity.rect)),
             )
+    }
+
+    pub fn zone_collision_rects(&self) -> impl Iterator<Item = Rect> + '_ {
+        self.zone_collision_rects.iter().copied()
+    }
+
+    pub fn surface_collision_rects<'a>(
+        &'a self,
+        surface_id: &'a str,
+    ) -> impl Iterator<Item = Rect> + 'a {
+        self.surface_collision_rects
+            .iter()
+            .filter(move |collision| collision.surface_id == surface_id)
+            .map(|collision| collision.rect)
     }
 
     #[cfg(test)]
@@ -343,36 +372,19 @@ impl Map {
         self.walk_surface_for_id_at(surface_id, point).is_some()
     }
 
-    pub fn walk_surface_allows_ground_movement(&self, previous: Vec2, next: Vec2) -> bool {
-        let Some((ramp_zone, ramp_surface)) = self
-            .walk_surface_zone_at_filtered(next, &mut |surface| {
-                surface.kind == MapWalkSurfaceKind::Ramp
-            })
-        else {
-            return self
-                .walk_surface_zone_at_filtered(next, &mut |surface| {
-                    surface.kind == MapWalkSurfaceKind::Platform
-                })
-                .is_none();
-        };
-        let ramp_surface_id = ramp_surface.surface_id.clone();
+    pub fn walk_surface_allows_ground_movement(&self, _previous: Vec2, _next: Vec2) -> bool {
+        true
+    }
 
-        if self
-            .walk_surface_zone_at_filtered(previous, &mut |surface| {
-                surface.surface_id == ramp_surface_id && surface.kind == MapWalkSurfaceKind::Ramp
-            })
-            .is_some()
-        {
-            return true;
-        }
+    pub fn walk_surface_ground_entry(&self, previous: Vec2, next: Vec2) -> Option<MapWalkSurface> {
+        let gate =
+            self.walk_surface_gate_crossed(None, previous, next, SurfaceGateTraversal::Enter)?;
+        self.walk_surface_for_id_at(&gate.surface_id, next)
+            .filter(|surface| surface.kind == MapWalkSurfaceKind::Ramp)
+    }
 
-        self.walk_surface_movement_points_toward_kind(
-            &ramp_surface_id,
-            ramp_zone,
-            previous,
-            next,
-            MapWalkSurfaceKind::Platform,
-        )
+    pub fn walk_surface_allows_ground_entry(&self, previous: Vec2, next: Vec2) -> bool {
+        self.walk_surface_ground_entry(previous, next).is_some()
     }
 
     pub fn walk_surface_allows_movement(
@@ -381,10 +393,18 @@ impl Map {
         previous: Vec2,
         next: Vec2,
     ) -> bool {
+        if self.walk_surface_exits(surface_id, previous, next) {
+            return true;
+        }
         if self.walk_surface_contains(surface_id, next) {
             return true;
         }
-        self.walk_surface_can_exit_via_ramp(surface_id, previous, next)
+        false
+    }
+
+    pub fn walk_surface_exits(&self, surface_id: &str, previous: Vec2, next: Vec2) -> bool {
+        self.walk_surface_gate_crossed(Some(surface_id), previous, next, SurfaceGateTraversal::Exit)
+            .is_some()
     }
 
     fn walk_surface_at_filtered(
@@ -409,82 +429,66 @@ impl Map {
             .max_by(|(_, left), (_, right)| compare_walk_surfaces(left, right))
     }
 
-    fn walk_surface_can_exit_via_ramp(&self, surface_id: &str, previous: Vec2, next: Vec2) -> bool {
-        let Some((ramp_zone, previous_surface)) = self
-            .walk_surface_zone_at_filtered(previous, &mut |surface| {
-                surface.surface_id == surface_id
+    fn walk_surface_gate_crossed(
+        &self,
+        surface_id: Option<&str>,
+        previous: Vec2,
+        next: Vec2,
+        traversal: SurfaceGateTraversal,
+    ) -> Option<&MapSurfaceGate> {
+        self.surface_gates
+            .iter()
+            .filter(|gate| {
+                surface_id.is_none_or(|surface_id| gate.surface_id.as_str() == surface_id)
             })
-        else {
-            return false;
-        };
-        if previous_surface.kind != MapWalkSurfaceKind::Ramp {
+            .find(|gate| self.surface_gate_allows_traversal(gate, previous, next, traversal))
+    }
+
+    fn surface_gate_allows_traversal(
+        &self,
+        gate: &MapSurfaceGate,
+        previous: Vec2,
+        next: Vec2,
+        traversal: SurfaceGateTraversal,
+    ) -> bool {
+        if !segments_intersect(previous, next, gate.start, gate.end) {
             return false;
         }
 
-        self.walk_surface_movement_points_away_from_kind(
-            surface_id,
-            ramp_zone,
-            previous,
-            next,
+        let gate_vector = gate.end - gate.start;
+        let side_tolerance = WALK_SURFACE_GATE_SIDE_TOLERANCE_PIXELS * vec2_length(gate_vector);
+        let Some(platform_side) = self.surface_gate_platform_side(gate) else {
+            return false;
+        };
+        if platform_side.abs() <= side_tolerance {
+            return false;
+        }
+
+        let side_sign = platform_side.signum();
+        let previous_side = vec2_cross(gate_vector, previous - gate.start) * side_sign;
+        let next_side = vec2_cross(gate_vector, next - gate.start) * side_sign;
+
+        match traversal {
+            SurfaceGateTraversal::Enter => {
+                previous_side < -side_tolerance && next_side >= -side_tolerance
+            }
+            SurfaceGateTraversal::Exit => {
+                previous_side >= side_tolerance && next_side <= side_tolerance
+            }
+        }
+    }
+
+    fn surface_gate_platform_side(&self, gate: &MapSurfaceGate) -> Option<f32> {
+        let gate_center = gate.center();
+        let platform_center = self.nearest_walk_surface_zone_center(
+            &gate.surface_id,
             MapWalkSurfaceKind::Platform,
-        )
-    }
-
-    fn walk_surface_movement_points_toward_kind(
-        &self,
-        surface_id: &str,
-        from_zone: &MapZone,
-        previous: Vec2,
-        next: Vec2,
-        kind: MapWalkSurfaceKind,
-    ) -> bool {
-        self.walk_surface_movement_matches_kind_direction(
-            surface_id, from_zone, previous, next, kind, -1.0,
-        )
-    }
-
-    fn walk_surface_movement_points_away_from_kind(
-        &self,
-        surface_id: &str,
-        from_zone: &MapZone,
-        previous: Vec2,
-        next: Vec2,
-        kind: MapWalkSurfaceKind,
-    ) -> bool {
-        self.walk_surface_movement_matches_kind_direction(
-            surface_id, from_zone, previous, next, kind, 1.0,
-        )
-    }
-
-    fn walk_surface_movement_matches_kind_direction(
-        &self,
-        surface_id: &str,
-        from_zone: &MapZone,
-        previous: Vec2,
-        next: Vec2,
-        kind: MapWalkSurfaceKind,
-        direction_sign: f32,
-    ) -> bool {
-        let movement = next - previous;
-        let movement_length = vec2_length(movement);
-        if movement_length <= f32::EPSILON {
-            return true;
-        }
-
-        let ramp_center = rect_center(from_zone.bounds);
-        let Some(platform_center) =
-            self.nearest_walk_surface_zone_center(surface_id, kind, ramp_center)
-        else {
-            return true;
-        };
-        let outward = ramp_center - platform_center;
-        let outward_length = vec2_length(outward);
-        if outward_length <= f32::EPSILON {
-            return false;
-        }
-
-        let expected = outward * (direction_sign / outward_length);
-        vec2_dot(movement, expected) >= movement_length * WALK_SURFACE_RAMP_EXIT_DOT_THRESHOLD
+            gate_center,
+        )?;
+        Some(vec2_cross(
+            gate.end - gate.start,
+            platform_center - gate.start,
+        ))
     }
 
     fn nearest_walk_surface_zone_center(
@@ -591,7 +595,10 @@ impl Map {
             sprites: Vec::new(),
             entities,
             zones: Vec::new(),
+            surface_gates: Vec::new(),
             collision_rects: Vec::new(),
+            zone_collision_rects: Vec::new(),
+            surface_collision_rects: Vec::new(),
             ground_cache: None,
             textures: HashMap::new(),
             texture_atlas: None,
@@ -778,14 +785,15 @@ impl Map {
             textures.clear();
         }
 
-        collision_rects.extend(collision_rects_from_zones(
+        let (zone_collision_rects, surface_collision_rects) = collision_rects_from_zones(
             &file.layers.zones,
             origin,
             tile_size,
             file.width,
             file.height,
-        ));
+        );
 
+        let mut surface_gates = Vec::new();
         let zones = file
             .layers
             .zones
@@ -802,6 +810,11 @@ impl Map {
                     })
                     .collect::<Vec<_>>();
                 let bounds = bounds_for_points(&points);
+                if let Some(gate) =
+                    MapSurfaceGate::from_content(&zone.id, &zone.zone_type, zone.gate, &points)
+                {
+                    surface_gates.push(gate);
+                }
                 let surface = MapWalkSurface::from_content(&zone.id, zone.surface);
                 MapZone {
                     id: zone.id,
@@ -840,7 +853,10 @@ impl Map {
             sprites,
             entities,
             zones,
+            surface_gates,
             collision_rects,
+            zone_collision_rects,
+            surface_collision_rects,
             ground_cache,
             textures,
             texture_atlas,
@@ -1224,6 +1240,10 @@ fn debug_zone_colors(zone: &MapZone) -> (Color, Color) {
             Color::rgba(0.12, 1.0, 0.42, 0.06),
             Color::rgba(0.24, 1.0, 0.52, 0.66),
         ),
+        "SurfaceGate" => (
+            Color::rgba(1.0, 0.74, 0.12, 0.08),
+            Color::rgba(1.0, 0.80, 0.18, 0.76),
+        ),
         "HazardZone" => (
             Color::rgba(1.0, 0.10, 0.04, 0.08),
             Color::rgba(1.0, 0.18, 0.10, 0.78),
@@ -1541,6 +1561,57 @@ impl MapWalkSurface {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct MapSurfaceGate {
+    pub id: String,
+    pub surface_id: String,
+    pub start: Vec2,
+    pub end: Vec2,
+}
+
+impl MapSurfaceGate {
+    fn from_content(
+        zone_id: &str,
+        zone_type: &str,
+        gate: Option<EditorSurfaceGateRule>,
+        points: &[Vec2],
+    ) -> Option<Self> {
+        if zone_type != "SurfaceGate" {
+            return None;
+        }
+        let gate = gate?;
+        let surface_id = clean_optional_string(gate.surface_id)?;
+        let [start, end, ..] = points else {
+            return None;
+        };
+        Some(Self {
+            id: zone_id.to_owned(),
+            surface_id,
+            start: *start,
+            end: *end,
+        })
+    }
+
+    fn center(&self) -> Vec2 {
+        Vec2::new(
+            (self.start.x + self.end.x) * 0.5,
+            (self.start.y + self.end.y) * 0.5,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MapSurfaceCollisionRect {
+    pub surface_id: String,
+    pub rect: Rect,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SurfaceGateTraversal {
+    Enter,
+    Exit,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum MapWalkSurfaceKind {
     #[default]
@@ -1806,15 +1877,35 @@ fn collision_rects_from_zones(
     tile_size: f32,
     map_width: u32,
     map_height: u32,
-) -> Vec<Rect> {
-    zones
-        .iter()
-        .flat_map(|zone| match zone.zone_type.as_str() {
+) -> (Vec<Rect>, Vec<MapSurfaceCollisionRect>) {
+    let mut ground_collision_rects = Vec::new();
+    let mut surface_collision_rects = Vec::new();
+
+    for zone in zones {
+        let rects = match zone.zone_type.as_str() {
             "CollisionArea" => collision_area_rects(zone, origin, tile_size, map_width, map_height),
             "CollisionLine" => collision_line_rects(zone, origin, tile_size, map_width, map_height),
             _ => Vec::new(),
-        })
-        .collect()
+        };
+        if rects.is_empty() {
+            continue;
+        }
+
+        if let Some(surface_id) = zone
+            .collision
+            .as_ref()
+            .and_then(|collision| clean_optional_string(collision.surface_id.clone()))
+        {
+            surface_collision_rects.extend(rects.into_iter().map(|rect| MapSurfaceCollisionRect {
+                surface_id: surface_id.clone(),
+                rect,
+            }));
+        } else {
+            ground_collision_rects.extend(rects);
+        }
+    }
+
+    (ground_collision_rects, surface_collision_rects)
 }
 
 fn collision_area_rects(
@@ -2052,6 +2143,40 @@ fn distance_squared_to_segment(point: Vec2, start: Vec2, end: Vec2) -> f32 {
     vec2_length_squared(point - closest)
 }
 
+fn segments_intersect(
+    first_start: Vec2,
+    first_end: Vec2,
+    second_start: Vec2,
+    second_end: Vec2,
+) -> bool {
+    let first = first_end - first_start;
+    let second = second_end - second_start;
+    let denominator = vec2_cross(first, second);
+    let offset = second_start - first_start;
+
+    if denominator.abs() <= f32::EPSILON {
+        let tolerance_squared = WALK_SURFACE_GATE_INTERSECTION_TOLERANCE_PIXELS
+            * WALK_SURFACE_GATE_INTERSECTION_TOLERANCE_PIXELS;
+        return distance_squared_to_segment(first_start, second_start, second_end)
+            <= tolerance_squared
+            || distance_squared_to_segment(first_end, second_start, second_end)
+                <= tolerance_squared
+            || distance_squared_to_segment(second_start, first_start, first_end)
+                <= tolerance_squared
+            || distance_squared_to_segment(second_end, first_start, first_end)
+                <= tolerance_squared;
+    }
+
+    let t = vec2_cross(offset, second) / denominator;
+    let u = vec2_cross(offset, first) / denominator;
+    let epsilon = 0.001;
+    (-epsilon..=1.0 + epsilon).contains(&t) && (-epsilon..=1.0 + epsilon).contains(&u)
+}
+
+fn vec2_cross(left: Vec2, right: Vec2) -> f32 {
+    left.x * right.y - left.y * right.x
+}
+
 fn vec2_dot(left: Vec2, right: Vec2) -> f32 {
     left.x * right.x + left.y * right.y
 }
@@ -2160,7 +2285,10 @@ mod tests {
             ],
             entities: Vec::new(),
             zones: Vec::new(),
+            surface_gates: Vec::new(),
             collision_rects: Vec::new(),
+            zone_collision_rects: Vec::new(),
+            surface_collision_rects: Vec::new(),
             ground_cache: None,
             textures: HashMap::new(),
             texture_atlas: None,
@@ -2189,7 +2317,10 @@ mod tests {
             sprites: vec![body],
             entities: Vec::new(),
             zones: Vec::new(),
+            surface_gates: Vec::new(),
             collision_rects: Vec::new(),
+            zone_collision_rects: Vec::new(),
+            surface_collision_rects: Vec::new(),
             ground_cache: None,
             textures: HashMap::new(),
             texture_atlas: None,
@@ -2233,6 +2364,8 @@ mod tests {
             prompt: None,
             objective: None,
             surface: None,
+            gate: None,
+            collision: None,
             unlock: None,
             transition: None,
         };
@@ -2258,6 +2391,8 @@ mod tests {
             prompt: None,
             objective: None,
             surface: None,
+            gate: None,
+            collision: None,
             unlock: None,
             transition: None,
         };
@@ -2283,7 +2418,10 @@ mod tests {
             ],
             entities: Vec::new(),
             zones: Vec::new(),
+            surface_gates: Vec::new(),
             collision_rects: Vec::new(),
+            zone_collision_rects: Vec::new(),
+            surface_collision_rects: Vec::new(),
             ground_cache: None,
             textures: HashMap::new(),
             texture_atlas: None,
@@ -2311,7 +2449,10 @@ mod tests {
             ],
             entities: Vec::new(),
             zones: Vec::new(),
+            surface_gates: Vec::new(),
             collision_rects: Vec::new(),
+            zone_collision_rects: Vec::new(),
+            surface_collision_rects: Vec::new(),
             ground_cache: None,
             textures: HashMap::new(),
             texture_atlas: None,
@@ -2358,7 +2499,10 @@ mod tests {
                 unlock: None,
                 transition: None,
             }],
+            surface_gates: Vec::new(),
             collision_rects: Vec::new(),
+            zone_collision_rects: Vec::new(),
+            surface_collision_rects: Vec::new(),
             ground_cache: None,
             textures: HashMap::new(),
             texture_atlas: None,
@@ -2418,7 +2562,10 @@ mod tests {
                 unlock: None,
                 transition: None,
             }],
+            surface_gates: Vec::new(),
             collision_rects: vec![Rect::new(Vec2::new(0.0, 0.0), Vec2::new(16.0, 16.0))],
+            zone_collision_rects: Vec::new(),
+            surface_collision_rects: Vec::new(),
             ground_cache: None,
             textures: HashMap::new(),
             texture_atlas: None,
@@ -2459,7 +2606,10 @@ mod tests {
                     Vec2::new(6.0, 4.0),
                 ),
             ],
+            surface_gates: Vec::new(),
             collision_rects: Vec::new(),
+            zone_collision_rects: Vec::new(),
+            surface_collision_rects: Vec::new(),
             ground_cache: None,
             textures: HashMap::new(),
             texture_atlas: None,
@@ -2508,7 +2658,10 @@ mod tests {
                     Vec2::new(10.0, 10.0),
                 ),
             ],
+            surface_gates: Vec::new(),
             collision_rects: Vec::new(),
+            zone_collision_rects: Vec::new(),
+            surface_collision_rects: Vec::new(),
             ground_cache: None,
             textures: HashMap::new(),
             texture_atlas: None,
@@ -2536,12 +2689,16 @@ mod tests {
     }
 
     #[test]
-    fn ground_movement_cannot_enter_platform_top_directly() {
+    fn ground_movement_can_pass_under_platform_without_entering_surface() {
         let map = platform_with_front_ramp();
 
         assert!(
-            !map.walk_surface_allows_ground_movement(Vec2::new(50.0, -20.0), Vec2::new(50.0, 50.0)),
-            "ground movement behind the platform should stay on the ground layer instead of snapping onto the top"
+            map.walk_surface_allows_ground_movement(Vec2::new(50.0, -20.0), Vec2::new(50.0, 50.0)),
+            "ground movement behind the platform should stay on ground so the art can cover the actor"
+        );
+        assert!(
+            !map.walk_surface_allows_ground_entry(Vec2::new(50.0, -20.0), Vec2::new(50.0, 50.0)),
+            "ground movement into a platform zone must not activate the raised surface"
         );
     }
 
@@ -2554,11 +2711,106 @@ mod tests {
             "walking from the ramp foot toward the platform should enter the ramp"
         );
         assert!(
-            !map.walk_surface_allows_ground_movement(
-                Vec2::new(-20.0, 150.0),
-                Vec2::new(50.0, 150.0)
-            ),
+            map.walk_surface_allows_ground_entry(Vec2::new(50.0, 220.0), Vec2::new(50.0, 150.0)),
+            "ground-to-ramp entry is the only case where ground collision zones can yield"
+        );
+        assert!(
+            !map.walk_surface_allows_ground_entry(Vec2::new(-20.0, 150.0), Vec2::new(50.0, 150.0)),
             "walking into the ramp side should not switch to the raised surface"
+        );
+        assert!(
+            !map.walk_surface_allows_ground_entry(Vec2::new(50.0, 220.0), Vec2::new(50.0, 220.0)),
+            "plain ground movement should still keep zone collision active"
+        );
+        assert!(
+            !map.walk_surface_allows_ground_entry(Vec2::new(-20.0, 220.0), Vec2::new(20.0, 150.0)),
+            "diagonal movement from below the side should not count as a ramp-foot entry"
+        );
+        assert!(
+            !map.walk_surface_allows_ground_entry(Vec2::new(106.0, 220.0), Vec2::new(106.0, 190.0)),
+            "crossing an expanded gate endpoint must not activate the surface unless the feet land on the ramp"
+        );
+    }
+
+    #[test]
+    fn zone_collision_can_be_separated_from_object_collision() {
+        let mut map = platform_with_front_ramp();
+        let object_collision = Rect::new(Vec2::new(8.0, 8.0), Vec2::new(8.0, 8.0));
+        let zone_collision = Rect::new(Vec2::new(40.0, 160.0), Vec2::new(20.0, 8.0));
+        let surface_collision = Rect::new(Vec2::new(48.0, 48.0), Vec2::new(12.0, 12.0));
+        map.collision_rects = vec![object_collision];
+        map.zone_collision_rects = vec![zone_collision];
+        map.surface_collision_rects = vec![MapSurfaceCollisionRect {
+            surface_id: "platform_01".to_owned(),
+            rect: surface_collision,
+        }];
+
+        assert_eq!(
+            map.solid_rects_without_zone_collision().collect::<Vec<_>>(),
+            vec![object_collision]
+        );
+        assert_eq!(
+            map.zone_collision_rects().collect::<Vec<_>>(),
+            vec![zone_collision]
+        );
+        assert_eq!(
+            map.solid_rects().collect::<Vec<_>>(),
+            vec![object_collision, zone_collision, surface_collision]
+        );
+        assert_eq!(
+            map.surface_collision_rects("platform_01")
+                .collect::<Vec<_>>(),
+            vec![surface_collision]
+        );
+        assert_eq!(
+            map.surface_collision_rects("platform_02")
+                .collect::<Vec<_>>(),
+            Vec::<Rect>::new()
+        );
+    }
+
+    #[test]
+    fn collision_zone_scope_routes_rects_to_surface_layer() {
+        let zones = vec![
+            EditorZoneInstance {
+                id: "ground_wall".to_owned(),
+                zone_type: "CollisionArea".to_owned(),
+                points: vec![[1.0, 1.0], [3.0, 1.0], [3.0, 3.0], [1.0, 3.0]],
+                hazard: None,
+                prompt: None,
+                objective: None,
+                surface: None,
+                gate: None,
+                collision: None,
+                unlock: None,
+                transition: None,
+            },
+            EditorZoneInstance {
+                id: "crystal_base".to_owned(),
+                zone_type: "CollisionArea".to_owned(),
+                points: vec![[4.0, 1.0], [6.0, 1.0], [6.0, 3.0], [4.0, 3.0]],
+                hazard: None,
+                prompt: None,
+                objective: None,
+                surface: None,
+                gate: None,
+                collision: Some(content::CollisionZoneRule {
+                    surface_id: Some("platform_01".to_owned()),
+                }),
+                unlock: None,
+                transition: None,
+            },
+        ];
+
+        let (ground_rects, surface_rects) =
+            collision_rects_from_zones(&zones, Vec2::ZERO, 32.0, 8, 8);
+
+        assert_eq!(ground_rects.len(), 2);
+        assert_eq!(surface_rects.len(), 2);
+        assert!(
+            surface_rects
+                .iter()
+                .all(|collision| collision.surface_id == "platform_01")
         );
     }
 
@@ -2566,6 +2818,26 @@ mod tests {
     fn active_walk_surface_allows_only_outward_ramp_exit() {
         let map = platform_with_front_ramp();
 
+        assert!(
+            map.walk_surface_contains("platform_01", Vec2::new(50.0, 202.0)),
+            "surface edge tolerance keeps the actor on the ramp for a few pixels past the gate"
+        );
+        assert!(
+            map.walk_surface_exits(
+                "platform_01",
+                Vec2::new(50.0, 198.0),
+                Vec2::new(50.0, 203.0)
+            ),
+            "crossing the gate outward must switch back to ground before edge tolerance traps the actor"
+        );
+        assert!(
+            !map.walk_surface_exits(
+                "platform_01",
+                Vec2::new(50.0, 198.0),
+                Vec2::new(50.0, 199.5)
+            ),
+            "surface exit should require crossing the authored gate, not merely moving near it"
+        );
         assert!(
             map.walk_surface_allows_movement(
                 "platform_01",
@@ -2581,6 +2853,60 @@ mod tests {
                 Vec2::new(116.0, 84.0)
             ),
             "leaving from the ramp side or a platform seam should stay constrained to the surface"
+        );
+    }
+
+    #[test]
+    fn right_ramp_gate_requires_authored_segment_crossing() {
+        let map = Map {
+            tiles: Vec::new(),
+            sprites: Vec::new(),
+            entities: Vec::new(),
+            zones: vec![
+                surface_zone(
+                    "platform_top",
+                    "platform_01",
+                    MapWalkSurfaceKind::Platform,
+                    Vec2::new(192.0, 96.0),
+                    Vec2::new(144.0, 80.0),
+                ),
+                surface_zone(
+                    "platform_ramp_right",
+                    "platform_01",
+                    MapWalkSurfaceKind::Ramp,
+                    Vec2::new(352.0, 160.0),
+                    Vec2::new(64.0, 128.0),
+                ),
+            ],
+            surface_gates: vec![surface_gate(
+                "right_gate",
+                "platform_01",
+                Vec2::new(358.4, 284.8),
+                Vec2::new(403.2, 259.2),
+            )],
+            collision_rects: Vec::new(),
+            zone_collision_rects: Vec::new(),
+            surface_collision_rects: Vec::new(),
+            ground_cache: None,
+            textures: HashMap::new(),
+            texture_atlas: None,
+        };
+
+        assert!(
+            !map.walk_surface_exits(
+                "platform_01",
+                Vec2::new(352.0, 260.0),
+                Vec2::new(352.0, 300.0)
+            ),
+            "runtime should not expand SurfaceGate endpoints; the authored gate must cover the actual feet path"
+        );
+        assert!(
+            map.walk_surface_exits(
+                "platform_01",
+                Vec2::new(360.0, 260.0),
+                Vec2::new(360.0, 300.0)
+            ),
+            "a correctly covered feet path should still exit through the authored right gate segment"
         );
     }
 
@@ -2700,6 +3026,15 @@ mod tests {
         }
     }
 
+    fn surface_gate(id: &str, surface_id: &str, start: Vec2, end: Vec2) -> MapSurfaceGate {
+        MapSurfaceGate {
+            id: id.to_owned(),
+            surface_id: surface_id.to_owned(),
+            start,
+            end,
+        }
+    }
+
     fn platform_with_front_ramp() -> Map {
         Map {
             tiles: Vec::new(),
@@ -2721,7 +3056,15 @@ mod tests {
                     Vec2::new(100.0, 100.0),
                 ),
             ],
+            surface_gates: vec![surface_gate(
+                "platform_ramp_gate",
+                "platform_01",
+                Vec2::new(0.0, 200.0),
+                Vec2::new(100.0, 200.0),
+            )],
             collision_rects: Vec::new(),
+            zone_collision_rects: Vec::new(),
+            surface_collision_rects: Vec::new(),
             ground_cache: None,
             textures: HashMap::new(),
             texture_atlas: None,

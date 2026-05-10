@@ -11,6 +11,7 @@ pub(crate) const EDITOR_KNOWN_ZONE_TYPES: &[&str] = &[
     "NoSpawn",
     "CameraBounds",
     "WalkSurface",
+    "SurfaceGate",
     "CollisionArea",
     "CollisionLine",
     "HazardZone",

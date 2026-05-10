@@ -6,10 +6,13 @@ use runtime::{Color, InputState, Rect, Renderer, Vec2, collision::rects_overlap}
 const PLAYER_SPEED: f32 = 260.0;
 const PLAYER_SIZE: Vec2 = Vec2::new(32.0, 46.0);
 const PLAYER_SPRITE_SIZE: Vec2 = Vec2::new(72.0, 72.0);
-const PLAYER_TOPDOWN_COLLISION_SIZE: Vec2 = Vec2::new(24.0, 18.0);
+const PLAYER_TOPDOWN_COLLISION_SIZE: Vec2 = Vec2::new(20.0, 10.0);
+const PLAYER_TOPDOWN_COLLISION_BOTTOM_INSET: f32 = 0.0;
 const PLAYER_TOPDOWN_COLLISION_OFFSET: Vec2 = Vec2::new(
     -PLAYER_TOPDOWN_COLLISION_SIZE.x * 0.5,
-    PLAYER_SPRITE_SIZE.y * 0.5 - PLAYER_TOPDOWN_COLLISION_SIZE.y - 4.0,
+    PLAYER_SPRITE_SIZE.y * 0.5
+        - PLAYER_TOPDOWN_COLLISION_SIZE.y
+        - PLAYER_TOPDOWN_COLLISION_BOTTOM_INSET,
 );
 const TOPDOWN_ANIMATION_FPS: f32 = 6.0;
 
@@ -97,6 +100,7 @@ impl Player {
         self.update_topdown_movement(dt, input.movement(), solid_rects, speed_multiplier);
     }
 
+    #[allow(dead_code)]
     pub fn update_topdown_with_speed_and_constraint(
         &mut self,
         dt: f32,
@@ -111,6 +115,27 @@ impl Player {
             solid_rects,
             speed_multiplier,
             can_stand_at,
+        );
+    }
+
+    pub fn update_topdown_with_speed_and_conditional_collision(
+        &mut self,
+        dt: f32,
+        input: &InputState,
+        solid_rects: impl IntoIterator<Item = Rect>,
+        conditional_solid_rects: impl IntoIterator<Item = Rect>,
+        speed_multiplier: f32,
+        can_stand_at: impl Fn(Vec2) -> bool,
+        conditional_collision_blocks_at: impl Fn(Vec2, Vec2) -> bool,
+    ) {
+        self.update_topdown_movement_constrained_with_conditional_collision(
+            dt,
+            input.movement(),
+            solid_rects,
+            conditional_solid_rects,
+            speed_multiplier,
+            can_stand_at,
+            conditional_collision_blocks_at,
         );
     }
 
@@ -190,11 +215,68 @@ impl Player {
         can_stand_at: impl Fn(Vec2) -> bool,
     ) {
         let solid_rects = solid_rects.into_iter().collect::<Vec<_>>();
+        let conditional_solid_rects = Vec::new();
+        self.update_topdown_movement_constrained_with_solid_lists(
+            dt,
+            movement,
+            solid_rects,
+            conditional_solid_rects,
+            speed_multiplier,
+            can_stand_at,
+            |_, _| true,
+        );
+    }
+
+    fn update_topdown_movement_constrained_with_conditional_collision(
+        &mut self,
+        dt: f32,
+        movement: Vec2,
+        solid_rects: impl IntoIterator<Item = Rect>,
+        conditional_solid_rects: impl IntoIterator<Item = Rect>,
+        speed_multiplier: f32,
+        can_stand_at: impl Fn(Vec2) -> bool,
+        conditional_collision_blocks_at: impl Fn(Vec2, Vec2) -> bool,
+    ) {
+        let solid_rects = solid_rects.into_iter().collect::<Vec<_>>();
+        let conditional_solid_rects = conditional_solid_rects.into_iter().collect::<Vec<_>>();
+        self.update_topdown_movement_constrained_with_solid_lists(
+            dt,
+            movement,
+            solid_rects,
+            conditional_solid_rects,
+            speed_multiplier,
+            can_stand_at,
+            conditional_collision_blocks_at,
+        );
+    }
+
+    fn update_topdown_movement_constrained_with_solid_lists(
+        &mut self,
+        dt: f32,
+        movement: Vec2,
+        solid_rects: Vec<Rect>,
+        conditional_solid_rects: Vec<Rect>,
+        speed_multiplier: f32,
+        can_stand_at: impl Fn(Vec2) -> bool,
+        conditional_collision_blocks_at: impl Fn(Vec2, Vec2) -> bool,
+    ) {
         let movement = movement.normalized();
         let delta = movement * PLAYER_SPEED * speed_multiplier.clamp(0.35, 1.25) * dt;
 
-        self.move_topdown_axis(Vec2::new(delta.x, 0.0), &solid_rects, &can_stand_at);
-        self.move_topdown_axis(Vec2::new(0.0, delta.y), &solid_rects, &can_stand_at);
+        self.move_topdown_axis(
+            Vec2::new(delta.x, 0.0),
+            &solid_rects,
+            &conditional_solid_rects,
+            &can_stand_at,
+            &conditional_collision_blocks_at,
+        );
+        self.move_topdown_axis(
+            Vec2::new(0.0, delta.y),
+            &solid_rects,
+            &conditional_solid_rects,
+            &can_stand_at,
+            &conditional_collision_blocks_at,
+        );
         self.set_topdown_animation(animation_for_movement(movement));
         self.tick_animation(dt);
     }
@@ -203,38 +285,56 @@ impl Player {
         &mut self,
         delta: Vec2,
         solid_rects: &[Rect],
+        conditional_solid_rects: &[Rect],
         can_stand_at: &impl Fn(Vec2) -> bool,
+        conditional_collision_blocks_at: &impl Fn(Vec2, Vec2) -> bool,
     ) {
         if delta.length_squared() <= f32::EPSILON {
             return;
         }
 
         let start = self.position;
+        let previous_feet = self.topdown_feet_position();
         self.position += delta;
+        let attempted_feet = self.topdown_feet_position();
 
         for solid in solid_rects {
-            let player_rect = self.topdown_collision_rect();
-            if !rects_overlap(player_rect, *solid) {
-                continue;
-            }
+            self.resolve_topdown_collision(delta, *solid);
+        }
 
-            if delta.x > 0.0 {
-                self.position.x = solid.origin.x
-                    - PLAYER_TOPDOWN_COLLISION_OFFSET.x
-                    - PLAYER_TOPDOWN_COLLISION_SIZE.x;
-            } else if delta.x < 0.0 {
-                self.position.x = solid.right() - PLAYER_TOPDOWN_COLLISION_OFFSET.x;
-            } else if delta.y > 0.0 {
-                self.position.y = solid.origin.y
-                    - PLAYER_TOPDOWN_COLLISION_OFFSET.y
-                    - PLAYER_TOPDOWN_COLLISION_SIZE.y;
-            } else if delta.y < 0.0 {
-                self.position.y = solid.bottom() - PLAYER_TOPDOWN_COLLISION_OFFSET.y;
+        if conditional_collision_blocks_at(previous_feet, attempted_feet) {
+            for solid in conditional_solid_rects {
+                self.resolve_topdown_collision(delta, *solid);
             }
         }
 
-        if !can_stand_at(self.topdown_feet_position()) {
+        if !self
+            .topdown_surface_support_points()
+            .into_iter()
+            .all(can_stand_at)
+        {
             self.position = start;
+        }
+    }
+
+    fn resolve_topdown_collision(&mut self, delta: Vec2, solid: Rect) {
+        let player_rect = self.topdown_collision_rect();
+        if !rects_overlap(player_rect, solid) {
+            return;
+        }
+
+        if delta.x > 0.0 {
+            self.position.x = solid.origin.x
+                - PLAYER_TOPDOWN_COLLISION_OFFSET.x
+                - PLAYER_TOPDOWN_COLLISION_SIZE.x;
+        } else if delta.x < 0.0 {
+            self.position.x = solid.right() - PLAYER_TOPDOWN_COLLISION_OFFSET.x;
+        } else if delta.y > 0.0 {
+            self.position.y = solid.origin.y
+                - PLAYER_TOPDOWN_COLLISION_OFFSET.y
+                - PLAYER_TOPDOWN_COLLISION_SIZE.y;
+        } else if delta.y < 0.0 {
+            self.position.y = solid.bottom() - PLAYER_TOPDOWN_COLLISION_OFFSET.y;
         }
     }
 
@@ -243,6 +343,16 @@ impl Player {
             self.position + PLAYER_TOPDOWN_COLLISION_OFFSET,
             PLAYER_TOPDOWN_COLLISION_SIZE,
         )
+    }
+
+    fn topdown_surface_support_points(&self) -> [Vec2; 3] {
+        let rect = self.topdown_collision_rect();
+        let y = rect.bottom();
+        [
+            Vec2::new(rect.origin.x, y),
+            Vec2::new(rect.origin.x + rect.size.x * 0.5, y),
+            Vec2::new(rect.right(), y),
+        ]
     }
 }
 
@@ -370,7 +480,7 @@ mod tests {
 
     #[test]
     fn topdown_collision_blocks_horizontal_motion() {
-        let solid = Rect::new(Vec2::new(20.0, -16.0), Vec2::new(32.0, 32.0));
+        let solid = Rect::new(Vec2::new(20.0, 24.0), Vec2::new(32.0, 16.0));
         let mut player = Player::new(Vec2::ZERO);
 
         player.update_topdown_movement(0.2, Vec2::new(1.0, 0.0), [solid], 1.0);
@@ -388,7 +498,7 @@ mod tests {
 
     #[test]
     fn topdown_collision_slides_along_free_axis() {
-        let solid = Rect::new(Vec2::new(20.0, -16.0), Vec2::new(32.0, 32.0));
+        let solid = Rect::new(Vec2::new(20.0, 24.0), Vec2::new(32.0, 16.0));
         let mut player = Player::new(Vec2::ZERO);
 
         player.update_topdown_movement(0.2, Vec2::new(1.0, 1.0), [solid], 1.0);
@@ -427,17 +537,65 @@ mod tests {
     }
 
     #[test]
-    fn topdown_surface_constraint_uses_feet_position() {
+    fn topdown_collision_footprint_stays_on_visible_feet() {
+        let player = Player::new(Vec2::ZERO);
+        let collision = player.topdown_collision_rect();
+        let sprite = centered_rect(player.position, PLAYER_SPRITE_SIZE);
+        let support = player.topdown_surface_support_points();
+
+        assert_eq!(collision.size, Vec2::new(20.0, 10.0));
+        assert_eq!(collision.bottom(), sprite.bottom());
+        assert_eq!(
+            support,
+            [
+                Vec2::new(collision.origin.x, collision.bottom()),
+                Vec2::new(0.0, collision.bottom()),
+                Vec2::new(collision.right(), collision.bottom()),
+            ]
+        );
+        assert_eq!(
+            sprite.bottom() - collision.origin.y,
+            10.0,
+            "topdown collision should use the feet footprint, not the lower body"
+        );
+    }
+
+    #[test]
+    fn topdown_surface_constraint_uses_footprint_support_points() {
         let mut player = Player::new(Vec2::ZERO);
 
         player.update_topdown_movement_constrained(
-            0.2,
+            0.01,
             Vec2::new(1.0, 0.0),
             Vec::<Rect>::new(),
             1.0,
             |feet| feet.x <= 10.0,
         );
 
-        assert_eq!(player.position.x, 0.0);
+        assert_eq!(
+            player.position.x, 0.0,
+            "surface movement should stop when either foot leaves the authored walk surface"
+        );
+    }
+
+    #[test]
+    fn conditional_collision_can_yield_to_surface_transition() {
+        let conditional_solid = Rect::new(Vec2::new(20.0, -16.0), Vec2::new(32.0, 32.0));
+        let mut player = Player::new(Vec2::ZERO);
+
+        player.update_topdown_movement_constrained_with_conditional_collision(
+            0.2,
+            Vec2::new(1.0, 0.0),
+            Vec::<Rect>::new(),
+            [conditional_solid],
+            1.0,
+            |_| true,
+            |_, _| false,
+        );
+
+        assert!(
+            player.position.x > conditional_solid.origin.x,
+            "conditional collision should not block when the surface policy allows the move"
+        );
     }
 }

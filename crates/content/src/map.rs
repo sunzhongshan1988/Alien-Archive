@@ -410,6 +410,16 @@ pub struct ZoneInstance {
     pub objective: Option<ObjectiveRule>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<WalkSurfaceRule>,
+    #[serde(
+        default,
+        skip_serializing_if = "option_surface_gate_rule_is_none_or_empty"
+    )]
+    pub gate: Option<SurfaceGateRule>,
+    #[serde(
+        default,
+        skip_serializing_if = "option_collision_zone_rule_is_none_or_empty"
+    )]
+    pub collision: Option<CollisionZoneRule>,
     #[serde(default, skip_serializing_if = "option_unlock_rule_is_none_or_empty")]
     pub unlock: Option<UnlockRule>,
     #[serde(
@@ -596,6 +606,34 @@ impl WalkSurfaceKind {
             Self::Platform => "台面",
             Self::Ramp => "斜坡入口",
         }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct SurfaceGateRule {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface_id: Option<String>,
+}
+
+impl SurfaceGateRule {
+    pub fn is_empty(&self) -> bool {
+        self.surface_id
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct CollisionZoneRule {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface_id: Option<String>,
+}
+
+impl CollisionZoneRule {
+    pub fn is_empty(&self) -> bool {
+        self.surface_id
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
     }
 }
 
@@ -820,6 +858,14 @@ fn option_prompt_rule_is_none_or_empty(value: &Option<PromptRule>) -> bool {
 
 fn option_objective_rule_is_none_or_empty(value: &Option<ObjectiveRule>) -> bool {
     value.as_ref().is_none_or(ObjectiveRule::is_empty)
+}
+
+fn option_surface_gate_rule_is_none_or_empty(value: &Option<SurfaceGateRule>) -> bool {
+    value.as_ref().is_none_or(SurfaceGateRule::is_empty)
+}
+
+fn option_collision_zone_rule_is_none_or_empty(value: &Option<CollisionZoneRule>) -> bool {
+    value.as_ref().is_none_or(CollisionZoneRule::is_empty)
 }
 
 fn is_zero_i32(value: &i32) -> bool {
