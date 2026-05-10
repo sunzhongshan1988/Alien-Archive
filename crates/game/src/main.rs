@@ -1,3 +1,4 @@
+mod objectives;
 mod player;
 mod save;
 mod scenes;

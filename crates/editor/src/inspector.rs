@@ -558,6 +558,20 @@ impl EditorApp {
                             }
                             changed = true;
                         }
+                        if ui.button("设为目标区").clicked() {
+                            zone.zone_type = "ObjectiveZone".to_owned();
+                            if zone.objective.is_none() {
+                                zone.objective = Some(content::ObjectiveRule::default());
+                            }
+                            changed = true;
+                        }
+                        if ui.button("设为检查点").clicked() {
+                            zone.zone_type = "Checkpoint".to_owned();
+                            if zone.objective.is_none() {
+                                zone.objective = Some(content::ObjectiveRule::default());
+                            }
+                            changed = true;
+                        }
                     });
 
                     if zone.zone_type == "WalkSurface" || zone.surface.is_some() {
@@ -633,6 +647,13 @@ impl EditorApp {
                     if zone.zone_type == "PromptZone" || zone.prompt.is_some() {
                         ui.separator();
                         draw_zone_prompt_editor(ui, zone, &mut changed);
+                    }
+
+                    if matches!(zone.zone_type.as_str(), "ObjectiveZone" | "Checkpoint")
+                        || zone.objective.is_some()
+                    {
+                        ui.separator();
+                        draw_zone_objective_editor(ui, zone, &mut changed);
                     }
 
                     let unlock_id = format!("zone_unlock_{}", zone.id);
@@ -872,4 +893,63 @@ fn draw_zone_prompt_editor(
     *changed |= ui
         .checkbox(&mut prompt.once, "只触发一次并写入存档")
         .changed();
+}
+
+fn draw_zone_objective_editor(
+    ui: &mut egui::Ui,
+    zone: &mut content::ZoneInstance,
+    changed: &mut bool,
+) {
+    ui.horizontal(|ui| {
+        ui.label("任务目标");
+        if zone.objective.is_none() && ui.button("添加").clicked() {
+            zone.objective = Some(content::ObjectiveRule::default());
+            if zone.zone_type == "Trigger" {
+                zone.zone_type = "ObjectiveZone".to_owned();
+            }
+            *changed = true;
+        }
+        if zone.objective.is_some() && ui.button("清除").clicked() {
+            zone.objective = None;
+            *changed = true;
+        }
+    });
+
+    let Some(objective) = &mut zone.objective else {
+        return;
+    };
+
+    if labeled_text_edit(ui, "Objective ID", &mut objective.objective_id) {
+        *changed = true;
+    }
+    let mut checkpoint_id = objective.checkpoint_id.clone().unwrap_or_default();
+    if labeled_text_edit(ui, "Checkpoint ID", &mut checkpoint_id) {
+        set_optional_string(&mut objective.checkpoint_id, checkpoint_id);
+        *changed = true;
+    }
+    *changed |= ui
+        .checkbox(&mut objective.complete_objective, "完成整个目标")
+        .changed();
+    let mut message = objective.message.clone().unwrap_or_default();
+    if labeled_text_edit(ui, "屏幕提示", &mut message) {
+        set_optional_string(&mut objective.message, message);
+        *changed = true;
+    }
+    let mut log_title = objective.log_title.clone().unwrap_or_default();
+    if labeled_text_edit(ui, "日志标题", &mut log_title) {
+        set_optional_string(&mut objective.log_title, log_title);
+        *changed = true;
+    }
+    let mut log_detail = objective.log_detail.clone().unwrap_or_default();
+    if labeled_text_edit(ui, "日志内容", &mut log_detail) {
+        set_optional_string(&mut objective.log_detail, log_detail);
+        *changed = true;
+    }
+    *changed |= ui
+        .checkbox(&mut objective.once, "只触发一次并写入存档")
+        .changed();
+    ui.colored_label(
+        THEME_MUTED_TEXT,
+        "ObjectiveZone 可启动目标；Checkpoint 填 Checkpoint ID 后推进目标步骤。",
+    );
 }

@@ -293,7 +293,7 @@ pub fn validate_map_with_codex(
                 .as_deref()
                 .map(str::trim)
                 .filter(|value| !value.is_empty());
-            if zone.zone_type != "WalkSurface" {
+            if !zone_type_allows_surface(&zone.zone_type) {
                 issues.push(MapValidationIssue::warning(format!(
                     "zone {} has walk surface data but zone_type is {}",
                     zone.id, zone.zone_type
@@ -338,6 +338,22 @@ pub fn validate_map_with_codex(
                 zone.id, zone.zone_type
             )));
         }
+        if matches!(zone.zone_type.as_str(), "ObjectiveZone" | "Checkpoint") {
+            if let Some(objective) = &zone.objective {
+                validate_objective_rule("zone", &zone.id, &zone.zone_type, objective, &mut issues);
+            } else {
+                issues.push(MapValidationIssue::warning(format!(
+                    "zone {} is {} but has no objective settings",
+                    zone.id, zone.zone_type
+                )));
+            }
+        } else if let Some(objective) = &zone.objective {
+            validate_objective_rule("zone", &zone.id, &zone.zone_type, objective, &mut issues);
+            issues.push(MapValidationIssue::warning(format!(
+                "zone {} has objective data but zone_type is {}",
+                zone.id, zone.zone_type
+            )));
+        }
         if let Some(unlock) = &zone.unlock {
             validate_unlock_rule("zone", &zone.id, unlock, codex, &mut issues);
         }
@@ -368,11 +384,17 @@ const KNOWN_ZONE_TYPES: &[&str] = &[
     "CollisionLine",
     "HazardZone",
     "PromptZone",
+    "ObjectiveZone",
+    "Checkpoint",
     "Trigger",
 ];
 
 const KNOWN_HAZARD_METERS: &[&str] =
     &["health", "stamina", "suit", "oxygen", "radiation", "spores"];
+
+fn zone_type_allows_surface(zone_type: &str) -> bool {
+    matches!(zone_type, "WalkSurface" | "ObjectiveZone" | "Checkpoint")
+}
 
 fn validate_hazard_rule(
     owner: &str,
@@ -424,6 +446,31 @@ fn validate_prompt_rule(
     if prompt.is_empty() {
         issues.push(MapValidationIssue::warning(format!(
             "{owner} {id} has prompt data but no message, log_title, or log_detail"
+        )));
+    }
+}
+
+fn validate_objective_rule(
+    owner: &str,
+    id: &str,
+    zone_type: &str,
+    objective: &crate::ObjectiveRule,
+    issues: &mut Vec<MapValidationIssue>,
+) {
+    if objective.objective_id.trim().is_empty() {
+        issues.push(MapValidationIssue::warning(format!(
+            "{owner} {id} objective rule has no objective_id"
+        )));
+    }
+    if zone_type == "Checkpoint"
+        && objective
+            .checkpoint_id
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+        && !objective.complete_objective
+    {
+        issues.push(MapValidationIssue::warning(format!(
+            "{owner} {id} is Checkpoint but has no checkpoint_id or complete_objective flag"
         )));
     }
 }
@@ -653,8 +700,8 @@ fn validate_scale(
 mod tests {
     use crate::{
         AnchorKind, AssetDatabase, AssetDefinition, AssetKind, CodexDatabase, CodexEntry,
-        CollisionCell, HazardEffect, HazardRule, LayerKind, MapDocument, PromptRule, SnapMode,
-        UnlockRule, WalkSurfaceKind, WalkSurfaceRule, ZoneInstance,
+        CollisionCell, HazardEffect, HazardRule, LayerKind, MapDocument, ObjectiveRule, PromptRule,
+        SnapMode, UnlockRule, WalkSurfaceKind, WalkSurfaceRule, ZoneInstance,
     };
 
     use super::*;
@@ -913,6 +960,7 @@ mod tests {
             points: vec![[1.0, 1.0], [3.0, 1.0], [3.0, 3.0], [1.0, 3.0]],
             hazard: None,
             prompt: None,
+            objective: None,
             surface: Some(WalkSurfaceRule {
                 surface_id: Some("platform_01".to_owned()),
                 kind: WalkSurfaceKind::Platform,
@@ -948,6 +996,7 @@ mod tests {
             points: vec![[1.0, 1.0], [4.0, 1.0]],
             hazard: None,
             prompt: None,
+            objective: None,
             surface: None,
             unlock: None,
             transition: None,
@@ -980,6 +1029,7 @@ mod tests {
                 message: Some("空气质量异常".to_owned()),
             }),
             prompt: None,
+            objective: None,
             surface: None,
             unlock: None,
             transition: None,
@@ -993,6 +1043,7 @@ mod tests {
                 message: Some("前方发现遗迹轮廓".to_owned()),
                 ..PromptRule::default()
             }),
+            objective: None,
             surface: None,
             unlock: None,
             transition: None,
@@ -1015,6 +1066,70 @@ mod tests {
             issues
                 .iter()
                 .all(|issue| !issue.message.contains("no prompt message"))
+        );
+    }
+
+    #[test]
+    fn validates_objective_and_checkpoint_zone_rules() {
+        let mut document = MapDocument::new_landing_site();
+        document.layers.zones.push(ZoneInstance {
+            id: "objective_start".to_owned(),
+            zone_type: "ObjectiveZone".to_owned(),
+            points: vec![[1.0, 1.0], [3.0, 1.0], [3.0, 3.0], [1.0, 3.0]],
+            hazard: None,
+            prompt: None,
+            objective: Some(ObjectiveRule {
+                objective_id: "secure_landing_site".to_owned(),
+                ..ObjectiveRule::default()
+            }),
+            surface: None,
+            unlock: None,
+            transition: None,
+        });
+        document.layers.zones.push(ZoneInstance {
+            id: "objective_checkpoint".to_owned(),
+            zone_type: "Checkpoint".to_owned(),
+            points: vec![[4.0, 1.0], [6.0, 1.0], [6.0, 3.0], [4.0, 3.0]],
+            hazard: None,
+            prompt: None,
+            objective: Some(ObjectiveRule {
+                objective_id: "secure_landing_site".to_owned(),
+                checkpoint_id: Some("landing_perimeter".to_owned()),
+                ..ObjectiveRule::default()
+            }),
+            surface: Some(WalkSurfaceRule {
+                surface_id: Some("platform_01".to_owned()),
+                kind: WalkSurfaceKind::Platform,
+                constrain_movement: true,
+                z_index: 64,
+                depth_offset: 0.0,
+            }),
+            unlock: None,
+            transition: None,
+        });
+        let database = test_database(Vec::new());
+
+        let issues = validate_map(&document, &database);
+
+        assert!(
+            issues
+                .iter()
+                .all(|issue| !issue.message.contains("unknown zone_type"))
+        );
+        assert!(
+            issues
+                .iter()
+                .all(|issue| !issue.message.contains("objective settings"))
+        );
+        assert!(
+            issues
+                .iter()
+                .all(|issue| !issue.message.contains("no checkpoint_id"))
+        );
+        assert!(
+            issues
+                .iter()
+                .all(|issue| !issue.message.contains("walk surface data"))
         );
     }
 

@@ -233,9 +233,6 @@ impl Scene for OverworldScene {
         let previous_feet = self.player.topdown_feet_position();
         let active_surface_id = self.active_walk_surface_id.clone();
         let world = &self.world;
-        let can_leave_active_surface = active_surface_id
-            .as_deref()
-            .is_some_and(|surface_id| world.walk_surface_ramp_contains(surface_id, previous_feet));
         let active_surface_constrained = active_surface_id
             .as_deref()
             .and_then(|surface_id| world.walk_surface_for_id_at(surface_id, previous_feet))
@@ -253,7 +250,7 @@ impl Scene for OverworldScene {
                 if !active_surface_constrained {
                     return true;
                 }
-                world.walk_surface_contains(surface_id, feet) || can_leave_active_surface
+                world.walk_surface_allows_movement(surface_id, previous_feet, feet)
             },
         );
         self.refresh_active_walk_surface();

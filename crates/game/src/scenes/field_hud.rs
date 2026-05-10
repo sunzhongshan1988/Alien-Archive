@@ -1,10 +1,11 @@
-use std::path::Path;
+use std::{borrow::Cow, path::Path};
 
 use anyhow::Result;
 use runtime::{Camera2d, Color, Rect, Renderer, Vec2};
 use rusttype::Font;
 
 use crate::ui::{
+    localization,
     menu_widgets::{draw_border, draw_corner_brackets, draw_screen_rect, draw_texture_rect},
     text::{TextSprite, draw_text, draw_text_centered, load_ui_font, upload_text},
 };
@@ -476,11 +477,12 @@ impl FieldHud {
             .iter()
             .enumerate()
             .map(|(index, meter_id)| {
+                let label = meter_label(meter_id, ctx.language);
                 upload_text(
                     renderer,
                     font,
                     &format!("field_hud_meter_label_{index}"),
-                    meter_label(meter_id, ctx.language),
+                    label.as_ref(),
                     10.0,
                 )
             })
@@ -519,9 +521,9 @@ fn load_hud_textures(renderer: &mut dyn Renderer) {
 fn status_lines(ctx: &GameContext, scene_id: SceneId) -> Vec<String> {
     let language = ctx.language;
     vec![
-        scene_label(scene_id, language).to_owned(),
+        scene_label(scene_id, language).into_owned(),
         field_time_label(ctx.save_data.world.field_time_minutes),
-        weather_label(&ctx.save_data.world.weather, language).to_owned(),
+        weather_label(&ctx.save_data.world.weather, language).into_owned(),
     ]
 }
 
@@ -558,27 +560,27 @@ fn field_time_label(minutes: u32) -> String {
     format!("{:02}:{:02}", minutes / 60, minutes % 60)
 }
 
-fn scene_label(scene_id: SceneId, language: Language) -> &'static str {
-    match (scene_id, language) {
-        (SceneId::Facility, Language::Chinese) => "设施内部",
-        (SceneId::Facility, Language::English) => "Facility",
-        (_, Language::Chinese) => "地表探索",
-        (_, Language::English) => "Overworld",
+fn scene_label(scene_id: SceneId, language: Language) -> Cow<'static, str> {
+    match scene_id {
+        SceneId::Facility => {
+            localization::text(language, "hud.scene.facility", "Facility", "设施内部")
+        }
+        _ => localization::text(language, "hud.scene.overworld", "Overworld", "地表探索"),
     }
 }
 
-fn weather_label(weather: &str, language: Language) -> &'static str {
-    match (weather, language) {
-        ("cold_mist", Language::Chinese) => "冷雾",
-        ("ion_wind", Language::Chinese) => "离子风",
-        ("spore_drift", Language::Chinese) => "孢子漂流",
-        ("clear", Language::Chinese) => "晴朗",
-        ("cold_mist", Language::English) => "Cold Mist",
-        ("ion_wind", Language::English) => "Ion Wind",
-        ("spore_drift", Language::English) => "Spore Drift",
-        ("clear", Language::English) => "Clear",
-        (_, Language::Chinese) => "未知天气",
-        (_, Language::English) => "Unknown",
+fn weather_label(weather: &str, language: Language) -> Cow<'static, str> {
+    match weather {
+        "cold_mist" => localization::text(language, "hud.weather.cold_mist", "Cold Mist", "冷雾"),
+        "ion_wind" => localization::text(language, "hud.weather.ion_wind", "Ion Wind", "离子风"),
+        "spore_drift" => localization::text(
+            language,
+            "hud.weather.spore_drift",
+            "Spore Drift",
+            "孢子漂流",
+        ),
+        "clear" => localization::text(language, "hud.weather.clear", "Clear", "晴朗"),
+        _ => localization::text(language, "hud.weather.unknown", "Unknown", "未知天气"),
     }
 }
 
@@ -602,17 +604,13 @@ fn meter_color(id: &str) -> Color {
     }
 }
 
-fn meter_label(id: &str, language: Language) -> &'static str {
-    match (id, language) {
-        ("health", Language::Chinese) => "生命",
-        ("suit", Language::Chinese) => "护甲",
-        ("stamina", Language::Chinese) => "体力",
-        ("load", Language::Chinese) => "负重",
-        ("health", Language::English) => "HLT",
-        ("suit", Language::English) => "SUIT",
-        ("stamina", Language::English) => "STA",
-        ("load", Language::English) => "LOAD",
-        _ => "",
+fn meter_label(id: &str, language: Language) -> Cow<'static, str> {
+    match id {
+        "health" => localization::text(language, "hud.meter.health", "HLT", "生命"),
+        "suit" => localization::text(language, "hud.meter.suit", "SUIT", "护甲"),
+        "stamina" => localization::text(language, "hud.meter.stamina", "STA", "体力"),
+        "load" => localization::text(language, "hud.meter.load", "LOAD", "负重"),
+        _ => Cow::Borrowed(""),
     }
 }
 

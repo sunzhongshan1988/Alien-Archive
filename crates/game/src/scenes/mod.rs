@@ -17,8 +17,10 @@ use content::CodexDatabase;
 use runtime::{Button, Camera2d, InputState, Renderer, SceneCommand, Vec2};
 use std::{collections::HashSet, path::PathBuf};
 
+use crate::objectives::{ObjectiveDatabase, ObjectiveMenuRow};
 use crate::save::{CodexSave, InventorySave, MeterSave, SaveData, SaveVec2, WorldSave};
-use crate::world::{MapPromptRule, MapTransitionTarget, MapUnlockRule};
+use crate::ui::localization;
+use crate::world::{MapObjectiveRule, MapPromptRule, MapTransitionTarget, MapUnlockRule};
 
 use facility_scene::FacilityScene;
 use game_menu_scene::GameMenuScene;
@@ -49,6 +51,7 @@ const LOG_CATEGORY_UNLOCK: &str = "unlock";
 const LOG_CATEGORY_STATUS: &str = "status";
 const LOG_CATEGORY_ITEM: &str = "item";
 const LOG_CATEGORY_ZONE: &str = "zone";
+const LOG_CATEGORY_OBJECTIVE: &str = "objective";
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -202,6 +205,7 @@ pub struct GameContext {
     pub facility_spawn_id: Option<String>,
     pub facility_player_position: Option<Vec2>,
     pub codex_database: CodexDatabase,
+    pub objective_database: ObjectiveDatabase,
     pub scanned_codex_ids: HashSet<String>,
     pub save_path: PathBuf,
     pub save_data: SaveData,
@@ -217,11 +221,26 @@ impl GameContext {
         save_data: SaveData,
         codex_database: CodexDatabase,
     ) -> Self {
+        Self::from_save_with_objectives(
+            save_path,
+            save_data,
+            codex_database,
+            ObjectiveDatabase::load_default(),
+        )
+    }
+
+    pub fn from_save_with_objectives(
+        save_path: PathBuf,
+        save_data: SaveData,
+        codex_database: CodexDatabase,
+        objective_database: ObjectiveDatabase,
+    ) -> Self {
         let language = Language::from_save_key(&save_data.settings.language);
         let scanned_codex_ids = save_data.codex.scanned_ids.iter().cloned().collect();
         let mut ctx = Self {
             language,
             codex_database,
+            objective_database,
             scanned_codex_ids,
             save_path,
             save_data,
@@ -230,6 +249,11 @@ impl GameContext {
         ctx.sync_inventory_load_meter_silent();
         ctx.apply_world_save();
         ctx
+    }
+
+    pub fn objective_menu_rows(&self) -> Vec<ObjectiveMenuRow> {
+        self.objective_database
+            .menu_rows(&self.save_data.objectives, self.language)
     }
 
     pub fn resume_scene_id(&self) -> SceneId {
@@ -493,68 +517,129 @@ impl GameContext {
     }
 
     pub fn log_inventory_full(&mut self) {
-        let (title, detail) = match self.language {
-            Language::Chinese => ("背包已满", "没有空槽位，物品未收入背包"),
-            Language::English => (
-                "Inventory full",
-                "No empty slot was available for the pickup",
-            ),
-        };
+        let title = localization::text(
+            self.language,
+            "activity.event.inventory_full.title",
+            "Inventory full",
+            "背包已满",
+        );
+        let detail = localization::text(
+            self.language,
+            "activity.event.inventory_full.detail",
+            "No empty slot was available for the pickup",
+            "没有空槽位，物品未收入背包",
+        );
         self.push_activity_log(LOG_CATEGORY_STATUS, title, detail);
     }
 
     pub fn log_stamina_low(&mut self) {
-        let (title, detail) = match self.language {
-            Language::Chinese => ("体力不足", "本次动作被取消，先停止移动恢复体力"),
-            Language::English => (
-                "Stamina too low",
-                "The action was cancelled; pause to recover stamina",
-            ),
-        };
+        let title = localization::text(
+            self.language,
+            "activity.event.stamina_blocked.title",
+            "Stamina too low",
+            "体力不足",
+        );
+        let detail = localization::text(
+            self.language,
+            "activity.event.stamina_blocked.detail",
+            "The action was cancelled; pause to recover stamina",
+            "本次动作被取消，先停止移动恢复体力",
+        );
         self.push_activity_log(LOG_CATEGORY_STATUS, title, detail);
     }
 
     pub fn log_locked_unlock_rule(&mut self, unlock: Option<&MapUnlockRule>) {
         let detail = self.locked_rule_log_detail(unlock);
-        let title = match self.language {
-            Language::Chinese => "入口受限",
-            Language::English => "Access blocked",
-        };
+        let title = localization::text(
+            self.language,
+            "activity.event.access_blocked.title",
+            "Access blocked",
+            "入口受限",
+        );
         self.push_activity_log(LOG_CATEGORY_UNLOCK, title, detail);
     }
 
     pub fn log_zone_prompt(&mut self, prompt: &MapPromptRule, fallback: &str) {
-        let title = prompt.log_title.as_deref().unwrap_or(match self.language {
-            Language::Chinese => "区域提示",
-            Language::English => "Area note",
+        let title = prompt.log_title.clone().unwrap_or_else(|| {
+            localization::text(
+                self.language,
+                "activity.event.zone_prompt.title",
+                "Area note",
+                "区域提示",
+            )
+            .into_owned()
         });
-        let detail = prompt.log_detail.as_deref().unwrap_or(fallback);
+        let detail = prompt
+            .log_detail
+            .clone()
+            .unwrap_or_else(|| fallback.to_owned());
         self.push_activity_log(LOG_CATEGORY_ZONE, title, detail);
     }
 
     pub fn log_zone_hazard(&mut self, zone_id: &str, detail: String) {
-        let title = match self.language {
-            Language::Chinese => "危险区域",
-            Language::English => "Hazard zone",
-        };
-        let detail = match self.language {
-            Language::Chinese => format!("{zone_id}：{detail}"),
-            Language::English => format!("{zone_id}: {detail}"),
-        };
+        let title = localization::text(
+            self.language,
+            "activity.event.zone_hazard.title",
+            "Hazard zone",
+            "危险区域",
+        );
+        let detail = localization::format_text(
+            self.language,
+            "activity.event.zone_hazard.detail",
+            "{zone}: {detail}",
+            "{zone}：{detail}",
+            &[("zone", zone_id.to_owned()), ("detail", detail)],
+        );
         self.push_activity_log(LOG_CATEGORY_ZONE, title, detail);
     }
 
+    pub fn apply_objective_zone(
+        &mut self,
+        objective: &MapObjectiveRule,
+    ) -> Option<crate::objectives::ObjectiveAdvanceEvent> {
+        let event = self.objective_database.apply_rule(
+            &mut self.save_data.objectives,
+            self.language,
+            &objective.objective_id,
+            objective.checkpoint_id.as_deref(),
+            objective.complete_objective,
+        )?;
+        self.push_activity_log(
+            LOG_CATEGORY_OBJECTIVE,
+            objective
+                .log_title
+                .clone()
+                .unwrap_or_else(|| event.log_title.clone()),
+            objective
+                .log_detail
+                .clone()
+                .unwrap_or_else(|| event.log_detail.clone()),
+        );
+        Some(event)
+    }
+
     pub fn log_scene_transition(&mut self, scene_id: SceneId, map_path: &str) {
-        let title = match (self.language, scene_id) {
-            (Language::Chinese, SceneId::Facility) => "进入设施",
-            (Language::Chinese, _) => "返回外部区域",
-            (Language::English, SceneId::Facility) => "Entered facility",
-            (Language::English, _) => "Returned to overworld",
+        let title = match scene_id {
+            SceneId::Facility => localization::text(
+                self.language,
+                "activity.event.transition.facility.title",
+                "Entered facility",
+                "进入设施",
+            ),
+            _ => localization::text(
+                self.language,
+                "activity.event.transition.overworld.title",
+                "Returned to overworld",
+                "返回外部区域",
+            ),
         };
-        let detail = match self.language {
-            Language::Chinese => format!("目的地：{map_path}"),
-            Language::English => format!("Destination: {map_path}"),
-        };
+        let detail = localization::format_text(
+            self.language,
+            "activity.event.transition.detail",
+            "Destination: {map}",
+            "目的地：{map}",
+            &[("map", map_path.to_owned())],
+        );
         self.push_activity_log(LOG_CATEGORY_UNLOCK, title, detail);
     }
 
@@ -597,16 +682,23 @@ impl GameContext {
     fn log_item_used(&mut self, item_id: &str, meter_id: &str, amount: u32) {
         let item_name = inventory_scene::inventory_item_name(item_id, self.language);
         let meter_name = profile_meter_label(meter_id, self.language);
-        let (title, detail) = match self.language {
-            Language::Chinese => (
-                format!("使用 {item_name}"),
-                format!("{meter_name} 恢复 {amount}"),
-            ),
-            Language::English => (
-                format!("Used {item_name}"),
-                format!("Restored {meter_name} by {amount}"),
-            ),
-        };
+        let title = localization::format_text(
+            self.language,
+            "activity.event.item_used.title",
+            "Used {item}",
+            "使用 {item}",
+            &[("item", item_name.to_owned())],
+        );
+        let detail = localization::format_text(
+            self.language,
+            "activity.event.item_used.detail",
+            "Restored {meter} by {amount}",
+            "{meter} 恢复 {amount}",
+            &[
+                ("meter", meter_name.to_owned()),
+                ("amount", amount.to_string()),
+            ],
+        );
         self.push_activity_log(LOG_CATEGORY_ITEM, title, detail);
     }
 
@@ -726,7 +818,13 @@ impl GameContext {
 
     fn replace_save_data(&mut self, save_path: PathBuf, save_data: SaveData) {
         let codex_database = self.codex_database.clone();
-        *self = Self::from_save(save_path, save_data, codex_database);
+        let objective_database = self.objective_database.clone();
+        *self = Self::from_save_with_objectives(
+            save_path,
+            save_data,
+            codex_database,
+            objective_database,
+        );
     }
 
     fn apply_scan_profile_progress(&mut self, codex_id: &str) {
@@ -842,14 +940,22 @@ impl GameContext {
 
     fn log_item_added(&mut self, item_id: &str, quantity: u32) {
         let item_name = inventory_scene::inventory_item_name(item_id, self.language);
-        let title = match self.language {
-            Language::Chinese => "获得物品".to_owned(),
-            Language::English => "Item acquired".to_owned(),
-        };
-        let detail = match self.language {
-            Language::Chinese => format!("{item_name} x{quantity} 已写入背包"),
-            Language::English => format!("{item_name} x{quantity} added to inventory"),
-        };
+        let title = localization::text(
+            self.language,
+            "activity.event.item_added.title",
+            "Item acquired",
+            "获得物品",
+        );
+        let detail = localization::format_text(
+            self.language,
+            "activity.event.item_added.detail",
+            "{item} x{quantity} added to inventory",
+            "{item} x{quantity} 已写入背包",
+            &[
+                ("item", item_name.to_owned()),
+                ("quantity", quantity.to_string()),
+            ],
+        );
         self.push_activity_log(LOG_CATEGORY_PICKUP, title, detail);
     }
 
@@ -861,23 +967,34 @@ impl GameContext {
             .filter(|title| !title.is_empty())
             .unwrap_or(codex_id);
         let research_meter = rewards::research_meter_for_codex(codex_id);
-        let title = match self.language {
-            Language::Chinese => "扫描完成",
-            Language::English => "Scan recorded",
-        };
-        let detail = match self.language {
-            Language::Chinese => format!("{entry_title} · {research_meter} 研究 +6 · XP +120"),
-            Language::English => format!("{entry_title} · {research_meter} research +6 · XP +120"),
-        };
+        let title = localization::text(
+            self.language,
+            "activity.event.scan_recorded.title",
+            "Scan recorded",
+            "扫描完成",
+        );
+        let detail = localization::format_text(
+            self.language,
+            "activity.event.scan_recorded.detail",
+            "{title} · {meter} research +6 · XP +120",
+            "{title} · {meter} 研究 +6 · XP +120",
+            &[
+                ("title", entry_title.to_owned()),
+                ("meter", research_meter.to_owned()),
+            ],
+        );
         self.push_activity_log(LOG_CATEGORY_SCAN, title, detail);
     }
 
     fn locked_rule_log_detail(&self, unlock: Option<&MapUnlockRule>) -> String {
         let Some(unlock) = unlock else {
-            return match self.language {
-                Language::Chinese => "入口当前不可用".to_owned(),
-                Language::English => "The entrance is currently unavailable".to_owned(),
-            };
+            return localization::text(
+                self.language,
+                "activity.event.access_blocked.unavailable",
+                "The entrance is currently unavailable",
+                "入口当前不可用",
+            )
+            .into_owned();
         };
 
         if let Some(message) = unlock.locked_message.as_deref() {
@@ -893,59 +1010,112 @@ impl GameContext {
             .requires_item_id
             .as_deref()
             .map(|id| inventory_scene::inventory_item_name(id, self.language));
-        match (self.language, codex_title, item_name.as_deref()) {
-            (Language::Chinese, Some(codex), Some(item)) => {
-                format!("需要先扫描 {codex}，并携带 {item}")
-            }
-            (Language::Chinese, Some(codex), None) => format!("需要先扫描 {codex}"),
-            (Language::Chinese, None, Some(item)) => format!("需要携带 {item}"),
-            (Language::Chinese, None, None) => "缺少进入条件".to_owned(),
-            (Language::English, Some(codex), Some(item)) => {
-                format!("Requires scan: {codex}; item: {item}")
-            }
-            (Language::English, Some(codex), None) => format!("Requires scan: {codex}"),
-            (Language::English, None, Some(item)) => format!("Requires item: {item}"),
-            (Language::English, None, None) => "Missing access requirement".to_owned(),
+        match (codex_title, item_name.as_deref()) {
+            (Some(codex), Some(item)) => localization::format_text(
+                self.language,
+                "activity.event.access_blocked.scan_and_item",
+                "Requires scan: {codex}; item: {item}",
+                "需要先扫描 {codex}，并携带 {item}",
+                &[("codex", codex.to_owned()), ("item", item.to_owned())],
+            ),
+            (Some(codex), None) => localization::format_text(
+                self.language,
+                "activity.event.access_blocked.scan",
+                "Requires scan: {codex}",
+                "需要先扫描 {codex}",
+                &[("codex", codex.to_owned())],
+            ),
+            (None, Some(item)) => localization::format_text(
+                self.language,
+                "activity.event.access_blocked.item",
+                "Requires item: {item}",
+                "需要携带 {item}",
+                &[("item", item.to_owned())],
+            ),
+            (None, None) => localization::text(
+                self.language,
+                "activity.event.access_blocked.missing_requirement",
+                "Missing access requirement",
+                "缺少进入条件",
+            )
+            .into_owned(),
         }
     }
 
     fn update_activity_status_alerts(&mut self) {
         if self.should_log_meter_below("stamina", 0.18, 0.35, StatusAlert::StaminaLow) {
-            let (title, detail) = match self.language {
-                Language::Chinese => ("体力偏低", "移动、扫描和跳跃会受到限制"),
-                Language::English => ("Stamina low", "Movement, scans, and jumps are limited"),
-            };
+            let title = localization::text(
+                self.language,
+                "activity.event.status.stamina_low.title",
+                "Stamina low",
+                "体力偏低",
+            );
+            let detail = localization::text(
+                self.language,
+                "activity.event.status.stamina_low.detail",
+                "Movement, scans, and jumps are limited",
+                "移动、扫描和跳跃会受到限制",
+            );
             self.push_activity_log(LOG_CATEGORY_STATUS, title, detail);
         }
         if self.should_log_meter_above("load", 0.85, 0.70, StatusAlert::HeavyLoad) {
-            let (title, detail) = match self.language {
-                Language::Chinese => ("负重过高", "背包重量已经开始拖慢移动速度"),
-                Language::English => ("Load high", "Inventory weight is slowing movement"),
-            };
+            let title = localization::text(
+                self.language,
+                "activity.event.status.load_high.title",
+                "Load high",
+                "负重过高",
+            );
+            let detail = localization::text(
+                self.language,
+                "activity.event.status.load_high.detail",
+                "Inventory weight is slowing movement",
+                "背包重量已经开始拖慢移动速度",
+            );
             self.push_activity_log(LOG_CATEGORY_STATUS, title, detail);
         }
         if self.should_log_meter_below("suit", 0.25, 0.45, StatusAlert::SuitCritical) {
-            let (title, detail) = match self.language {
-                Language::Chinese => ("外骨骼受损", "继续暴露会提高生命风险"),
-                Language::English => (
-                    "Suit integrity low",
-                    "Continued exposure increases health risk",
-                ),
-            };
+            let title = localization::text(
+                self.language,
+                "activity.event.status.suit_low.title",
+                "Suit integrity low",
+                "外骨骼受损",
+            );
+            let detail = localization::text(
+                self.language,
+                "activity.event.status.suit_low.detail",
+                "Continued exposure increases health risk",
+                "继续暴露会提高生命风险",
+            );
             self.push_activity_log(LOG_CATEGORY_STATUS, title, detail);
         }
         if self.should_log_meter_below("oxygen", 0.25, 0.45, StatusAlert::OxygenCritical) {
-            let (title, detail) = match self.language {
-                Language::Chinese => ("氧气偏低", "氧气耗尽后生命值会下降"),
-                Language::English => ("Oxygen low", "Health will fall once oxygen is depleted"),
-            };
+            let title = localization::text(
+                self.language,
+                "activity.event.status.oxygen_low.title",
+                "Oxygen low",
+                "氧气偏低",
+            );
+            let detail = localization::text(
+                self.language,
+                "activity.event.status.oxygen_low.detail",
+                "Health will fall once oxygen is depleted",
+                "氧气耗尽后生命值会下降",
+            );
             self.push_activity_log(LOG_CATEGORY_STATUS, title, detail);
         }
         if self.should_log_meter_below("health", 0.35, 0.55, StatusAlert::HealthCritical) {
-            let (title, detail) = match self.language {
-                Language::Chinese => ("生命值危险", "建议尽快撤离或使用恢复道具"),
-                Language::English => ("Health critical", "Extract or use recovery supplies soon"),
-            };
+            let title = localization::text(
+                self.language,
+                "activity.event.status.health_critical.title",
+                "Health critical",
+                "生命值危险",
+            );
+            let detail = localization::text(
+                self.language,
+                "activity.event.status.health_critical.detail",
+                "Extract or use recovery supplies soon",
+                "建议尽快撤离或使用恢复道具",
+            );
             self.push_activity_log(LOG_CATEGORY_STATUS, title, detail);
         }
     }
@@ -1686,5 +1856,45 @@ mod tests {
         assert!(categories.contains(&LOG_CATEGORY_SCAN));
         assert!(categories.contains(&LOG_CATEGORY_PICKUP));
         assert!(categories.contains(&LOG_CATEGORY_STATUS));
+    }
+
+    #[test]
+    fn objective_zone_updates_save_and_activity_log() {
+        let mut ctx = GameContext::default();
+        let rule = MapObjectiveRule {
+            objective_id: "secure_landing_site".to_owned(),
+            checkpoint_id: Some("landing_perimeter".to_owned()),
+            complete_objective: false,
+            message: None,
+            log_title: None,
+            log_detail: None,
+            once: true,
+        };
+
+        let event = ctx
+            .apply_objective_zone(&rule)
+            .expect("checkpoint should update objective");
+
+        assert_eq!(event.objective_id, "secure_landing_site");
+        let state = ctx
+            .save_data
+            .objectives
+            .states
+            .get("secure_landing_site")
+            .expect("objective state should be saved");
+        assert_eq!(state.status, "active");
+        assert!(state.completed_checkpoints.contains("landing_perimeter"));
+        assert!(
+            ctx.save_data
+                .activity_log
+                .entries
+                .iter()
+                .any(|entry| entry.category == LOG_CATEGORY_OBJECTIVE)
+        );
+        assert!(
+            ctx.objective_menu_rows()
+                .iter()
+                .any(|row| row.id == "secure_landing_site" && row.progress == 50)
+        );
     }
 }

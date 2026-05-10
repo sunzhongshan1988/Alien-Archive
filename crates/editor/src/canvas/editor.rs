@@ -1377,6 +1377,7 @@ impl EditorApp {
             points: self.zone_draft_points.clone(),
             hazard: None,
             prompt: None,
+            objective: None,
             surface: None,
             unlock: None,
             transition: None,

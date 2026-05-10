@@ -15,6 +15,8 @@ pub(crate) const EDITOR_KNOWN_ZONE_TYPES: &[&str] = &[
     "CollisionLine",
     "HazardZone",
     "PromptZone",
+    "ObjectiveZone",
+    "Checkpoint",
     "Trigger",
 ];
 

@@ -267,12 +267,37 @@ mod tests {
             .expect("facility map should load")
     }
 
-    fn overworld() -> World {
-        World::load(
-            "assets/data/maps/overworld_landing_site.ron",
-            Some("player_start"),
-        )
-        .expect("overworld map should load")
+    fn codex_decoration_world() -> World {
+        let mut document = content::MapDocument::new_landing_site();
+        document.layers.entities.clear();
+        document.layers.entities.push(content::EntityInstance {
+            id: "codex_decoration".to_owned(),
+            asset: "ow_flora_glowfungus".to_owned(),
+            entity_type: "Decoration".to_owned(),
+            x: 4.0,
+            y: 4.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            z_index: 0,
+            collision_rect: None,
+            depth_rect: None,
+            interaction_rect: None,
+            unlock: None,
+            transition: None,
+            flip_x: false,
+            rotation: 0,
+        });
+        let path = std::env::temp_dir().join(format!(
+            "alien_archive_codex_decoration_scan_{}.ron",
+            std::process::id()
+        ));
+        let source = ron::ser::to_string_pretty(&document, ron::ser::PrettyConfig::new())
+            .expect("test map should serialize");
+        std::fs::write(&path, source).expect("test map should write");
+        let world = World::load(path.to_str().expect("test map path should be utf-8"), None)
+            .expect("test map should load");
+        let _ = std::fs::remove_file(path);
+        world
     }
 
     #[test]
@@ -320,11 +345,11 @@ mod tests {
 
     #[test]
     fn decorations_with_codex_ids_are_scan_candidates() {
-        let world = overworld();
+        let world = codex_decoration_world();
         let decoration = world
             .codex_entities()
             .find(|entity| entity.kind == MapEntityKind::Decoration)
-            .expect("overworld should have codex-backed decoration");
+            .expect("fixture should have codex-backed decoration");
         let player_rect = expanded_rect(decoration.rect, 1.0);
 
         let target = nearby_scan_target(&world, player_rect).expect("decoration should scan");

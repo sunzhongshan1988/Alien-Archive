@@ -338,6 +338,7 @@ Godot 的 TileSet property painting 对我们很有参考价值：
 - 裁切流程增加边界碎片过滤：格子边缘的小联通块会被丢弃，避免相邻 cell 的残片混入宽物件或高物件；chroma-key 处理也加了边缘去绿和 despill。
 - 追加 Terrain Landforms Pack：新增 `terrain` 分类 20 个悬崖/山脉/岩脊/台地/洞口主体素材，另补 20 个 cliff/mountain 支撑贴花；源图、裁切脚本、manifest 和 preview 位于 `assets/sprites/_sources/overworld/terrain_landforms_2026_05_10_*`。主体作为 Object 放置，山脚碎石、坡脚尘土、岩屑和矿脉散布仍拆到 Decal。
 - Overworld 地形新增“分层可走表面”语义：Zone 支持 `WalkSurface` + `surface` 参数，`surface_id` 相同的台面和斜坡组成同一个可行走区域。`Platform` 负责圆台/高台顶面，`Ramp` 负责从地面进入/离开该 surface；人物在地面层不会因为走到圆台投影下方就被抬到台面，只有脚底进入 Ramp 后才切入同一 surface。人在该 surface 上时，移动会被限制在同 `surface_id` 的 Platform/Ramp 联合区域内，避免从圆台边缘掉下；离开 Ramp 后回到地面层，仍可从圆台背后绕行。
+- WalkSurface 深度和边缘规则已修正：角色站在 surface 上时按 `z_index` 层级优先参与对象排序，解决大斜坡/圆台整图底部过低导致角色被错误画到斜坡后面的问题；Ramp 和 Platform 重叠时优先按 Platform 的 surface 参数渲染。人在同一 `surface_id` 上时不能从圆台/斜坡侧边直接掉到地面，只有沿 Ramp 朝地面方向移动才会离开高层 surface。
 - Object / Entity 新增独立 `depth_rect` 和素材级 `default_depth_rect`，用于遮挡排序，不再被碰撞框或整张 sprite 底边绑死。运行时用人物脚底参与 Y-depth 排序；对象没有配置遮挡/碰撞范围时，会默认把排序线从图片底边向上收半格，避免角色从下往上走时脚还没进主体就被对象盖住。
 - Zone 现在也可作为碰撞来源：`CollisionArea` 表示区域碰撞，会按 tile 行栅格化为 solid rect；`CollisionLine` 表示细线屏障，会沿折线采样为窄碰撞条，适合悬崖边、墙边和圆台边缘。Zone 工具 2 个点默认生成碰撞线，3 个点以上生成普通区域，可在 Inspector 里改成碰撞区域/线。
 - P1 批量操作开始落地：多选 Inspector 和编辑菜单新增左/右/顶/底/水平居中/垂直居中对齐；对齐按素材真实显示边界计算，支持地表、贴花、物件、实体和区域。方向键可微调当前多选，Shift 为半格，Ctrl 为 4 格。
@@ -345,7 +346,7 @@ Godot 的 TileSet property painting 对我们很有参考价值：
 - P1 批量字段第一版接入多选 Inspector：支持批量设置 `Entity.entity_type`，以及对 Entity / Zone 批量设置或清除 `UnlockRule` 的扫描需求、物品需求和锁定提示。`codex_id` / `tags` 目前仍属于素材 metadata，暂不作为地图实例字段强行写入。
 - 多地图维护开始补强：实体/区域转场目标的“目标地图”字段现在可从项目地图列表中选择；编辑器校验会检查转场 `map_path` 是否存在、目标 RON 是否可读、指定 `spawn_id` 是否存在，帮助入口/出口关系在保存运行前暴露问题。
 - 多地图维护继续推进：单个实体/区域 Inspector 可直接打开转场目标地图，并在目标地图打开后定位到配置的 `spawn_id`；地图 Inspector 增加“转场关系”摘要，列出当前地图所有实体/区域转场、目标状态和快速打开入口。
-- 区域脚本第一版接入运行时和编辑器：`ZoneInstance` 新增 `hazard` / `prompt` 规则，`HazardZone` 可持续影响人物 meter，`PromptZone` 可显示一次性提示并写入存档；Inspector 支持设为危险区/提示区并编辑效果和文案，校验会检查缺规则、未知 meter 和空提示数据。
+- 区域脚本第一版接入运行时和编辑器：`ZoneInstance` 新增 `hazard` / `prompt` / `objective` 规则，`HazardZone` 可持续影响人物 meter，`PromptZone` 可显示一次性提示并写入存档，`ObjectiveZone` / `Checkpoint` 可推进任务目标并写入日志；Inspector 支持设为危险区/提示区/目标区/检查点并编辑效果、文案和目标字段，校验会检查缺规则、未知 meter、空提示数据和缺少目标字段。
 
 ### 2026-05-09
 

@@ -215,6 +215,7 @@ where
             WindowEvent::MouseInput { state, button, .. } => {
                 self.input.apply_mouse_event(button, state);
             }
+            WindowEvent::MouseWheel { delta, .. } => self.input.apply_mouse_wheel(delta),
             WindowEvent::RedrawRequested => self.render_frame(event_loop),
             _ => {}
         }

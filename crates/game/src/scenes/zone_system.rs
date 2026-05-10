@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use runtime::Rect;
 
-use crate::world::{MapHazardRule, MapPromptRule, MapZone, World};
+use crate::world::{MapHazardRule, MapObjectiveRule, MapPromptRule, MapZone, World};
 
 use super::{GameContext, Language, notice_system::NoticeState, profile_meter_label};
 
@@ -10,6 +10,7 @@ use super::{GameContext, Language, notice_system::NoticeState, profile_meter_lab
 pub(super) struct ZoneRuntimeState {
     active_hazards: BTreeSet<String>,
     active_prompts: BTreeSet<String>,
+    active_objectives: BTreeSet<String>,
 }
 
 impl ZoneRuntimeState {
@@ -24,6 +25,7 @@ impl ZoneRuntimeState {
     ) {
         let mut current_hazards = BTreeSet::new();
         let mut current_prompts = BTreeSet::new();
+        let mut current_objectives = BTreeSet::new();
 
         for zone in world.overlapping_zones(player_rect) {
             match zone.zone_type.as_str() {
@@ -35,6 +37,10 @@ impl ZoneRuntimeState {
                     current_prompts.insert(zone_progress_key(map_path, &zone.id));
                     self.update_prompt_zone(ctx, notice, map_path, zone);
                 }
+                "ObjectiveZone" | "Checkpoint" => {
+                    current_objectives.insert(zone_progress_key(map_path, &zone.id));
+                    self.update_objective_zone(ctx, notice, map_path, zone);
+                }
                 _ => {}
             }
         }
@@ -43,6 +49,8 @@ impl ZoneRuntimeState {
             .retain(|key| current_hazards.contains(key));
         self.active_prompts
             .retain(|key| current_prompts.contains(key));
+        self.active_objectives
+            .retain(|key| current_objectives.contains(key));
     }
 
     fn update_hazard_zone(
@@ -104,6 +112,33 @@ impl ZoneRuntimeState {
             ctx.mark_zone_triggered(map_path, &zone.id);
         }
     }
+
+    fn update_objective_zone(
+        &mut self,
+        ctx: &mut GameContext,
+        notice: &mut NoticeState,
+        map_path: &str,
+        zone: &MapZone,
+    ) {
+        let Some(objective) = zone.objective.as_ref() else {
+            return;
+        };
+
+        let key = zone_progress_key(map_path, &zone.id);
+        if !self.active_objectives.insert(key) {
+            return;
+        }
+        if objective.once && ctx.is_zone_triggered(map_path, &zone.id) {
+            return;
+        }
+
+        if let Some(event) = ctx.apply_objective_zone(objective) {
+            notice.push_info_message(objective_message(objective, event.notice));
+            if objective.once {
+                ctx.mark_zone_triggered(map_path, &zone.id);
+            }
+        }
+    }
 }
 
 fn hazard_message(language: Language, _zone_id: &str, hazard: &MapHazardRule) -> String {
@@ -134,6 +169,10 @@ fn prompt_message(language: Language, zone_id: &str, prompt: &MapPromptRule) -> 
         Language::Chinese => format!("发现区域：{zone_id}"),
         Language::English => format!("Area discovered: {zone_id}"),
     }
+}
+
+fn objective_message(objective: &MapObjectiveRule, fallback: String) -> String {
+    objective.message.clone().unwrap_or(fallback)
 }
 
 fn zone_progress_key(map_path: &str, zone_id: &str) -> String {
@@ -191,6 +230,7 @@ mod tests {
             bounds: Rect::new(Vec2::ZERO, Vec2::new(1.0, 1.0)),
             hazard: None,
             prompt: Some(MapPromptRule::default()),
+            objective: None,
             surface: None,
             unlock: None,
             transition: None,

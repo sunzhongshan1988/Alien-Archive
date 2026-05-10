@@ -36,7 +36,7 @@
 
 还没有完成的核心循环部分：
 
-- 更完整的日志筛选、分页和真实任务数据
+- 更完整的日志筛选、分页和任务目标细节展示
 - 更完整的危险环境、受伤来源和消耗品使用反馈
 - 更完整的多地图内容、目标地图校验和区域脚本类型扩展
 
@@ -53,6 +53,7 @@
 - 菜单支持鼠标点击左侧页签、返回按钮、设置里的语言切换。
 - 非背包页可以用方向键切换页签；背包页方向键移动选中格子。
 - 菜单文字使用中文/英文两套文本，不再把两种语言同时堆在界面里。
+- 主菜单、游戏内菜单、外勤 HUD、notice 提示和外勤日志事件文案已接入 `assets/data/ui/localization.ron`；运行时通过 `ui::localization` 读取资产字典，缺键或缺文件时回退到代码内 fallback 文案，避免本地资产问题导致界面不可用。
 - 菜单 UI 拆出了 `game_menu_content`、`layout`、`menu_style`、`menu_widgets`、`text` 等模块，方便继续迭代。
 - 菜单皮肤、导航图标、底部动作图标、属性图标、图鉴缩略图集中登记在 `menu_style::TEXTURES`。
 - `tools/generate_menu_assets.py` 可以生成当前菜单需要的 AI 风格图标和缩略图。
@@ -103,6 +104,7 @@
 - Facility 里体力不足时尝试跳跃会提示“体力不足，无法跳跃”。
 - 被 `unlock` 锁住的入口/出口会根据条件显示扫描目标、所需物品或自定义锁定提示。
 - 首次扫描完成会显示扫描完成提示，提示研究和奖励已经记录。
+- 上述运行时 notice 文案现在从 `assets/data/ui/localization.ron` 读取，便于后续直接在资产层维护中英文文本。
 
 6. 人物状态运行时
 
@@ -134,10 +136,13 @@
 
 9. 交互历史/日志页
 
-- `SaveData` 增加 `activity_log`，最多保留最近 32 条外勤事件。
+- `SaveData` 增加 `activity_log` 和 `objectives`，分别保存最近外勤事件和任务目标推进状态。
 - 日志事件会随本地 RON 存档保存，退出重进后仍能在菜单里看到。
-- 当前会记录：获得物品、扫描完成、背包已满、入口/出口被锁、进入/离开设施、体力/负重/外骨骼/氧气/生命等状态告警。
-- 游戏内菜单原 `任务` 页升级为 `日志` 页，上半部分保留当前目标概览，下半部分显示最近外勤记录。
+- 当前会记录：获得物品、扫描完成、背包已满、入口/出口被锁、进入/离开设施、目标推进、体力/负重/外骨骼/氧气/生命等状态告警。
+- 新写入的外勤日志标题和详情优先读取 `assets/data/ui/localization.ron`，包括拾取、扫描、解锁失败、切场景、危险区、目标推进和状态告警。
+- 游戏内菜单原 `任务` 页升级为 `日志` 页，上半部分读取真实目标数据，下半部分显示最近外勤记录。
+- 任务定义从 `assets/data/objectives/field_objectives.ron` 加载；当前包含稳固着陆点、调查晶体田、解析遗迹信号三条目标。
+- `最近外勤记录` 已是滚动列表：存档仍保留最近 32 条，菜单窗口只显示能完整放入背景框的条目，可用鼠标滚轮或滚动条查看更早记录。
 - Debug Overlay 现在也会显示当前日志条目数量，方便确认事件是否写入存档。
 
 10. 外勤 HUD / 快捷栏 / 时间天气
@@ -172,16 +177,18 @@
 - 橙色显示地图转场 Zone，绿色显示 WalkSurface Zone，其他 Zone 用紫色辅助识别。
 - 角色自身 hitbox 以绿色显示；Overworld 使用脚底碰撞框，Facility 使用当前角色矩形。
 - 该层在游戏内菜单覆盖层打开时仍会绘制在底层场景上，便于排查 overlay 是否影响底层运行时状态。
+- Overworld 的深度排序现在优先按 `z_index` 层级，再按脚底 Y 排序；站上 `WalkSurface` 台面时，人物会稳定绘制在底层斜坡/圆台整图之上，同时仍可被更高 `z_index` 的台面道具遮挡。`WalkSurface` 还会约束高层移动：角色不能从圆台或斜坡侧边直接掉到地面，只能沿 Ramp 朝地面方向离开同一 `surface_id`。
 
 13. 区域脚本第一版
 
-- `ZoneInstance` 新增可选 `hazard` 和 `prompt` 规则，保持和现有 `surface` / `unlock` / `transition` 同层级。
+- `ZoneInstance` 新增可选 `hazard`、`prompt` 和 `objective` 规则，保持和现有 `surface` / `unlock` / `transition` 同层级。
 - `HazardZone` 会在玩家重叠时按 `effects` 持续修改人物 meter，当前支持 `health`、`stamina`、`suit`、`oxygen`、`radiation`、`spores`。
 - 玩家首次进入危险区会显示 notice 并写入活动日志；持续影响仍走现有人物状态、存档 dirty 和状态告警机制。
 - `PromptZone` 会在玩家进入时显示提示并写入活动日志；`once = true` 时会把触发状态保存到 `WorldSave.triggered_zones`，避免跨会话重复触发。
-- Overworld / Facility 共用 `zone_system`，后续扩展任务推进、一次性事件、环境暴露都可以继续挂在 Zone 语义上。
-- 编辑器 Inspector 已能把区域设为危险区/提示区，并编辑危险效果、提示文案和一次性触发选项。
-- 地图校验已认识 `HazardZone` / `PromptZone`，会检查缺失规则、空效果、未知 meter 和空提示数据。
+- `ObjectiveZone` / `Checkpoint` 会在玩家进入区域时推进 `SaveData.objectives`，显示 notice，并把目标更新写入外勤日志；`once = true` 时复用 `WorldSave.triggered_zones` 防止重复触发。
+- Overworld / Facility 共用 `zone_system`，一次性事件、环境暴露和任务推进都挂在 Zone 语义上。
+- 编辑器 Inspector 已能把区域设为危险区/提示区/目标区/检查点，并编辑危险效果、提示文案、目标 ID、检查点 ID 和一次性触发选项。
+- 地图校验已认识 `HazardZone` / `PromptZone` / `ObjectiveZone` / `Checkpoint`，会检查缺失规则、空效果、未知 meter、空提示数据和缺少目标字段；`ObjectiveZone` / `Checkpoint` 允许同时携带 `surface`，用于“目标触发 + 台面行走”的复合区域。
 
 ## 已完成
 
@@ -216,11 +223,12 @@
 - 实现 `SaveData` 本地存档层，保存语言、场景、地图、玩家位置、Codex 解锁、已收集实体、交互历史、人物档案、背包和快捷栏。
 - `MapDocument` 支持实体/区域级 `unlock` 规则，运行时入口/出口可按扫描记录或背包物品放行。
 - `MapDocument` 支持实体/区域级 `transition` 目标，运行时入口/出口和 `MapTransition` 区域可按目标场景、地图、出生点切换。
-- `MapDocument` 支持区域级 `hazard` / `prompt` 规则，运行时可用地图 Zone 驱动危险环境和一次性提示。
+- `MapDocument` 支持区域级 `hazard` / `prompt` / `objective` 规则，运行时可用地图 Zone 驱动危险环境、一次性提示和任务推进。
 - 运行时 `Map::load` 支持新的编辑器 RON 地图格式，并保留旧版 legacy RON 地图解析。
 - `World::solid_rects()` 提供 tile/entity/collision 碰撞矩形。
 - `World::codex_entities()` 提供扫描候选实体。
 - 运行时启动时加载 `content::CodexDatabase`，供扫描 UI 和游戏内 Codex 菜单共同使用。
+- 运行时启动时加载 `objectives::ObjectiveDatabase`，供区域脚本推进和游戏内日志页目标概览共同使用。
 - 运行时启动时加载 `SaveData`，用于恢复语言、Codex 解锁、背包、人物档案和上次所在地图位置。
 - `SaveData` 已支持固定存档槽路径，主菜单可以读取、新建、删除并刷新槽位摘要。
 - `WorldSave` 已记录一次性区域触发状态，用于 `PromptZone` 这类跨会话不重复事件。
@@ -228,8 +236,8 @@
 - `crates/editor` 已作为专用 Overworld 地图编辑器入口存在，读写 `assets/data/maps/*.ron`。
 - 编辑器菜单和工具栏支持“保存并运行当前地图”，用于快速验证当前 RON 和出生点。
 - `SceneStack` 已接入全局 Debug Overlay，可在运行时检查场景、地图、扫描目标、存档、人物状态和世界调试几何。
-- 游戏内菜单 `日志` 页会读取 `SaveData.activity_log`，展示最近扫描、拾取、解锁和状态变化。
-- `SceneStack` 已接入外勤 HUD，可在 Overworld / Facility 画面直接查看人物状态、时间天气和快捷栏。
+- 游戏内菜单 `日志` 页会读取 `SaveData.objectives` 和 `SaveData.activity_log`，展示真实目标进度以及最近扫描、拾取、解锁和状态变化；新写入的日志事件文案已从本地化资产生成。
+- `SceneStack` 已接入外勤 HUD，可在 Overworld / Facility 画面直接查看人物状态、时间天气和快捷栏；HUD 场景名、天气名和 meter 短标签已从本地化资产读取。
 - 外勤 HUD 现在读取 `assets/images/ui/hud/*.png` 组件；人物状态、时间和天气整合在 `hud_player_panel_1.png`，头像单独使用 `hud_player_avatar.png`，快捷栏保留独立底座和槽位图。
 - `SaveData.world` 已保存外勤时间和天气，旧存档会自动补默认值。
 
@@ -262,7 +270,7 @@
 - `I` / `Tab`：打开游戏内菜单并切到背包
 - `C`：打开游戏内菜单并切到属性
 - `F3`：显示/隐藏 Debug Overlay；打开时会同时叠加 collision、interaction、zone 和角色 hitbox 调试框
-- 存档：移动、扫描、语言切换等会自动保存；当前没有手动存档 UI
+- 存档：移动、扫描、语言切换等会自动保存；游戏内菜单底部 `存档` 按钮可手动保存
 
 游戏内菜单：
 
@@ -270,7 +278,7 @@
 - 鼠标点击返回按钮：关闭菜单
 - 方向键：切换页签；背包页内移动选中格
 - 设置页 `Enter` / `E`：切换语言
-- 日志页：查看最近外勤事件；当前保留最近 32 条，菜单显示最近 5 条
+- 日志页：查看最近外勤事件；当前保留最近 32 条，菜单窗口按背景框高度显示完整条目并支持滚轮/滚动条滚动
 
 ## 技术决策
 
@@ -492,10 +500,10 @@ $env:ALIEN_ARCHIVE_EXIT_AFTER_FRAMES='3'; cargo run -p alien_archive
 
 推荐下一阶段按这个顺序做：
 
-1. 给 Debug Overlay 的世界几何层继续补开关/图例，按需要拆分 collision、interaction、zone、player 显示。
-2. 用编辑器在真实地图里铺第一组 `HazardZone` / `PromptZone`，验证探索节奏和提示文字。
-3. 给日志页补筛选/分页和“任务目标来自真实任务数据”的后续结构。
-4. 在区域脚本上继续扩展 `ObjectiveZone` / `Checkpoint`，把任务推进从日志提示升级成真实目标状态。
+1. 用编辑器在真实地图里铺第一组 `ObjectiveZone` / `Checkpoint` / `HazardZone` / `PromptZone`，验证探索节奏、目标推进和提示文字。
+2. 给日志页补筛选和更详细的目标步骤展示，例如只看目标、扫描、拾取或状态告警。
+3. 给 Debug Overlay 的世界几何层继续补开关/图例，按需要拆分 collision、interaction、zone、player 显示。
+4. 扩展目标资产结构，支持奖励、前置条件和多目标链路。
 
 地图编辑器的长期改进清单单独记录在：
 
@@ -550,6 +558,12 @@ assets/fonts/ui.ttf
 assets/images/ui/menu/
 assets/images/ui/profile/
 assets/images/ui/inventory/
+```
+
+菜单本地化字典目前集中在：
+
+```txt
+assets/data/ui/localization.ron
 ```
 
 当前外勤 HUD 会复用背包物品图标；消耗品最终素材尚未补齐时，快捷栏会用 fallback 标记显示。

@@ -403,6 +403,11 @@ pub struct ZoneInstance {
     pub hazard: Option<HazardRule>,
     #[serde(default, skip_serializing_if = "option_prompt_rule_is_none_or_empty")]
     pub prompt: Option<PromptRule>,
+    #[serde(
+        default,
+        skip_serializing_if = "option_objective_rule_is_none_or_empty"
+    )]
+    pub objective: Option<ObjectiveRule>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<WalkSurfaceRule>,
     #[serde(default, skip_serializing_if = "option_unlock_rule_is_none_or_empty")]
@@ -475,6 +480,60 @@ impl PromptRule {
         self.message
             .as_deref()
             .is_none_or(|value| value.trim().is_empty())
+            && self
+                .log_title
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+            && self
+                .log_detail
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ObjectiveRule {
+    pub objective_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_id: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub complete_objective: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_detail: Option<String>,
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub once: bool,
+}
+
+impl Default for ObjectiveRule {
+    fn default() -> Self {
+        Self {
+            objective_id: String::new(),
+            checkpoint_id: None,
+            complete_objective: false,
+            message: None,
+            log_title: None,
+            log_detail: None,
+            once: true,
+        }
+    }
+}
+
+impl ObjectiveRule {
+    pub fn is_empty(&self) -> bool {
+        self.objective_id.trim().is_empty()
+            && self
+                .checkpoint_id
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+            && !self.complete_objective
+            && self
+                .message
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
             && self
                 .log_title
                 .as_deref()
@@ -757,6 +816,10 @@ fn option_hazard_rule_is_none_or_empty(value: &Option<HazardRule>) -> bool {
 
 fn option_prompt_rule_is_none_or_empty(value: &Option<PromptRule>) -> bool {
     value.as_ref().is_none_or(PromptRule::is_empty)
+}
+
+fn option_objective_rule_is_none_or_empty(value: &Option<ObjectiveRule>) -> bool {
+    value.as_ref().is_none_or(ObjectiveRule::is_empty)
 }
 
 fn is_zero_i32(value: &i32) -> bool {

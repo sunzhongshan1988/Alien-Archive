@@ -1,9 +1,13 @@
-use std::path::{Path, PathBuf};
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Result;
 use runtime::{Button, Color, InputState, Rect, Renderer, SceneCommand, Vec2};
 
 use crate::save::{SAVE_SLOT_COUNT, SaveData, delete_save_file, save_slot_path};
+use crate::ui::localization;
 use crate::ui::menu_style::{self, icon, skin};
 use crate::ui::menu_widgets::{
     contain_rect, draw_border, draw_screen_rect, draw_texture_nine_slice, screen_rect as ui_rect,
@@ -706,7 +710,7 @@ impl MainMenuScene {
             renderer,
             &font,
             "main_menu_title",
-            main_title(language),
+            main_title(language).as_ref(),
             match language {
                 Language::Chinese => 58.0,
                 Language::English => 48.0,
@@ -720,7 +724,7 @@ impl MainMenuScene {
                     renderer,
                     &font,
                     &format!("main_menu_item_{index}"),
-                    menu_action_label(*action, language),
+                    menu_action_label(*action, language).as_ref(),
                     match language {
                         Language::Chinese => 34.0,
                         Language::English => 30.0,
@@ -732,7 +736,7 @@ impl MainMenuScene {
             renderer,
             &font,
             "main_menu_settings_title",
-            settings_title(language),
+            settings_title(language).as_ref(),
             match language {
                 Language::Chinese => 30.0,
                 Language::English => 28.0,
@@ -742,7 +746,7 @@ impl MainMenuScene {
             renderer,
             &font,
             "main_menu_language_label",
-            language_setting_label(language),
+            language_setting_label(language).as_ref(),
             match language {
                 Language::Chinese => 26.0,
                 Language::English => 23.0,
@@ -756,7 +760,7 @@ impl MainMenuScene {
                     renderer,
                     &font,
                     &format!("main_menu_language_value_{index}"),
-                    language_option_label(*language),
+                    language_option_label(*language).as_ref(),
                     24.0,
                 )
             })
@@ -765,7 +769,7 @@ impl MainMenuScene {
             renderer,
             &font,
             "main_menu_back",
-            back_label(language),
+            back_label(language).as_ref(),
             match language {
                 Language::Chinese => 30.0,
                 Language::English => 28.0,
@@ -775,7 +779,7 @@ impl MainMenuScene {
             renderer,
             &font,
             "main_menu_slot_title",
-            save_slot_title(save_slot_mode_for_page(self.page), language),
+            save_slot_title(save_slot_mode_for_page(self.page), language).as_ref(),
             match language {
                 Language::Chinese => 30.0,
                 Language::English => 26.0,
@@ -793,7 +797,7 @@ impl MainMenuScene {
                         self.pending_delete_slot == Some(index),
                     )
                 } else {
-                    back_label(language).to_owned()
+                    back_label(language).into_owned()
                 };
                 upload_text(
                     renderer,
@@ -1088,31 +1092,28 @@ fn centered_text_y(rect: Rect, text: &TextSprite, y_offset: f32) -> f32 {
     rect.origin.y + (rect.size.y - visual_height) * 0.5 + y_offset - text_padding
 }
 
-fn main_title(language: Language) -> &'static str {
-    match language {
-        Language::Chinese => "星尘档案",
-        Language::English => "Alien Archive",
-    }
+fn main_title(language: Language) -> Cow<'static, str> {
+    localization::text(language, "main.title", "Alien Archive", "星尘档案")
 }
 
-fn menu_action_label(action: MenuAction, language: Language) -> &'static str {
-    match language {
-        Language::Chinese => match action {
-            MenuAction::Continue => "继续游戏",
-            MenuAction::NewGame => "新建存档",
-            MenuAction::LoadGame => "读取存档",
-            MenuAction::DeleteSave => "删除存档",
-            MenuAction::Settings => "设置",
-            MenuAction::Quit => "退出",
-        },
-        Language::English => match action {
-            MenuAction::Continue => "Continue",
-            MenuAction::NewGame => "New Save",
-            MenuAction::LoadGame => "Load Save",
-            MenuAction::DeleteSave => "Delete Save",
-            MenuAction::Settings => "Settings",
-            MenuAction::Quit => "Quit",
-        },
+fn menu_action_label(action: MenuAction, language: Language) -> Cow<'static, str> {
+    match action {
+        MenuAction::Continue => {
+            localization::text(language, "main.action.continue", "Continue", "继续游戏")
+        }
+        MenuAction::NewGame => {
+            localization::text(language, "main.action.new", "New Save", "新建存档")
+        }
+        MenuAction::LoadGame => {
+            localization::text(language, "main.action.load", "Load Save", "读取存档")
+        }
+        MenuAction::DeleteSave => {
+            localization::text(language, "main.action.delete", "Delete Save", "删除存档")
+        }
+        MenuAction::Settings => {
+            localization::text(language, "main.action.settings", "Settings", "设置")
+        }
+        MenuAction::Quit => localization::text(language, "main.action.quit", "Quit", "退出"),
     }
 }
 
@@ -1148,18 +1149,20 @@ fn save_slot_mode_for_page(page: MenuPage) -> SaveSlotMode {
     }
 }
 
-fn save_slot_title(mode: SaveSlotMode, language: Language) -> &'static str {
-    match language {
-        Language::Chinese => match mode {
-            SaveSlotMode::Load => "读取存档",
-            SaveSlotMode::New => "新建存档",
-            SaveSlotMode::Delete => "删除存档",
-        },
-        Language::English => match mode {
-            SaveSlotMode::Load => "Load Save",
-            SaveSlotMode::New => "New Save",
-            SaveSlotMode::Delete => "Delete Save",
-        },
+fn save_slot_title(mode: SaveSlotMode, language: Language) -> Cow<'static, str> {
+    match mode {
+        SaveSlotMode::Load => {
+            localization::text(language, "main.slot.title.load", "Load Save", "读取存档")
+        }
+        SaveSlotMode::New => {
+            localization::text(language, "main.slot.title.new", "New Save", "新建存档")
+        }
+        SaveSlotMode::Delete => localization::text(
+            language,
+            "main.slot.title.delete",
+            "Delete Save",
+            "删除存档",
+        ),
     }
 }
 
@@ -1171,15 +1174,10 @@ fn save_slot_item_label(
     confirm_delete: bool,
 ) -> String {
     let Some(slot) = slot else {
-        return match language {
-            Language::Chinese => "未知槽位".to_owned(),
-            Language::English => "Unknown Slot".to_owned(),
-        };
+        return localization::text(language, "main.slot.unknown", "Unknown Slot", "未知槽位")
+            .into_owned();
     };
-    let slot_name = match language {
-        Language::Chinese => format!("槽位 {}", slot.index + 1),
-        Language::English => format!("Slot {}", slot.index + 1),
-    };
+    let slot_name = slot_name(slot.index, language);
 
     if mode == SaveSlotMode::Delete
         && confirm_delete
@@ -1202,43 +1200,63 @@ fn save_slot_item_label(
 }
 
 fn confirm_delete_slot_label(slot_name: &str, language: Language) -> String {
-    match language {
-        Language::Chinese => format!("{slot_name}  再次确认删除"),
-        Language::English => format!("{slot_name}  Confirm Delete"),
-    }
+    localization::format_text(
+        language,
+        "main.slot.confirm_delete_label",
+        "{slot}  Confirm Delete",
+        "{slot}  再次确认删除",
+        &[("slot", slot_name.to_owned())],
+    )
 }
 
 fn confirm_overwrite_slot_label(slot_name: &str, language: Language) -> String {
-    match language {
-        Language::Chinese => format!("{slot_name}  再次确认覆盖"),
-        Language::English => format!("{slot_name}  Confirm Overwrite"),
-    }
+    localization::format_text(
+        language,
+        "main.slot.confirm_overwrite_label",
+        "{slot}  Confirm Overwrite",
+        "{slot}  再次确认覆盖",
+        &[("slot", slot_name.to_owned())],
+    )
 }
 
 fn empty_slot_label(slot_name: &str, mode: SaveSlotMode, language: Language) -> String {
-    match language {
-        Language::Chinese => match mode {
-            SaveSlotMode::Load | SaveSlotMode::New => format!("{slot_name}  空 - 新游戏"),
-            SaveSlotMode::Delete => format!("{slot_name}  空"),
-        },
-        Language::English => match mode {
-            SaveSlotMode::Load | SaveSlotMode::New => format!("{slot_name}  Empty - New Game"),
-            SaveSlotMode::Delete => format!("{slot_name}  Empty"),
-        },
-    }
+    let (key, english, chinese) = match mode {
+        SaveSlotMode::Load | SaveSlotMode::New => (
+            "main.slot.empty_new",
+            "{slot}  Empty - New Game",
+            "{slot}  空 - 新游戏",
+        ),
+        SaveSlotMode::Delete => ("main.slot.empty", "{slot}  Empty", "{slot}  空"),
+    };
+    localization::format_text(
+        language,
+        key,
+        english,
+        chinese,
+        &[("slot", slot_name.to_owned())],
+    )
 }
 
 fn corrupt_slot_label(slot_name: &str, mode: SaveSlotMode, language: Language) -> String {
-    match language {
-        Language::Chinese => match mode {
-            SaveSlotMode::Delete => format!("{slot_name}  读取失败 - 删除"),
-            SaveSlotMode::Load | SaveSlotMode::New => format!("{slot_name}  读取失败 - 重建"),
-        },
-        Language::English => match mode {
-            SaveSlotMode::Delete => format!("{slot_name}  Read Failed - Delete"),
-            SaveSlotMode::Load | SaveSlotMode::New => format!("{slot_name}  Read Failed - Rebuild"),
-        },
-    }
+    let (key, english, chinese) = match mode {
+        SaveSlotMode::Delete => (
+            "main.slot.corrupt_delete",
+            "{slot}  Read Failed - Delete",
+            "{slot}  读取失败 - 删除",
+        ),
+        SaveSlotMode::Load | SaveSlotMode::New => (
+            "main.slot.corrupt_rebuild",
+            "{slot}  Read Failed - Rebuild",
+            "{slot}  读取失败 - 重建",
+        ),
+    };
+    localization::format_text(
+        language,
+        key,
+        english,
+        chinese,
+        &[("slot", slot_name.to_owned())],
+    )
 }
 
 fn ready_slot_label(
@@ -1249,117 +1267,141 @@ fn ready_slot_label(
 ) -> String {
     let scene = scene_display_name(&save_data.world.current_scene, language);
     let scanned_count = save_data.codex.scanned_ids.len();
-    match language {
-        Language::Chinese => match mode {
-            SaveSlotMode::Load => format!(
-                "{slot_name}  Lv{}  {scene}  扫描 {scanned_count}",
-                save_data.profile.level
-            ),
-            SaveSlotMode::New => {
-                format!("{slot_name}  Lv{}  {scene}  覆盖", save_data.profile.level)
-            }
-            SaveSlotMode::Delete => {
-                format!("{slot_name}  Lv{}  {scene}  删除", save_data.profile.level)
-            }
-        },
-        Language::English => match mode {
-            SaveSlotMode::Load => format!(
-                "{slot_name}  Lv{}  {scene}  Scans {scanned_count}",
-                save_data.profile.level
-            ),
-            SaveSlotMode::New => format!(
-                "{slot_name}  Lv{}  {scene}  Overwrite",
-                save_data.profile.level
-            ),
-            SaveSlotMode::Delete => format!(
-                "{slot_name}  Lv{}  {scene}  Delete",
-                save_data.profile.level
-            ),
-        },
+    let (key, english, chinese) = match mode {
+        SaveSlotMode::Load => (
+            "main.slot.ready_load",
+            "{slot}  Lv{level}  {scene}  Scans {scans}",
+            "{slot}  Lv{level}  {scene}  扫描 {scans}",
+        ),
+        SaveSlotMode::New => (
+            "main.slot.ready_new",
+            "{slot}  Lv{level}  {scene}  Overwrite",
+            "{slot}  Lv{level}  {scene}  覆盖",
+        ),
+        SaveSlotMode::Delete => (
+            "main.slot.ready_delete",
+            "{slot}  Lv{level}  {scene}  Delete",
+            "{slot}  Lv{level}  {scene}  删除",
+        ),
+    };
+    localization::format_text(
+        language,
+        key,
+        english,
+        chinese,
+        &[
+            ("slot", slot_name.to_owned()),
+            ("level", save_data.profile.level.to_string()),
+            ("scene", scene.into_owned()),
+            ("scans", scanned_count.to_string()),
+        ],
+    )
+}
+
+fn slot_name(slot_index: usize, language: Language) -> String {
+    localization::format_text(
+        language,
+        "main.slot.name",
+        "Slot {index}",
+        "槽位 {index}",
+        &[("index", (slot_index + 1).to_string())],
+    )
+}
+
+fn scene_display_name(scene: &str, language: Language) -> Cow<'static, str> {
+    match scene {
+        "Facility" | "facility" => {
+            localization::text(language, "main.scene.facility", "Facility", "设施")
+        }
+        _ => localization::text(language, "main.scene.overworld", "Overworld", "地表"),
     }
 }
 
-fn scene_display_name(scene: &str, language: Language) -> &'static str {
+fn settings_title(language: Language) -> Cow<'static, str> {
+    localization::text(language, "main.settings.title", "Settings", "设置")
+}
+
+fn language_setting_label(language: Language) -> Cow<'static, str> {
+    localization::text(language, "main.settings.language_label", "Language", "语言")
+}
+
+fn language_option_label(language: Language) -> Cow<'static, str> {
     match language {
-        Language::Chinese => match scene {
-            "Facility" | "facility" => "设施",
-            _ => "地表",
-        },
-        Language::English => match scene {
-            "Facility" | "facility" => "Facility",
-            _ => "Overworld",
-        },
+        Language::Chinese => localization::text(
+            language,
+            "main.settings.language.chinese",
+            "Chinese",
+            "中文",
+        ),
+        Language::English => localization::text(
+            language,
+            "main.settings.language.english",
+            "English",
+            "English",
+        ),
     }
 }
 
-fn settings_title(language: Language) -> &'static str {
-    match language {
-        Language::Chinese => "设置",
-        Language::English => "Settings",
-    }
+fn back_label(language: Language) -> Cow<'static, str> {
+    localization::text(language, "main.back", "Back", "返回")
 }
 
-fn language_setting_label(language: Language) -> &'static str {
-    match language {
-        Language::Chinese => "语言",
-        Language::English => "Language",
-    }
-}
-
-fn language_option_label(language: Language) -> &'static str {
-    match language {
-        Language::Chinese => "中文",
-        Language::English => "English",
-    }
-}
-
-fn back_label(language: Language) -> &'static str {
-    match language {
-        Language::Chinese => "返回",
-        Language::English => "Back",
-    }
-}
-
-fn new_save_slot_hint(language: Language) -> &'static str {
-    match language {
-        Language::Chinese => "选择空槽开始新游戏；已有存档需要再次确认覆盖",
-        Language::English => "Choose an empty slot, or confirm again to overwrite an existing save",
-    }
+fn new_save_slot_hint(language: Language) -> Cow<'static, str> {
+    localization::text(
+        language,
+        "main.toast.new_hint",
+        "Choose an empty slot, or confirm again to overwrite an existing save",
+        "选择空槽开始新游戏；已有存档需要再次确认覆盖",
+    )
 }
 
 fn confirm_overwrite_slot_message(slot_index: usize, language: Language) -> String {
-    match language {
-        Language::Chinese => format!("再次确认将覆盖槽位 {}", slot_index + 1),
-        Language::English => format!("Confirm again to overwrite Slot {}", slot_index + 1),
-    }
+    localization::format_text(
+        language,
+        "main.toast.confirm_overwrite",
+        "Confirm again to overwrite Slot {index}",
+        "再次确认将覆盖槽位 {index}",
+        &[("index", (slot_index + 1).to_string())],
+    )
 }
 
 fn confirm_delete_slot_message(slot_index: usize, language: Language) -> String {
-    match language {
-        Language::Chinese => format!("再次确认删除槽位 {}", slot_index + 1),
-        Language::English => format!("Confirm again to delete Slot {}", slot_index + 1),
-    }
+    localization::format_text(
+        language,
+        "main.toast.confirm_delete",
+        "Confirm again to delete Slot {index}",
+        "再次确认删除槽位 {index}",
+        &[("index", (slot_index + 1).to_string())],
+    )
 }
 
-fn delete_empty_slot_message(language: Language) -> &'static str {
-    match language {
-        Language::Chinese => "这个槽位为空，无需删除",
-        Language::English => "This slot is empty",
-    }
+fn delete_empty_slot_message(language: Language) -> Cow<'static, str> {
+    localization::text(
+        language,
+        "main.toast.empty_delete",
+        "This slot is empty",
+        "这个槽位为空，无需删除",
+    )
 }
 
 fn delete_success_message(slot_index: usize, language: Language) -> String {
-    match language {
-        Language::Chinese => format!("已删除槽位 {}", slot_index + 1),
-        Language::English => format!("Deleted Slot {}", slot_index + 1),
-    }
+    localization::format_text(
+        language,
+        "main.toast.delete_success",
+        "Deleted Slot {index}",
+        "已删除槽位 {index}",
+        &[("index", (slot_index + 1).to_string())],
+    )
 }
 
 fn save_slot_error_message(language: Language, detail: &str) -> String {
-    match language {
-        Language::Chinese => format!("存档操作失败：{}", short_error_detail(detail)),
-        Language::English => format!("Save operation failed: {}", short_error_detail(detail)),
-    }
+    localization::format_text(
+        language,
+        "main.toast.save_error",
+        "Save operation failed: {detail}",
+        "存档操作失败：{detail}",
+        &[("detail", short_error_detail(detail).to_owned())],
+    )
 }
 
 fn short_error_detail(detail: &str) -> &str {

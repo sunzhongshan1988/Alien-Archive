@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -22,6 +22,7 @@ pub struct SaveData {
     pub inventory: InventorySave,
     pub world: WorldSave,
     pub codex: CodexSave,
+    pub objectives: ObjectivesSave,
     pub activity_log: ActivityLogSave,
     pub settings: SettingsSave,
 }
@@ -34,6 +35,7 @@ impl Default for SaveData {
             inventory: InventorySave::default(),
             world: WorldSave::default(),
             codex: CodexSave::default(),
+            objectives: ObjectivesSave::default(),
             activity_log: ActivityLogSave::default(),
             settings: SettingsSave::default(),
         }
@@ -97,6 +99,7 @@ impl SaveData {
             self.world.weather = "clear".to_owned();
         }
         self.activity_log.normalize();
+        self.objectives.normalize();
     }
 }
 
@@ -430,6 +433,59 @@ impl CodexSave {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ObjectivesSave {
+    pub states: BTreeMap<String, ObjectiveStateSave>,
+}
+
+impl ObjectivesSave {
+    pub fn normalize(&mut self) {
+        self.states.retain(|id, state| {
+            let keep = !id.trim().is_empty();
+            state.normalize();
+            keep
+        });
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ObjectiveStateSave {
+    pub status: String,
+    pub completed_checkpoints: BTreeSet<String>,
+}
+
+impl Default for ObjectiveStateSave {
+    fn default() -> Self {
+        Self {
+            status: "inactive".to_owned(),
+            completed_checkpoints: BTreeSet::new(),
+        }
+    }
+}
+
+impl ObjectiveStateSave {
+    pub fn new(status: impl Into<String>) -> Self {
+        Self {
+            status: status.into(),
+            completed_checkpoints: BTreeSet::new(),
+        }
+    }
+
+    fn normalize(&mut self) {
+        let status = self.status.trim().to_ascii_lowercase();
+        self.status = match status.as_str() {
+            "active" | "started" | "tracked" => "active",
+            "completed" | "complete" | "done" => "completed",
+            _ => "inactive",
+        }
+        .to_owned();
+        self.completed_checkpoints
+            .retain(|checkpoint| !checkpoint.trim().is_empty());
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ActivityLogSave {
@@ -560,6 +616,7 @@ mod tests {
         assert_eq!(save.world.field_time_minutes, 8 * 60);
         assert_eq!(save.world.weather, "clear");
         assert!(save.world.triggered_zones.is_empty());
+        assert!(save.objectives.states.is_empty());
         assert!(save.activity_log.entries.is_empty());
     }
 

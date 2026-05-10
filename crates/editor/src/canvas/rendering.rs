@@ -147,6 +147,10 @@ pub(crate) fn zone_colors(zone_type: &str) -> (Color32, Color32) {
             Color32::from_rgb(112, 172, 255),
             Color32::from_rgba_unmultiplied(112, 172, 255, 34),
         ),
+        "ObjectiveZone" | "Checkpoint" => (
+            Color32::from_rgb(92, 230, 202),
+            Color32::from_rgba_unmultiplied(92, 230, 202, 34),
+        ),
         _ => (
             THEME_ACCENT,
             Color32::from_rgba_unmultiplied(

@@ -4,6 +4,7 @@ use runtime::{Camera2d, Color, Rect, Renderer, Vec2};
 use rusttype::Font;
 
 use crate::ui::{
+    localization,
     menu_widgets::{draw_border, draw_screen_rect},
     text::{TextSprite, draw_text_centered, load_ui_font, upload_text},
 };
@@ -222,45 +223,69 @@ impl NoticeState {
 }
 
 fn pickup_message(language: Language, item_name: &str, quantity: u32) -> String {
-    match language {
-        Language::Chinese => format!("获得 {item_name} x{quantity}"),
-        Language::English => format!("Acquired {item_name} x{quantity}"),
-    }
+    localization::format_text(
+        language,
+        "notice.pickup",
+        "Acquired {item} x{quantity}",
+        "获得 {item} x{quantity}",
+        &[
+            ("item", item_name.to_owned()),
+            ("quantity", quantity.to_string()),
+        ],
+    )
 }
 
 fn inventory_full_message(language: Language) -> String {
-    match language {
-        Language::Chinese => "背包已满，无法收集".to_owned(),
-        Language::English => "Inventory full".to_owned(),
-    }
+    localization::text(
+        language,
+        "notice.inventory_full",
+        "Inventory full",
+        "背包已满，无法收集",
+    )
+    .into_owned()
 }
 
 fn stamina_low_message(language: Language) -> String {
-    match language {
-        Language::Chinese => "体力不足，无法跳跃".to_owned(),
-        Language::English => "Stamina too low to jump".to_owned(),
-    }
+    localization::text(
+        language,
+        "notice.stamina_low",
+        "Stamina too low to jump",
+        "体力不足，无法跳跃",
+    )
+    .into_owned()
 }
 
 fn quick_item_empty_message(language: Language) -> String {
-    match language {
-        Language::Chinese => "当前快捷槽为空".to_owned(),
-        Language::English => "Selected quick slot is empty".to_owned(),
-    }
+    localization::text(
+        language,
+        "notice.quick_item.empty",
+        "Selected quick slot is empty",
+        "当前快捷槽为空",
+    )
+    .into_owned()
 }
 
 fn quick_item_not_usable_message(language: Language, item_name: &str) -> String {
-    match language {
-        Language::Chinese => format!("{item_name} 不能直接使用"),
-        Language::English => format!("{item_name} cannot be used directly"),
-    }
+    localization::format_text(
+        language,
+        "notice.quick_item.not_usable",
+        "{item} cannot be used directly",
+        "{item} 不能直接使用",
+        &[("item", item_name.to_owned())],
+    )
 }
 
 fn quick_item_full_message(language: Language, item_name: &str, meter_name: &str) -> String {
-    match language {
-        Language::Chinese => format!("{meter_name} 已满，无需使用 {item_name}"),
-        Language::English => format!("{meter_name} is full; {item_name} not used"),
-    }
+    localization::format_text(
+        language,
+        "notice.quick_item.full",
+        "{meter} is full; {item} not used",
+        "{meter} 已满，无需使用 {item}",
+        &[
+            ("meter", meter_name.to_owned()),
+            ("item", item_name.to_owned()),
+        ],
+    )
 }
 
 fn quick_item_used_message(
@@ -269,17 +294,27 @@ fn quick_item_used_message(
     meter_name: &str,
     amount: u32,
 ) -> String {
-    match language {
-        Language::Chinese => format!("使用 {item_name}，{meter_name} +{amount}"),
-        Language::English => format!("Used {item_name}: {meter_name} +{amount}"),
-    }
+    localization::format_text(
+        language,
+        "notice.quick_item.used",
+        "Used {item}: {meter} +{amount}",
+        "使用 {item}，{meter} +{amount}",
+        &[
+            ("item", item_name.to_owned()),
+            ("meter", meter_name.to_owned()),
+            ("amount", amount.to_string()),
+        ],
+    )
 }
 
 fn generic_locked_message(language: Language) -> String {
-    match language {
-        Language::Chinese => "通路尚未解锁".to_owned(),
-        Language::English => "Path locked".to_owned(),
-    }
+    localization::text(
+        language,
+        "notice.locked.generic",
+        "Path locked",
+        "通路尚未解锁",
+    )
+    .into_owned()
 }
 
 fn locked_rule_message(
@@ -287,27 +322,40 @@ fn locked_rule_message(
     codex_title: Option<&str>,
     item_name: Option<&str>,
 ) -> String {
-    match (language, codex_title, item_name) {
-        (Language::Chinese, Some(title), Some(item)) => {
-            format!("需要扫描：{title}，并持有：{item}")
-        }
-        (Language::Chinese, Some(title), None) => format!("需要先扫描：{title}"),
-        (Language::Chinese, None, Some(item)) => format!("需要物品：{item}"),
-        (Language::Chinese, None, None) => generic_locked_message(language),
-        (Language::English, Some(title), Some(item)) => {
-            format!("Requires scan: {title}, and item: {item}")
-        }
-        (Language::English, Some(title), None) => format!("Scan required: {title}"),
-        (Language::English, None, Some(item)) => format!("Item required: {item}"),
-        (Language::English, None, None) => generic_locked_message(language),
+    match (codex_title, item_name) {
+        (Some(title), Some(item)) => localization::format_text(
+            language,
+            "notice.locked.scan_and_item",
+            "Requires scan: {title}, and item: {item}",
+            "需要扫描：{title}，并持有：{item}",
+            &[("title", title.to_owned()), ("item", item.to_owned())],
+        ),
+        (Some(title), None) => localization::format_text(
+            language,
+            "notice.locked.scan",
+            "Scan required: {title}",
+            "需要先扫描：{title}",
+            &[("title", title.to_owned())],
+        ),
+        (None, Some(item)) => localization::format_text(
+            language,
+            "notice.locked.item",
+            "Item required: {item}",
+            "需要物品：{item}",
+            &[("item", item.to_owned())],
+        ),
+        (None, None) => generic_locked_message(language),
     }
 }
 
 fn scan_complete_message(language: Language, title: &str) -> String {
-    match language {
-        Language::Chinese => format!("扫描完成：{title}，研究和奖励已记录"),
-        Language::English => format!("Scan complete: {title}. Research logged"),
-    }
+    localization::format_text(
+        language,
+        "notice.scan_complete",
+        "Scan complete: {title}. Research logged",
+        "扫描完成：{title}，研究和奖励已记录",
+        &[("title", title.to_owned())],
+    )
 }
 
 fn notice_colors(tone: NoticeTone, alpha: f32) -> (Color, Color, Color) {

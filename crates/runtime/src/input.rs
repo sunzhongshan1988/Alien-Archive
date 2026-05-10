@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use crate::Vec2;
 use winit::{
     dpi::{PhysicalPosition, PhysicalSize},
-    event::{ElementState, KeyEvent, MouseButton},
+    event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta},
     keyboard::{KeyCode, PhysicalKey},
 };
 
@@ -37,6 +37,7 @@ pub struct InputState {
     screen_size: Vec2,
     mouse_left_down: bool,
     mouse_left_pressed: bool,
+    mouse_wheel_y: f32,
 }
 
 impl InputState {
@@ -58,6 +59,10 @@ impl InputState {
 
     pub fn mouse_left_just_pressed(&self) -> bool {
         self.mouse_left_pressed
+    }
+
+    pub fn mouse_wheel_y(&self) -> f32 {
+        self.mouse_wheel_y
     }
 
     pub fn movement(&self) -> Vec2 {
@@ -124,9 +129,18 @@ impl InputState {
         }
     }
 
+    pub(crate) fn apply_mouse_wheel(&mut self, delta: MouseScrollDelta) {
+        let y = match delta {
+            MouseScrollDelta::LineDelta(_, y) => y,
+            MouseScrollDelta::PixelDelta(position) => position.y as f32 / 40.0,
+        };
+        self.mouse_wheel_y += y;
+    }
+
     pub(crate) fn clear_transitions(&mut self) {
         self.pressed.clear();
         self.mouse_left_pressed = false;
+        self.mouse_wheel_y = 0.0;
     }
 }
 
@@ -172,5 +186,17 @@ mod tests {
     #[test]
     fn q_maps_to_quick_item_use() {
         assert_eq!(key_to_buttons(KeyCode::KeyQ), &[Button::UseQuickItem]);
+    }
+
+    #[test]
+    fn mouse_wheel_delta_is_transient() {
+        let mut input = InputState::default();
+        input.apply_mouse_wheel(MouseScrollDelta::LineDelta(0.0, -2.0));
+
+        assert_eq!(input.mouse_wheel_y(), -2.0);
+
+        input.clear_transitions();
+
+        assert_eq!(input.mouse_wheel_y(), 0.0);
     }
 }

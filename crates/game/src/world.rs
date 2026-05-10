@@ -4,8 +4,8 @@ use anyhow::Result;
 use runtime::{Rect, Renderer, Vec2};
 
 pub use map::{
-    MapEntity, MapEntityKind, MapHazardRule, MapPromptRule, MapTransitionTarget, MapUnlockRule,
-    MapWalkSurface, MapZone,
+    MapEntity, MapEntityKind, MapHazardRule, MapObjectiveRule, MapPromptRule, MapTransitionTarget,
+    MapUnlockRule, MapWalkSurface, MapZone,
 };
 
 use map::Map;
@@ -128,8 +128,14 @@ impl World {
         self.map.walk_surface_contains(surface_id, point)
     }
 
-    pub fn walk_surface_ramp_contains(&self, surface_id: &str, point: Vec2) -> bool {
-        self.map.walk_surface_ramp_contains(surface_id, point)
+    pub fn walk_surface_allows_movement(
+        &self,
+        surface_id: &str,
+        previous: Vec2,
+        next: Vec2,
+    ) -> bool {
+        self.map
+            .walk_surface_allows_movement(surface_id, previous, next)
     }
 
     pub fn codex_entities(&self) -> impl Iterator<Item = &MapEntity> + '_ {
