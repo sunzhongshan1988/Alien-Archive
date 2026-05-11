@@ -263,7 +263,8 @@ impl Scene for FacilityScene {
         self.world.load_visible_ground_assets(ctx.renderer)?;
         self.world.draw(ctx.renderer);
         self.player.draw(ctx.renderer);
-        self.scan.draw(ctx.renderer)?;
+        let scan_target = nearby_scan_target(&self.world, self.player.rect());
+        self.scan.draw(ctx.renderer, self.camera, scan_target)?;
         self.notice.draw(ctx.renderer)?;
         Ok(())
     }

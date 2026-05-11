@@ -15,11 +15,15 @@ use super::{GameContext, Language};
 const SCAN_RANGE_PADDING: f32 = 40.0;
 const SCAN_DURATION: f32 = 1.25;
 const SCAN_NOTICE_TIME: f32 = 1.15;
+const SCAN_PANEL_SIZE: Vec2 = Vec2::new(360.0, 58.0);
+const SCAN_PANEL_MARGIN: f32 = 18.0;
+const SCAN_PANEL_TARGET_GAP: f32 = 18.0;
 
 #[derive(Default)]
 pub struct ScanState {
     active_entity_id: Option<String>,
     active_codex_id: Option<String>,
+    active_anchor: Option<Vec2>,
     display_title: String,
     display_subtitle: String,
     progress: f32,
@@ -53,6 +57,7 @@ impl ScanState {
             self.clear_active();
             return ScanUpdate::default();
         };
+        self.active_anchor = Some(scan_anchor_for_target(target));
 
         if ctx.scanned_codex_ids.contains(codex_id) {
             self.active_entity_id = Some(target.id.clone());
@@ -100,22 +105,30 @@ impl ScanState {
         self.active_codex_id.is_some() && self.progress < 1.0
     }
 
-    pub fn draw(&mut self, renderer: &mut dyn Renderer) -> Result<()> {
+    pub fn draw(
+        &mut self,
+        renderer: &mut dyn Renderer,
+        camera: Camera2d,
+        target: Option<&MapEntity>,
+    ) -> Result<()> {
         if self.active_codex_id.is_none() && self.notice_timer <= 0.0 {
             return Ok(());
         }
+        if let Some(target) = target {
+            self.active_anchor = Some(scan_anchor_for_target(target));
+        }
+        let Some(anchor) = self.active_anchor else {
+            return Ok(());
+        };
         self.upload_textures_if_needed(renderer)?;
 
         let viewport = renderer.screen_size();
         renderer.set_camera(Camera2d::default());
 
-        let panel = Rect::new(
-            Vec2::new(viewport.x * 0.5 - 210.0, viewport.y - 126.0),
-            Vec2::new(420.0, 64.0),
-        );
+        let panel = scan_panel_rect(anchor, camera, viewport);
         let rail = Rect::new(
-            Vec2::new(panel.origin.x + 18.0, panel.origin.y + 46.0),
-            Vec2::new(panel.size.x - 36.0, 8.0),
+            Vec2::new(panel.origin.x + 16.0, panel.origin.y + 42.0),
+            Vec2::new(panel.size.x - 32.0, 7.0),
         );
         let fill = Rect::new(
             rail.origin,
@@ -159,8 +172,8 @@ impl ScanState {
                 renderer,
                 title,
                 viewport,
-                panel.origin.x + 18.0,
-                panel.origin.y + 8.0,
+                panel.origin.x + 16.0,
+                panel.origin.y + 7.0,
                 Color::rgba(0.86, 1.0, 0.98, 1.0),
             );
         }
@@ -169,8 +182,8 @@ impl ScanState {
                 renderer,
                 subtitle,
                 viewport,
-                panel.origin.x + 18.0,
-                panel.origin.y + 28.0,
+                panel.origin.x + 16.0,
+                panel.origin.y + 25.0,
                 Color::rgba(0.56, 0.86, 0.92, 0.96),
             );
         }
@@ -182,6 +195,9 @@ impl ScanState {
         self.active_entity_id = None;
         self.active_codex_id = None;
         self.progress = 0.0;
+        if self.notice_timer <= 0.0 {
+            self.active_anchor = None;
+        }
     }
 
     fn set_display_text(&mut self, ctx: &GameContext, codex_id: &str, completed: bool) {
@@ -233,6 +249,32 @@ impl ScanState {
         self.text_key = Some(key);
         Ok(())
     }
+}
+
+fn scan_anchor_for_target(target: &MapEntity) -> Vec2 {
+    Vec2::new(
+        target.rect.origin.x + target.rect.size.x * 0.5,
+        target.rect.origin.y,
+    )
+}
+
+fn scan_panel_rect(anchor: Vec2, camera: Camera2d, viewport: Vec2) -> Rect {
+    let anchor_screen = world_to_screen(anchor, camera, viewport);
+    let x = (anchor_screen.x - SCAN_PANEL_SIZE.x * 0.5).clamp(
+        SCAN_PANEL_MARGIN,
+        (viewport.x - SCAN_PANEL_SIZE.x - SCAN_PANEL_MARGIN).max(SCAN_PANEL_MARGIN),
+    );
+    let y = (anchor_screen.y - SCAN_PANEL_SIZE.y - SCAN_PANEL_TARGET_GAP).clamp(
+        SCAN_PANEL_MARGIN,
+        (viewport.y - SCAN_PANEL_SIZE.y - SCAN_PANEL_MARGIN).max(SCAN_PANEL_MARGIN),
+    );
+
+    Rect::new(Vec2::new(x, y), SCAN_PANEL_SIZE)
+}
+
+fn world_to_screen(point: Vec2, camera: Camera2d, viewport: Vec2) -> Vec2 {
+    let relative = (point - camera.position) * camera.zoom;
+    Vec2::new(relative.x + viewport.x * 0.5, relative.y + viewport.y * 0.5)
 }
 
 fn scan_status_label(language: Language, completed: bool) -> &'static str {
@@ -355,5 +397,26 @@ mod tests {
         let target = nearby_scan_target(&world, player_rect).expect("decoration should scan");
 
         assert_eq!(target.id, decoration.id);
+    }
+
+    #[test]
+    fn scan_panel_tracks_target_above_world_anchor() {
+        let camera = Camera2d::follow(Vec2::new(100.0, 100.0));
+        let viewport = Vec2::new(1280.0, 720.0);
+        let panel = scan_panel_rect(Vec2::new(100.0, 100.0), camera, viewport);
+
+        assert_eq!(panel.size, SCAN_PANEL_SIZE);
+        assert!(panel.origin.y < viewport.y * 0.5);
+        assert!(panel.origin.y + panel.size.y <= viewport.y - SCAN_PANEL_MARGIN);
+    }
+
+    #[test]
+    fn scan_panel_clamps_inside_screen_edges() {
+        let camera = Camera2d::default();
+        let viewport = Vec2::new(360.0, 220.0);
+        let panel = scan_panel_rect(Vec2::new(-10_000.0, -10_000.0), camera, viewport);
+
+        assert_eq!(panel.origin.x, SCAN_PANEL_MARGIN);
+        assert_eq!(panel.origin.y, SCAN_PANEL_MARGIN);
     }
 }

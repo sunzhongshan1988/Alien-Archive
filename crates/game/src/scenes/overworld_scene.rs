@@ -306,7 +306,8 @@ impl Scene for OverworldScene {
                 self.player.draw_topdown(renderer);
             },
         );
-        self.scan.draw(ctx.renderer)?;
+        let scan_target = nearby_scan_target(&self.world, self.player.rect());
+        self.scan.draw(ctx.renderer, self.camera, scan_target)?;
         self.notice.draw(ctx.renderer)?;
         Ok(())
     }
