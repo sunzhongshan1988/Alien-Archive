@@ -124,33 +124,33 @@ impl Default for PlayerProfileSave {
             callsign: "Stardust Surveyor".to_owned(),
             role: "Forward Explorer / Sample Analysis".to_owned(),
             field_id: "AA-01".to_owned(),
-            level: 28,
-            xp: 8_650,
-            xp_next: 15_000,
+            level: 1,
+            xp: 0,
+            xp_next: 1_000,
             vitals: vec![
-                MeterSave::new("health", 86, 100),
-                MeterSave::new("stamina", 72, 100),
-                MeterSave::new("suit", 91, 100),
-                MeterSave::new("load", 37, 60),
+                MeterSave::new("health", 100, 100),
+                MeterSave::new("stamina", 100, 100),
+                MeterSave::new("suit", 100, 100),
+                MeterSave::new("load", 0, 60),
             ],
             attributes: vec![
-                ScoreSave::new("survival", 7, 10),
-                ScoreSave::new("mobility", 6, 10),
-                ScoreSave::new("scanning", 8, 10),
-                ScoreSave::new("harvesting", 6, 10),
-                ScoreSave::new("analysis", 7, 10),
+                ScoreSave::new("survival", 0, 10),
+                ScoreSave::new("mobility", 0, 10),
+                ScoreSave::new("scanning", 0, 10),
+                ScoreSave::new("harvesting", 0, 10),
+                ScoreSave::new("analysis", 0, 10),
             ],
             research: vec![
-                MeterSave::new("bio", 42, 100),
-                MeterSave::new("mineral", 55, 100),
-                MeterSave::new("ruin", 31, 100),
-                MeterSave::new("data", 68, 100),
+                MeterSave::new("bio", 0, 100),
+                MeterSave::new("mineral", 0, 100),
+                MeterSave::new("ruin", 0, 100),
+                MeterSave::new("data", 0, 100),
             ],
             resistances: vec![
-                MeterSave::new("spores", 40, 100),
-                MeterSave::new("heat", 35, 100),
-                MeterSave::new("radiation", 28, 100),
-                MeterSave::new("oxygen", 62, 100),
+                MeterSave::new("spores", 100, 100),
+                MeterSave::new("heat", 100, 100),
+                MeterSave::new("radiation", 100, 100),
+                MeterSave::new("oxygen", 100, 100),
             ],
         }
     }
@@ -204,6 +204,19 @@ impl PlayerProfileSave {
 
     pub fn score(&self, id: &str) -> Option<&ScoreSave> {
         self.attributes.iter().find(|stat| stat.id == id)
+    }
+
+    pub fn set_score_value(&mut self, id: &str, value: u32) -> bool {
+        let Some(score) = self.attributes.iter_mut().find(|stat| stat.id == id) else {
+            return false;
+        };
+        let next_value = value.min(score.max);
+        if score.value == next_value {
+            return false;
+        }
+
+        score.value = next_value;
+        true
     }
 }
 

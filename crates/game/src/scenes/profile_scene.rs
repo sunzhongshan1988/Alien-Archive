@@ -86,25 +86,25 @@ const VITAL_STATS: &[PercentStat] = &[
     PercentStat {
         id: "health",
         label: LocalizedText::new("Health", "生命"),
-        value: 86,
+        value: 0,
         max: 100,
     },
     PercentStat {
         id: "stamina",
         label: LocalizedText::new("Stamina", "体力"),
-        value: 72,
+        value: 0,
         max: 100,
     },
     PercentStat {
         id: "suit",
         label: LocalizedText::new("Suit Integrity", "外骨骼完整度"),
-        value: 91,
+        value: 0,
         max: 100,
     },
     PercentStat {
         id: "load",
         label: LocalizedText::new("Carry Load", "负重"),
-        value: 37,
+        value: 0,
         max: 60,
     },
 ];
@@ -113,27 +113,27 @@ const CORE_STATS: &[ScoreStat] = &[
     ScoreStat {
         id: "survival",
         label: LocalizedText::new("Survival", "生存"),
-        value: 7,
+        value: 0,
     },
     ScoreStat {
         id: "mobility",
         label: LocalizedText::new("Mobility", "机动"),
-        value: 6,
+        value: 0,
     },
     ScoreStat {
         id: "scanning",
         label: LocalizedText::new("Scanning", "扫描"),
-        value: 8,
+        value: 0,
     },
     ScoreStat {
         id: "harvesting",
         label: LocalizedText::new("Harvesting", "采集"),
-        value: 6,
+        value: 0,
     },
     ScoreStat {
         id: "analysis",
         label: LocalizedText::new("Analysis", "解析"),
-        value: 7,
+        value: 0,
     },
 ];
 
@@ -141,25 +141,25 @@ const RESEARCH_STATS: &[PercentStat] = &[
     PercentStat {
         id: "bio",
         label: LocalizedText::new("Bio Samples", "生物样本"),
-        value: 42,
+        value: 0,
         max: 100,
     },
     PercentStat {
         id: "mineral",
         label: LocalizedText::new("Mineral Survey", "矿物调查"),
-        value: 55,
+        value: 0,
         max: 100,
     },
     PercentStat {
         id: "ruin",
         label: LocalizedText::new("Ruin Tech", "遗迹科技"),
-        value: 31,
+        value: 0,
         max: 100,
     },
     PercentStat {
         id: "data",
         label: LocalizedText::new("Data Analysis", "数据解析"),
-        value: 68,
+        value: 0,
         max: 100,
     },
 ];
@@ -168,25 +168,25 @@ const RESISTANCE_STATS: &[PercentStat] = &[
     PercentStat {
         id: "spores",
         label: LocalizedText::new("Toxic Spores", "毒性孢子"),
-        value: 40,
+        value: 0,
         max: 100,
     },
     PercentStat {
         id: "heat",
         label: LocalizedText::new("Heat", "高温"),
-        value: 35,
+        value: 0,
         max: 100,
     },
     PercentStat {
         id: "radiation",
         label: LocalizedText::new("Radiation", "辐射"),
-        value: 28,
+        value: 0,
         max: 100,
     },
     PercentStat {
         id: "oxygen",
         label: LocalizedText::new("Low Oxygen", "低氧"),
-        value: 62,
+        value: 0,
         max: 100,
     },
 ];
@@ -866,6 +866,7 @@ impl Scene for ProfileScene {
         _dt: f32,
         input: &InputState,
     ) -> Result<SceneCommand<SceneId>> {
+        ctx.sync_derived_profile_state();
         if self.language != ctx.language {
             self.language = ctx.language;
             self.text = ProfileText::default();

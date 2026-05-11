@@ -304,7 +304,7 @@ mod tests {
         );
 
         assert!(lines.iter().any(|line| line.contains("dirty=true")));
-        assert!(lines.iter().any(|line| line.contains("hp 86/100")));
+        assert!(lines.iter().any(|line| line.contains("hp 100/100")));
         assert!(lines.iter().any(|line| line.contains("ground_chunks 2")));
         assert!(lines.iter().any(|line| line.contains("draw_calls 6")));
         assert!(lines.iter().any(|line| line.contains("world layer:")));

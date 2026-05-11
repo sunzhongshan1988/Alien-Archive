@@ -45,6 +45,8 @@ const FACILITY_SPORE_DRAIN_PER_SECOND: f32 = 0.03;
 const OVERWORLD_RECOVERY_PER_SECOND: f32 = 0.08;
 const CRITICAL_HEALTH_DRAIN_PER_SECOND: f32 = 0.35;
 const FIELD_CLOCK_MINUTES_PER_SECOND: f32 = 1.0;
+const SCAN_XP_REWARD: u32 = 120;
+const RESEARCH_PROGRESS_PER_SCAN: u32 = 6;
 const LOG_CATEGORY_PICKUP: &str = "pickup";
 const LOG_CATEGORY_SCAN: &str = "scan";
 const LOG_CATEGORY_UNLOCK: &str = "unlock";
@@ -247,6 +249,7 @@ impl GameContext {
             ..Self::default()
         };
         ctx.sync_inventory_load_meter_silent();
+        ctx.sync_derived_profile_state();
         ctx.apply_world_save();
         ctx
     }
@@ -372,6 +375,19 @@ impl GameContext {
         FieldStatusEffects {
             movement_speed_multiplier: self.profile_movement_speed_multiplier(),
         }
+    }
+
+    pub fn sync_derived_profile_state(&mut self) -> bool {
+        let mut changed = false;
+
+        changed |= self.sync_scan_level_and_xp();
+        changed |= self.sync_scan_research_progress();
+        changed |= self.sync_profile_attribute_scores();
+
+        if changed {
+            self.mark_save_dirty();
+        }
+        changed
     }
 
     pub fn profile_meter_value(&self, id: &str) -> u32 {
@@ -812,6 +828,7 @@ impl GameContext {
 
     fn sync_runtime_to_save(&mut self) {
         self.sync_inventory_load_meter();
+        self.sync_derived_profile_state();
         self.save_data.settings.language = self.language.save_key().to_owned();
         self.save_data.codex = CodexSave::from_runtime(&self.scanned_codex_ids);
     }
@@ -828,16 +845,8 @@ impl GameContext {
     }
 
     fn apply_scan_profile_progress(&mut self, codex_id: &str) {
-        let research_meter = rewards::research_meter_for_codex(codex_id);
-        bump_meter(&mut self.save_data.profile.research, research_meter, 6);
-        self.save_data.profile.xp += 120;
-        while self.save_data.profile.xp_next > 0
-            && self.save_data.profile.xp >= self.save_data.profile.xp_next
-        {
-            self.save_data.profile.xp -= self.save_data.profile.xp_next;
-            self.save_data.profile.level += 1;
-            self.save_data.profile.xp_next += 2_500;
-        }
+        let _ = codex_id;
+        self.sync_derived_profile_state();
     }
 
     fn sync_inventory_load_meter(&mut self) -> bool {
@@ -848,6 +857,89 @@ impl GameContext {
     fn sync_inventory_load_meter_silent(&mut self) {
         let load = inventory_load_units(&self.save_data.inventory);
         self.save_data.profile.set_meter_value("load", load);
+    }
+
+    fn sync_scan_level_and_xp(&mut self) -> bool {
+        let mut total_xp = self.scanned_codex_ids.len() as u32 * SCAN_XP_REWARD;
+        let mut level = 1;
+        let mut xp_next = 1_000;
+        while xp_next > 0 && total_xp >= xp_next {
+            total_xp -= xp_next;
+            level += 1;
+            xp_next += 2_500;
+        }
+
+        let profile = &mut self.save_data.profile;
+        let changed =
+            profile.level != level || profile.xp != total_xp || profile.xp_next != xp_next;
+        if changed {
+            profile.level = level;
+            profile.xp = total_xp;
+            profile.xp_next = xp_next;
+        }
+        changed
+    }
+
+    fn sync_scan_research_progress(&mut self) -> bool {
+        let mut progress = std::collections::BTreeMap::<&'static str, u32>::new();
+        for codex_id in &self.scanned_codex_ids {
+            let meter_id = rewards::research_meter_for_codex(codex_id);
+            *progress.entry(meter_id).or_default() += RESEARCH_PROGRESS_PER_SCAN;
+        }
+
+        let mut changed = false;
+        for meter in &mut self.save_data.profile.research {
+            let next_value = progress
+                .get(meter.id.as_str())
+                .copied()
+                .unwrap_or(0)
+                .min(meter.max);
+            if meter.value != next_value {
+                meter.value = next_value;
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    fn sync_profile_attribute_scores(&mut self) -> bool {
+        let health = self.profile_meter_ratio("health");
+        let stamina = self.profile_meter_ratio("stamina");
+        let suit = self.profile_meter_ratio("suit");
+        let load = self.profile_meter_ratio("load");
+        let oxygen = self.profile_meter_ratio("oxygen");
+        let radiation = self.profile_meter_ratio("radiation");
+        let spores = self.profile_meter_ratio("spores");
+        let research = average_meter_ratio(&self.save_data.profile.research);
+        let scanned = progress_ratio(
+            self.scanned_codex_ids.len(),
+            self.codex_database.entries().len(),
+        );
+        let collected = self.save_data.world.collected_entities.len();
+        let carried_find_count = inventory_discovery_count(&self.save_data.inventory);
+        let harvesting = capped_count_ratio(collected + carried_find_count, 20);
+
+        let derived = [
+            (
+                "survival",
+                score_from_ratio(average_slice(&[health, suit, oxygen, radiation, spores])),
+            ),
+            (
+                "mobility",
+                score_from_ratio(
+                    (stamina * 0.70 + (1.0 - load).clamp(0.0, 1.0) * 0.30).clamp(0.0, 1.0),
+                ),
+            ),
+            ("scanning", score_from_ratio(scanned)),
+            ("harvesting", score_from_ratio(harvesting)),
+            ("analysis", score_from_ratio(research)),
+        ];
+
+        let mut changed = false;
+        for (id, value) in derived {
+            changed |= self.save_data.profile.set_score_value(id, value);
+        }
+        changed
     }
 
     fn set_profile_meter_value(&mut self, id: &str, value: u32) -> bool {
@@ -1562,16 +1654,70 @@ fn zone_progress_key(map_path: &str, zone_id: &str) -> String {
     format!("{map_path}::{zone_id}")
 }
 
-fn bump_meter(meters: &mut [MeterSave], id: &str, amount: u32) {
-    if let Some(meter) = meters.iter_mut().find(|meter| meter.id == id) {
-        meter.value = (meter.value + amount).min(meter.max);
-    }
-}
-
 fn new_save_data_for_language(language: Language) -> SaveData {
     let mut save_data = SaveData::default();
     save_data.settings.language = language.save_key().to_owned();
     save_data
+}
+
+fn average_meter_ratio(meters: &[MeterSave]) -> f32 {
+    if meters.is_empty() {
+        return 0.0;
+    }
+
+    let total = meters
+        .iter()
+        .map(|meter| {
+            if meter.max == 0 {
+                0.0
+            } else {
+                meter.value as f32 / meter.max as f32
+            }
+        })
+        .sum::<f32>();
+    (total / meters.len() as f32).clamp(0.0, 1.0)
+}
+
+fn average_slice(values: &[f32]) -> f32 {
+    if values.is_empty() {
+        return 0.0;
+    }
+
+    (values.iter().copied().sum::<f32>() / values.len() as f32).clamp(0.0, 1.0)
+}
+
+fn progress_ratio(current: usize, total: usize) -> f32 {
+    if total == 0 {
+        return 0.0;
+    }
+
+    (current as f32 / total as f32).clamp(0.0, 1.0)
+}
+
+fn capped_count_ratio(current: usize, cap: usize) -> f32 {
+    if cap == 0 {
+        return 0.0;
+    }
+
+    (current as f32 / cap as f32).clamp(0.0, 1.0)
+}
+
+fn score_from_ratio(ratio: f32) -> u32 {
+    let ratio = ratio.clamp(0.0, 1.0);
+    if ratio <= f32::EPSILON {
+        0
+    } else {
+        ((ratio * 10.0).round() as u32).max(1)
+    }
+}
+
+fn inventory_discovery_count(inventory: &InventorySave) -> usize {
+    inventory
+        .slots
+        .iter()
+        .flatten()
+        .filter(|stack| !stack.locked && stack.quantity > 0)
+        .count()
 }
 
 fn weather_key_for_time(field_time_minutes: u32) -> &'static str {
@@ -1587,6 +1733,25 @@ fn weather_key_for_time(field_time_minutes: u32) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use content::CodexEntry;
+
+    fn codex_database_with_entries(ids: &[&str]) -> CodexDatabase {
+        let mut database = CodexDatabase::new("Test");
+        database.entries = ids
+            .iter()
+            .map(|id| CodexEntry {
+                id: (*id).to_owned(),
+                category: "Test".to_owned(),
+                title: (*id).to_owned(),
+                description: String::new(),
+                scan_time: Some(1.25),
+                unlock_tags: Vec::new(),
+                image: None,
+            })
+            .collect();
+        database.reindex();
+        database
+    }
 
     #[test]
     fn completing_codex_scan_awards_profile_progress_once() {
@@ -1612,6 +1777,47 @@ mod tests {
             starting_bio + 6
         );
         assert!(ctx.scanned_codex_ids.contains("codex.flora.glowfungus"));
+    }
+
+    #[test]
+    fn derived_profile_state_uses_real_progress_sources() {
+        let database =
+            codex_database_with_entries(&["codex.flora.glowfungus", "codex.ruin.terminal"]);
+        let mut ctx = GameContext::from_save(PathBuf::new(), SaveData::default(), database);
+
+        ctx.scanned_codex_ids
+            .insert("codex.flora.glowfungus".to_owned());
+        ctx.save_data
+            .world
+            .collected_entities
+            .insert("assets/data/maps/a.ron::pickup_001".to_owned());
+        ctx.sync_derived_profile_state();
+
+        assert_eq!(ctx.save_data.profile.level, 1);
+        assert_eq!(ctx.save_data.profile.xp, SCAN_XP_REWARD);
+        assert_eq!(
+            ctx.save_data.profile.meter("bio").map(|meter| meter.value),
+            Some(RESEARCH_PROGRESS_PER_SCAN)
+        );
+        assert_eq!(
+            ctx.save_data
+                .profile
+                .score("scanning")
+                .map(|score| score.value),
+            Some(5)
+        );
+        assert!(
+            ctx.save_data
+                .profile
+                .score("harvesting")
+                .is_some_and(|score| score.value > 0)
+        );
+        assert!(
+            ctx.save_data
+                .profile
+                .score("analysis")
+                .is_some_and(|score| score.value > 0)
+        );
     }
 
     #[test]

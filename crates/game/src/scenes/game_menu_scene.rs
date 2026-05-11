@@ -205,6 +205,7 @@ pub struct GameMenuScene {
     codex_snapshot: CodexMenuSnapshot,
     profile_snapshot: PlayerProfileSave,
     inventory_snapshot: InventorySave,
+    collection_snapshot: usize,
     objective_snapshot: Vec<ObjectiveMenuRow>,
     activity_log_snapshot: Vec<ActivityLogEntrySave>,
     text: GameMenuText,
@@ -222,6 +223,7 @@ impl GameMenuScene {
             codex_snapshot: CodexMenuSnapshot::from_context(ctx),
             profile_snapshot: ctx.save_data.profile.clone(),
             inventory_snapshot: ctx.save_data.inventory.clone(),
+            collection_snapshot: ctx.save_data.world.collected_entities.len(),
             objective_snapshot: ctx.objective_menu_rows(),
             activity_log_snapshot: ctx.save_data.activity_log.entries.clone(),
             text: GameMenuText::default(),
@@ -259,12 +261,16 @@ impl GameMenuScene {
         self.text = GameMenuText::default();
     }
 
-    fn sync_save_snapshot(&mut self, ctx: &GameContext) {
+    fn sync_save_snapshot(&mut self, ctx: &mut GameContext) {
+        ctx.sync_derived_profile_state();
         let activity_log_changed = self.activity_log_snapshot != ctx.save_data.activity_log.entries;
+        let collection_changed =
+            self.collection_snapshot != ctx.save_data.world.collected_entities.len();
         let objective_rows = ctx.objective_menu_rows();
         let objective_changed = self.objective_snapshot != objective_rows;
         if self.profile_snapshot == ctx.save_data.profile
             && self.inventory_snapshot == ctx.save_data.inventory
+            && !collection_changed
             && !objective_changed
             && !activity_log_changed
         {
@@ -273,6 +279,7 @@ impl GameMenuScene {
 
         self.profile_snapshot = ctx.save_data.profile.clone();
         self.inventory_snapshot = ctx.save_data.inventory.clone();
+        self.collection_snapshot = ctx.save_data.world.collected_entities.len();
         self.objective_snapshot = objective_rows;
         self.activity_log_snapshot = ctx.save_data.activity_log.entries.clone();
         self.selected_inventory_slot = self.selected_inventory_slot.min(
@@ -331,6 +338,22 @@ impl GameMenuScene {
             remaining: MENU_TOAST_VISIBLE_TIME,
         });
         self.text = GameMenuText::default();
+    }
+
+    fn activity_collection_count(&self) -> usize {
+        let carried_find_count = self
+            .inventory_snapshot
+            .slots
+            .iter()
+            .flatten()
+            .filter(|stack| !stack.locked && stack.quantity > 0)
+            .count();
+        self.activity_log_snapshot
+            .iter()
+            .filter(|entry| entry.category == "pickup")
+            .count()
+            .max(self.collection_snapshot)
+            .max(carried_find_count)
     }
 
     fn update_toast(&mut self, dt: f32) {
@@ -1985,14 +2008,18 @@ impl GameMenuScene {
             renderer,
             font,
             "game_menu_top_crystals",
-            "12,450",
+            &self.activity_collection_count().to_string(),
             20.0,
         )?);
         self.text.top_credits = Some(upload_text(
             renderer,
             font,
             "game_menu_top_credits",
-            "3,780",
+            &format!(
+                "{} / {}",
+                self.codex_snapshot.unlocked_count(),
+                self.codex_snapshot.entries.len()
+            ),
             20.0,
         )?);
         self.text.nav_labels = GameMenuTab::ALL
