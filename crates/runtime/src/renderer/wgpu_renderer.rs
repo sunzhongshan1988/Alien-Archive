@@ -1,11 +1,10 @@
-use std::{collections::HashMap, path::Path};
+use std::{collections::HashMap, path::Path, sync::mpsc};
 
 use anyhow::{Context, Result, bail};
 use bytemuck::{Pod, Zeroable};
-use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
 
-use crate::{Camera2d, Color, Rect, RenderStats, Renderer, Vec2};
+use crate::{Camera2d, Color, GpuInfo, Rect, RenderStats, Renderer, Vec2};
 
 const RECT_SHADER: &str = r#"
 struct VertexInput {
@@ -62,6 +61,12 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     return textureSample(source_texture, source_sampler, input.uv) * input.tint;
 }
 "#;
+
+const INITIAL_VERTEX_BUFFER_BYTES: wgpu::BufferAddress = 64 * 1024;
+const TIMESTAMP_QUERY_COUNT: u32 = 2;
+const TIMESTAMP_QUERY_BUFFER_BYTES: wgpu::BufferAddress = TIMESTAMP_QUERY_COUNT
+    as wgpu::BufferAddress
+    * std::mem::size_of::<u64>() as wgpu::BufferAddress;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -150,12 +155,12 @@ enum RenderCommand {
 
 enum PreparedCommand {
     Rect {
-        buffer: wgpu::Buffer,
+        vertex_offset: wgpu::BufferAddress,
         vertex_count: u32,
     },
     Image {
         texture_id: String,
-        buffer: wgpu::Buffer,
+        vertex_offset: wgpu::BufferAddress,
         vertex_count: u32,
     },
 }
@@ -175,6 +180,138 @@ struct GpuTexture {
     size: Vec2,
 }
 
+struct DynamicVertexBuffer {
+    label: &'static str,
+    buffer: wgpu::Buffer,
+    capacity: wgpu::BufferAddress,
+}
+
+impl DynamicVertexBuffer {
+    fn new(device: &wgpu::Device, label: &'static str, capacity: wgpu::BufferAddress) -> Self {
+        let capacity = capacity.max(1);
+        Self {
+            label,
+            buffer: create_vertex_buffer(device, label, capacity),
+            capacity,
+        }
+    }
+
+    fn write<T>(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, vertices: &[T]) -> bool
+    where
+        T: Pod,
+    {
+        let bytes = bytemuck::cast_slice(vertices);
+        if bytes.is_empty() {
+            return false;
+        }
+
+        let required = bytes.len() as wgpu::BufferAddress;
+        if required > self.capacity {
+            self.capacity = required
+                .next_power_of_two()
+                .max(INITIAL_VERTEX_BUFFER_BYTES);
+            self.buffer = create_vertex_buffer(device, self.label, self.capacity);
+        }
+
+        queue.write_buffer(&self.buffer, 0, bytes);
+        true
+    }
+}
+
+struct GpuProfiler {
+    enabled: bool,
+    query_set: wgpu::QuerySet,
+    resolve_buffer: wgpu::Buffer,
+    readback_buffer: wgpu::Buffer,
+    pending_readback: Option<mpsc::Receiver<bool>>,
+    timestamp_period: f32,
+    last_frame_ms: Option<f32>,
+}
+
+impl GpuProfiler {
+    fn new(device: &wgpu::Device, timestamp_period: f32, enabled: bool) -> Self {
+        let query_set = device.create_query_set(&wgpu::QuerySetDescriptor {
+            label: Some("Frame Timestamp Query Set"),
+            ty: wgpu::QueryType::Timestamp,
+            count: TIMESTAMP_QUERY_COUNT,
+        });
+        let resolve_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Frame Timestamp Resolve Buffer"),
+            size: TIMESTAMP_QUERY_BUFFER_BYTES,
+            usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Frame Timestamp Readback Buffer"),
+            size: TIMESTAMP_QUERY_BUFFER_BYTES,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        Self {
+            enabled,
+            query_set,
+            resolve_buffer,
+            readback_buffer,
+            pending_readback: None,
+            timestamp_period,
+            last_frame_ms: None,
+        }
+    }
+
+    fn can_capture_frame(&self) -> bool {
+        self.enabled && self.pending_readback.is_none()
+    }
+
+    fn register_readback(&mut self, command_buffer: &wgpu::CommandBuffer) {
+        if !self.can_capture_frame() {
+            return;
+        }
+
+        let (sender, receiver) = mpsc::channel();
+        command_buffer.map_buffer_on_submit(
+            &self.readback_buffer,
+            wgpu::MapMode::Read,
+            ..,
+            move |result| {
+                let _ = sender.send(result.is_ok());
+            },
+        );
+        self.pending_readback = Some(receiver);
+    }
+
+    fn collect_pending_readback(&mut self) {
+        let Some(receiver) = self.pending_readback.as_ref() else {
+            return;
+        };
+
+        let readback_ready = match receiver.try_recv() {
+            Ok(success) => Some(success),
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => Some(false),
+        };
+
+        let Some(success) = readback_ready else {
+            return;
+        };
+
+        self.pending_readback = None;
+        if !success {
+            return;
+        }
+
+        {
+            let data = self.readback_buffer.slice(..).get_mapped_range();
+            let timestamps = bytemuck::cast_slice::<u8, u64>(&data);
+            if timestamps.len() >= 2 && timestamps[1] >= timestamps[0] {
+                let elapsed_ns = (timestamps[1] - timestamps[0]) as f32 * self.timestamp_period;
+                self.last_frame_ms = Some(elapsed_ns / 1_000_000.0);
+            }
+        }
+        self.readback_buffer.unmap();
+    }
+}
+
 pub struct WgpuRenderer {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -188,6 +325,10 @@ pub struct WgpuRenderer {
     clear_color: Color,
     commands: Vec<RenderCommand>,
     textures: HashMap<String, GpuTexture>,
+    rect_vertices: DynamicVertexBuffer,
+    image_vertices: DynamicVertexBuffer,
+    gpu_info: GpuInfo,
+    gpu_profiler: Option<GpuProfiler>,
     last_frame_stats: RenderStats,
 }
 
@@ -213,17 +354,60 @@ impl WgpuRenderer {
             })
             .await
             .context("no compatible GPU adapter found")?;
+        let adapter_info = adapter.get_info();
+        let supported_features = adapter.features();
+        let timestamp_query_available =
+            supported_features.contains(wgpu::Features::TIMESTAMP_QUERY);
+        let required_features = if timestamp_query_available {
+            wgpu::Features::TIMESTAMP_QUERY
+        } else {
+            wgpu::Features::empty()
+        };
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("Alien Archive Device"),
-                required_features: wgpu::Features::empty(),
+                required_features,
                 required_limits: wgpu::Limits::downlevel_webgl2_defaults()
                     .using_resolution(adapter.limits()),
                 ..Default::default()
             })
             .await
             .context("failed to create GPU device")?;
+        let device_limits = device.limits();
+        let gpu_info = GpuInfo {
+            name: adapter_info.name,
+            backend: format!("{:?}", adapter_info.backend),
+            device_type: format!("{:?}", adapter_info.device_type),
+            driver: adapter_info.driver,
+            driver_info: adapter_info.driver_info,
+            enabled_features: feature_summary(required_features),
+            supported_features: feature_summary(supported_features),
+            max_texture_dimension_2d: device_limits.max_texture_dimension_2d,
+            max_bind_groups: device_limits.max_bind_groups,
+            timestamp_query: timestamp_query_available,
+        };
+        eprintln!(
+            "Alien Archive GPU: {} backend={} type={} driver={} features={} limits=max_texture_2d:{} max_bind_groups:{}",
+            gpu_info.name,
+            gpu_info.backend,
+            gpu_info.device_type,
+            gpu_info.driver,
+            gpu_info.enabled_features,
+            gpu_info.max_texture_dimension_2d,
+            gpu_info.max_bind_groups
+        );
+        let timestamp_profiling_enabled =
+            std::env::var_os("ALIEN_ARCHIVE_GPU_TIMESTAMPS").is_some();
+        let gpu_profiler = if timestamp_query_available {
+            Some(GpuProfiler::new(
+                &device,
+                queue.get_timestamp_period(),
+                timestamp_profiling_enabled,
+            ))
+        } else {
+            None
+        };
 
         let surface_caps = surface.get_capabilities(&adapter);
         let format = surface_caps
@@ -344,6 +528,17 @@ impl WgpuRenderer {
             cache: None,
         });
 
+        let rect_vertices = DynamicVertexBuffer::new(
+            &device,
+            "Shared Rectangle Vertex Buffer",
+            INITIAL_VERTEX_BUFFER_BYTES,
+        );
+        let image_vertices = DynamicVertexBuffer::new(
+            &device,
+            "Shared Image Vertex Buffer",
+            INITIAL_VERTEX_BUFFER_BYTES,
+        );
+
         Ok(Self {
             surface,
             device,
@@ -357,6 +552,10 @@ impl WgpuRenderer {
             clear_color: Color::rgb(0.015, 0.019, 0.035),
             commands: Vec::with_capacity(256),
             textures: HashMap::new(),
+            rect_vertices,
+            image_vertices,
+            gpu_info,
+            gpu_profiler,
             last_frame_stats: RenderStats::default(),
         })
     }
@@ -378,6 +577,8 @@ impl WgpuRenderer {
     }
 
     pub fn finish_frame(&mut self) -> Result<()> {
+        self.collect_gpu_profile();
+
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
@@ -401,6 +602,17 @@ impl WgpuRenderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
             });
+        let capture_timestamps = self
+            .gpu_profiler
+            .as_ref()
+            .is_some_and(GpuProfiler::can_capture_frame);
+        let timestamp_writes = self.gpu_profiler.as_ref().and_then(|profiler| {
+            capture_timestamps.then_some(wgpu::RenderPassTimestampWrites {
+                query_set: &profiler.query_set,
+                beginning_of_pass_write_index: Some(0),
+                end_of_pass_write_index: Some(1),
+            })
+        });
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -416,23 +628,26 @@ impl WgpuRenderer {
                 })],
                 depth_stencil_attachment: None,
                 occlusion_query_set: None,
-                timestamp_writes: None,
+                timestamp_writes,
                 multiview_mask: None,
             });
 
             for command in &prepared_commands {
                 match command {
                     PreparedCommand::Rect {
-                        buffer,
+                        vertex_offset,
                         vertex_count,
                     } => {
                         pass.set_pipeline(&self.rect_pipeline);
-                        pass.set_vertex_buffer(0, buffer.slice(..));
+                        pass.set_vertex_buffer(
+                            0,
+                            self.rect_vertices.buffer.slice(*vertex_offset..),
+                        );
                         pass.draw(0..*vertex_count, 0..1);
                     }
                     PreparedCommand::Image {
                         texture_id,
-                        buffer,
+                        vertex_offset,
                         vertex_count,
                     } => {
                         let Some(texture) = self.textures.get(texture_id) else {
@@ -441,14 +656,39 @@ impl WgpuRenderer {
 
                         pass.set_pipeline(&self.image_pipeline);
                         pass.set_bind_group(0, &texture.bind_group, &[]);
-                        pass.set_vertex_buffer(0, buffer.slice(..));
+                        pass.set_vertex_buffer(
+                            0,
+                            self.image_vertices.buffer.slice(*vertex_offset..),
+                        );
                         pass.draw(0..*vertex_count, 0..1);
                     }
                 }
             }
         }
 
-        self.queue.submit(std::iter::once(encoder.finish()));
+        if capture_timestamps && let Some(profiler) = &self.gpu_profiler {
+            encoder.resolve_query_set(
+                &profiler.query_set,
+                0..TIMESTAMP_QUERY_COUNT,
+                &profiler.resolve_buffer,
+                0,
+            );
+            encoder.copy_buffer_to_buffer(
+                &profiler.resolve_buffer,
+                0,
+                &profiler.readback_buffer,
+                0,
+                TIMESTAMP_QUERY_BUFFER_BYTES,
+            );
+        }
+
+        let command_buffer = encoder.finish();
+        if capture_timestamps && let Some(profiler) = &mut self.gpu_profiler {
+            profiler.register_readback(&command_buffer);
+        }
+
+        self.queue.submit(std::iter::once(command_buffer));
+        self.collect_gpu_profile();
         frame.present();
 
         Ok(())
@@ -457,9 +697,16 @@ impl WgpuRenderer {
     fn prepare_commands(&mut self) -> Vec<PreparedCommand> {
         let mut prepared = Vec::with_capacity(self.commands.len());
         let mut pending: Option<PendingBatch> = None;
+        let mut rect_upload = Vec::<RectVertex>::new();
+        let mut image_upload = Vec::<ImageVertex>::new();
         let mut stats = RenderStats {
             queued_commands: self.commands.len(),
             loaded_textures: self.textures.len(),
+            gpu_info: self.gpu_info.clone(),
+            gpu_frame_ms: self
+                .gpu_profiler
+                .as_ref()
+                .and_then(|profiler| profiler.last_frame_ms),
             ..RenderStats::default()
         };
 
@@ -473,7 +720,13 @@ impl WgpuRenderer {
                             batch_vertices.extend_from_slice(&vertices);
                         }
                         _ => {
-                            self.flush_pending_batch(&mut pending, &mut prepared, &mut stats);
+                            Self::flush_pending_batch(
+                                &mut pending,
+                                &mut prepared,
+                                &mut rect_upload,
+                                &mut image_upload,
+                                &mut stats,
+                            );
                             pending = Some(PendingBatch::Rect(vertices.to_vec()));
                         }
                     }
@@ -502,7 +755,13 @@ impl WgpuRenderer {
                             batch_vertices.extend_from_slice(&vertices);
                         }
                         _ => {
-                            self.flush_pending_batch(&mut pending, &mut prepared, &mut stats);
+                            Self::flush_pending_batch(
+                                &mut pending,
+                                &mut prepared,
+                                &mut rect_upload,
+                                &mut image_upload,
+                                &mut stats,
+                            );
                             pending = Some(PendingBatch::Image {
                                 texture_id: command.texture_id.clone(),
                                 vertices: vertices.to_vec(),
@@ -513,17 +772,38 @@ impl WgpuRenderer {
             }
         }
 
-        self.flush_pending_batch(&mut pending, &mut prepared, &mut stats);
+        Self::flush_pending_batch(
+            &mut pending,
+            &mut prepared,
+            &mut rect_upload,
+            &mut image_upload,
+            &mut stats,
+        );
         stats.draw_calls = prepared.len();
+        self.upload_frame_vertices(&rect_upload, &image_upload, &mut stats);
         self.last_frame_stats = stats;
 
         prepared
     }
 
+    fn collect_gpu_profile(&mut self) {
+        let Some(profiler) = &mut self.gpu_profiler else {
+            return;
+        };
+        if !profiler.enabled {
+            return;
+        }
+
+        let _ = self.device.poll(wgpu::PollType::Poll);
+        profiler.collect_pending_readback();
+        self.last_frame_stats.gpu_frame_ms = profiler.last_frame_ms;
+    }
+
     fn flush_pending_batch(
-        &self,
         pending: &mut Option<PendingBatch>,
         prepared: &mut Vec<PreparedCommand>,
+        rect_upload: &mut Vec<RectVertex>,
+        image_upload: &mut Vec<ImageVertex>,
         stats: &mut RenderStats,
     ) {
         let Some(batch) = pending.take() else {
@@ -535,11 +815,13 @@ impl WgpuRenderer {
                 if vertices.is_empty() {
                     return;
                 }
+                let vertex_offset = byte_len(rect_upload);
+                let vertex_count = vertices.len() as u32;
+                rect_upload.extend_from_slice(&vertices);
                 stats.rect_batches += 1;
-                stats.vertex_buffers += 1;
                 prepared.push(PreparedCommand::Rect {
-                    buffer: self.create_vertex_buffer("Rectangle Vertex Buffer", &vertices),
-                    vertex_count: vertices.len() as u32,
+                    vertex_offset,
+                    vertex_count,
                 });
             }
             PendingBatch::Image {
@@ -549,27 +831,37 @@ impl WgpuRenderer {
                 if vertices.is_empty() {
                     return;
                 }
+                let vertex_offset = byte_len(image_upload);
+                let vertex_count = vertices.len() as u32;
+                image_upload.extend_from_slice(&vertices);
                 stats.image_batches += 1;
-                stats.vertex_buffers += 1;
                 prepared.push(PreparedCommand::Image {
                     texture_id,
-                    buffer: self.create_vertex_buffer("Image Vertex Buffer", &vertices),
-                    vertex_count: vertices.len() as u32,
+                    vertex_offset,
+                    vertex_count,
                 });
             }
         }
     }
 
-    fn create_vertex_buffer<T>(&self, label: &str, vertices: &[T]) -> wgpu::Buffer
-    where
-        T: Pod,
-    {
-        self.device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some(label),
-                contents: bytemuck::cast_slice(vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            })
+    fn upload_frame_vertices(
+        &mut self,
+        rect_vertices: &[RectVertex],
+        image_vertices: &[ImageVertex],
+        stats: &mut RenderStats,
+    ) {
+        if self
+            .rect_vertices
+            .write(&self.device, &self.queue, rect_vertices)
+        {
+            stats.vertex_buffers += 1;
+        }
+        if self
+            .image_vertices
+            .write(&self.device, &self.queue, image_vertices)
+        {
+            stats.vertex_buffers += 1;
+        }
     }
 
     fn build_rect_vertices(&self, command: RectCommand) -> [RectVertex; 6] {
@@ -794,7 +1086,7 @@ impl Renderer for WgpuRenderer {
     }
 
     fn frame_stats(&self) -> RenderStats {
-        self.last_frame_stats
+        self.last_frame_stats.clone()
     }
 
     fn visible_world_rect(&self) -> Rect {
@@ -919,4 +1211,47 @@ fn transformed_rect_points(rect: Rect, rotation: i32) -> [Vec2; 4] {
             center.y + offset.x * sin + offset.y * cos,
         )
     })
+}
+
+fn create_vertex_buffer(
+    device: &wgpu::Device,
+    label: &'static str,
+    size: wgpu::BufferAddress,
+) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
+fn feature_summary(features: wgpu::Features) -> String {
+    let known_features = [
+        ("timestamp", wgpu::Features::TIMESTAMP_QUERY),
+        ("bc", wgpu::Features::TEXTURE_COMPRESSION_BC),
+        ("etc2", wgpu::Features::TEXTURE_COMPRESSION_ETC2),
+        ("astc", wgpu::Features::TEXTURE_COMPRESSION_ASTC),
+        ("f16", wgpu::Features::SHADER_F16),
+        ("texture_arrays", wgpu::Features::TEXTURE_BINDING_ARRAY),
+        (
+            "storage_arrays",
+            wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY,
+        ),
+        ("buffer_arrays", wgpu::Features::BUFFER_BINDING_ARRAY),
+    ];
+    let names = known_features
+        .iter()
+        .filter_map(|(name, feature)| features.contains(*feature).then_some(*name))
+        .collect::<Vec<_>>();
+
+    if names.is_empty() {
+        "-".to_owned()
+    } else {
+        names.join(",")
+    }
+}
+
+fn byte_len<T>(items: &[T]) -> wgpu::BufferAddress {
+    std::mem::size_of_val(items) as wgpu::BufferAddress
 }

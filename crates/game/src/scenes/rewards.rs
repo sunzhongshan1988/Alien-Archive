@@ -39,6 +39,20 @@ pub(super) fn pickup_reward_for_asset(asset_id: &str) -> Option<ItemReward> {
         "ow_pickup_ruin_key" => Some(ItemReward::locked("ruin_key", 1)),
         "ow_pickup_scrap_part" => Some(ItemReward::new("scrap_part", 3)),
         "ow_pickup_signal_chip" => Some(ItemReward::new("data_shard", 2)),
+        "ow_pickup_gen_ls_bio_sample_vial" => Some(ItemReward::new("bio_sample_vial", 1)),
+        "ow_pickup_gen_ls_crystal_sample_cluster" => {
+            Some(ItemReward::new("alien_crystal_sample", 2))
+        }
+        "ow_pickup_gen_ls_data_shard_cluster" => Some(ItemReward::new("data_shard", 2)),
+        "ow_pickup_gen_ls_energy_cell" => Some(ItemReward::new("energy_cell", 1)),
+        "ow_pickup_gen_ls_ruin_key_tablet" => Some(ItemReward::locked("ruin_key", 1)),
+        "ow_pickup_gen_ls_scrap_part_pile" => Some(ItemReward::new("scrap_part", 3)),
+        "ow_pickup_gen_ls_signal_chip_pad" => Some(ItemReward::new("data_shard", 2)),
+        "ow_pickup_exp2_data_shard_cluster" => Some(ItemReward::new("data_shard", 2)),
+        "ow_pickup_exp2_energy_cell_canister" => Some(ItemReward::new("energy_cell", 2)),
+        "ow_pickup_exp2_medical_injector_case" => Some(ItemReward::new("med_injector", 1)),
+        "ow_pickup_exp2_mineral_sample_container" => Some(ItemReward::new("metal_fragment", 2)),
+        "ow_pickup_exp2_signal_chip_pad" => Some(ItemReward::new("data_shard", 2)),
         _ => None,
     }
 }
@@ -78,6 +92,11 @@ pub(super) fn research_meter_for_codex(codex_id: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::{Path, PathBuf};
+
+    use content::{AssetDatabase, AssetKind};
+
+    use crate::scenes::inventory_scene::inventory_item_max_stack;
 
     #[test]
     fn pickup_assets_map_to_inventory_items() {
@@ -89,6 +108,51 @@ mod tests {
             pickup_reward_for_asset("ow_pickup_ruin_key"),
             Some(ItemReward::locked("ruin_key", 1))
         );
+        assert_eq!(
+            pickup_reward_for_asset("ow_pickup_gen_ls_energy_cell").map(|reward| reward.item_id),
+            Some("energy_cell")
+        );
+        assert_eq!(
+            pickup_reward_for_asset("ow_pickup_exp2_medical_injector_case")
+                .map(|reward| reward.item_id),
+            Some("med_injector")
+        );
+    }
+
+    #[test]
+    fn bundled_pickup_assets_have_real_inventory_rewards() {
+        let database =
+            AssetDatabase::load(&workspace_root().join("assets/data/assets/overworld_assets.ron"))
+                .expect("asset database should load");
+        let pickup_assets = database
+            .assets()
+            .iter()
+            .filter(|asset| {
+                asset.kind == AssetKind::Entity
+                    && (asset.category == "pickups" || asset.tags.iter().any(|tag| tag == "pickup"))
+            })
+            .collect::<Vec<_>>();
+
+        assert!(!pickup_assets.is_empty());
+        for asset in pickup_assets {
+            let reward = pickup_reward_for_asset(&asset.id)
+                .unwrap_or_else(|| panic!("pickup asset {} has no reward mapping", asset.id));
+            assert!(
+                inventory_item_max_stack(reward.item_id).is_some(),
+                "pickup asset {} maps to unknown item {}",
+                asset.id,
+                reward.item_id
+            );
+            assert!(reward.quantity > 0);
+        }
+    }
+
+    fn workspace_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(2)
+            .expect("game crate should live under workspace/crates/game")
+            .to_path_buf()
     }
 
     #[test]
