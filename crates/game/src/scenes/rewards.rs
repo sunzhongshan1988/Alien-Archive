@@ -32,7 +32,7 @@ mod tests {
     fn pickup_assets_map_to_inventory_items() {
         assert_eq!(
             pickup_reward_for_asset("ow_pickup_bio_sample").map(|reward| reward.item_id),
-            Some("bio_sample_vial")
+            Some("bio_sample_vial".to_owned())
         );
         assert_eq!(
             pickup_reward_for_asset("ow_pickup_ruin_key"),
@@ -40,12 +40,12 @@ mod tests {
         );
         assert_eq!(
             pickup_reward_for_asset("ow_pickup_gen_ls_energy_cell").map(|reward| reward.item_id),
-            Some("energy_cell")
+            Some("energy_cell".to_owned())
         );
         assert_eq!(
             pickup_reward_for_asset("ow_pickup_exp2_medical_injector_case")
                 .map(|reward| reward.item_id),
-            Some("med_injector")
+            Some("med_injector".to_owned())
         );
     }
 
@@ -68,7 +68,7 @@ mod tests {
             let reward = pickup_reward_for_asset(&asset.id)
                 .unwrap_or_else(|| panic!("pickup asset {} has no reward mapping", asset.id));
             assert!(
-                items::item_max_stack(reward.item_id).is_some(),
+                items::item_max_stack(&reward.item_id).is_some(),
                 "pickup asset {} maps to unknown item {}",
                 asset.id,
                 reward.item_id
@@ -91,7 +91,7 @@ mod tests {
         assert_eq!(research_meter_for_codex("codex.ruin.terminal"), "ruin");
         assert_eq!(
             scan_reward_for_codex("codex.interact.generator").map(|reward| reward.item_id),
-            Some("energy_cell")
+            Some("energy_cell".to_owned())
         );
     }
 }

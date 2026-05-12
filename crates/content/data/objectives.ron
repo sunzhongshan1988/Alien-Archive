@@ -1,0 +1,69 @@
+(
+    objectives: [
+        (
+            id: "secure_landing_site",
+            title: (english: "Secure Landing Site", chinese: "稳固着陆点"),
+            summary: (
+                english: "Confirm the first safe route out of the landing perimeter.",
+                chinese: "确认着陆点外围的第一条安全路线。",
+            ),
+            initial_status: "active",
+            checkpoints: [
+                (
+                    id: "landing_perimeter",
+                    title: (english: "Reach the landing perimeter", chinese: "抵达着陆点外围"),
+                    detail: (
+                        english: "A clean route has been marked for follow-up survey.",
+                        chinese: "已标记一条可继续调查的安全路线。",
+                    ),
+                ),
+                (
+                    id: "scan_first_signal",
+                    title: (english: "Record the first anomaly signal", chinese: "记录第一处异常信号"),
+                    detail: (
+                        english: "The archive has enough data to classify the first signal.",
+                        chinese: "档案已有足够数据对第一处信号归类。",
+                    ),
+                ),
+            ],
+        ),
+        (
+            id: "survey_crystal_field",
+            title: (english: "Survey Crystal Field", chinese: "调查晶体田"),
+            summary: (
+                english: "Build an initial survey record for the crystal field.",
+                chinese: "为晶体田建立第一份调查记录。",
+            ),
+            initial_status: "inactive",
+            checkpoints: [
+                (
+                    id: "enter_crystal_field",
+                    title: (english: "Enter the crystal field", chinese: "进入晶体田"),
+                    detail: (
+                        english: "The field boundary is confirmed and ready for sample work.",
+                        chinese: "晶体田边界已确认，可以开始样本工作。",
+                    ),
+                ),
+            ],
+        ),
+        (
+            id: "decode_ruin_signal",
+            title: (english: "Decode Ruin Signal", chinese: "解析遗迹信号"),
+            summary: (
+                english: "Find enough ruin data to identify the signal source.",
+                chinese: "收集足够遗迹资料以定位信号来源。",
+            ),
+            initial_status: "inactive",
+            checkpoints: [
+                (
+                    id: "find_ruin_terminal",
+                    title: (english: "Find a ruin terminal", chinese: "找到遗迹终端"),
+                    detail: (
+                        english: "The terminal can anchor the next decoding pass.",
+                        chinese: "该终端可作为下一轮解析的锚点。",
+                    ),
+                ),
+            ],
+        ),
+    ],
+)

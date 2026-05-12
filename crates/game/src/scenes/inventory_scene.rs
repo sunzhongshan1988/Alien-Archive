@@ -3,6 +3,7 @@ use std::{collections::HashMap, path::Path};
 use anyhow::{Context, Result};
 use content::items::{
     self, ItemCategory, ItemDef as ItemDefinition, ItemRarity as Rarity, LocalizedTextDef,
+    StaticLocalizedTextDef,
 };
 use runtime::{Button, Color, InputState, Rect, Renderer, SceneCommand, Vec2};
 use rusttype::Font;
@@ -473,7 +474,7 @@ impl InventoryScene {
                     rarity_glow_color(definition.rarity, if selected { 0.30 } else { 0.16 }),
                 );
                 renderer.draw_image(
-                    definition.texture_id,
+                    &definition.texture_id,
                     Rect::new(
                         Vec2::new(rect.origin.x + inset, rect.origin.y + inset),
                         Vec2::new(rect.size.x - inset * 2.0, rect.size.y - inset * 2.0),
@@ -573,12 +574,12 @@ impl InventoryScene {
             rarity_color(definition.rarity),
         );
         renderer.draw_image(
-            definition.texture_id,
+            &definition.texture_id,
             icon_rect,
             Color::rgba(1.0, 1.0, 1.0, if stack.locked { 0.78 } else { 1.0 }),
         );
 
-        let Some(detail) = self.text.item_details.get(definition.id) else {
+        let Some(detail) = self.text.item_details.get(definition.id.as_str()) else {
             return;
         };
 
@@ -800,15 +801,15 @@ impl InventoryScene {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        for definition in items::ITEM_DEFS {
+        for definition in items::item_defs() {
             self.text.item_details.insert(
-                definition.id,
+                definition.id.as_str(),
                 ItemDetailText {
                     name: upload_text(
                         renderer,
                         font,
                         &format!("inventory_text_name_{}", definition.id),
-                        localized_text(definition.name, language),
+                        localized_text(&definition.name, language),
                         match language {
                             Language::Chinese => 28.0,
                             Language::English => 26.0,
@@ -825,7 +826,10 @@ impl InventoryScene {
                         renderer,
                         font,
                         &format!("inventory_text_quantity_{}", definition.id),
-                        &quantity_text(language, quantity_for_item(&self.state, definition.id)),
+                        &quantity_text(
+                            language,
+                            quantity_for_item(&self.state, definition.id.as_str()),
+                        ),
                         18.0,
                     )?,
                     rarity: upload_text(
@@ -854,7 +858,7 @@ impl InventoryScene {
                         .slots
                         .iter()
                         .flatten()
-                        .find(|stack| stack.item_id == definition.id && stack.locked)
+                        .find(|stack| stack.item_id == definition.id.as_str() && stack.locked)
                         .map(|_| {
                             upload_text(
                                 renderer,
@@ -876,8 +880,12 @@ impl InventoryScene {
 impl InventoryState {
     fn new_mvp() -> Self {
         let mut slots = vec![None; BACKPACK_SLOTS];
-        for (index, stack) in items::DEFAULT_INVENTORY_STACKS.iter().enumerate() {
-            slots[index] = Some(ItemStack::new(stack.item_id, stack.quantity, stack.locked));
+        for (index, stack) in items::default_inventory_stacks().iter().enumerate() {
+            slots[index] = Some(ItemStack::new(
+                stack.item_id.as_str(),
+                stack.quantity,
+                stack.locked,
+            ));
         }
 
         Self {
@@ -900,7 +908,7 @@ impl InventoryState {
             };
 
             state.slots[index] = Some(ItemStack::new(
-                definition.id,
+                definition.id.as_str(),
                 saved_stack.quantity.clamp(1, definition.max_stack.max(1)),
                 saved_stack.locked,
             ));
@@ -1144,7 +1152,7 @@ impl InventoryLayout {
 
 fn default_quickbar_slots() -> [Option<usize>; QUICKBAR_SLOTS] {
     let mut slots = [None; QUICKBAR_SLOTS];
-    for (index, slot) in items::DEFAULT_QUICKBAR_SLOTS
+    for (index, slot) in items::default_quickbar_slots()
         .iter()
         .copied()
         .take(QUICKBAR_SLOTS)
@@ -1250,10 +1258,10 @@ fn item_definition(item_id: &str) -> Option<&'static ItemDefinition> {
 }
 
 pub(super) fn load_inventory_item_icons(renderer: &mut dyn Renderer) -> Result<()> {
-    for definition in items::ITEM_DEFS {
-        if renderer.texture_size(definition.texture_id).is_none() {
+    for definition in items::item_defs() {
+        if renderer.texture_size(&definition.texture_id).is_none() {
             renderer
-                .load_texture(definition.texture_id, Path::new(definition.icon_path))
+                .load_texture(&definition.texture_id, Path::new(&definition.icon_path))
                 .with_context(|| format!("failed to load inventory item {}", definition.id))?;
         }
     }
@@ -1287,14 +1295,14 @@ fn inventory_item_view(stack: &ItemStack) -> Option<InventoryItemView> {
     let definition = item_definition(stack.item_id)?;
 
     Some(InventoryItemView {
-        texture_id: definition.texture_id,
+        texture_id: definition.texture_id.as_str(),
         quantity: stack.quantity,
         max_stack: definition.max_stack,
         research: definition.research,
         locked: stack.locked,
         rarity_color: rarity_color(definition.rarity),
-        name_english: localized_text(definition.name, Language::English),
-        name_chinese: localized_text(definition.name, Language::Chinese),
+        name_english: localized_text(&definition.name, Language::English),
+        name_chinese: localized_text(&definition.name, Language::Chinese),
         category_english: category_label(definition.category, Language::English),
         category_chinese: category_label(definition.category, Language::Chinese),
         rarity_english: rarity_label(definition.rarity, Language::English),
@@ -1354,19 +1362,26 @@ fn locked_item_text(language: Language) -> &'static str {
     }
 }
 
-fn localized_text(text: LocalizedTextDef, language: Language) -> &'static str {
+fn localized_text(text: &LocalizedTextDef, language: Language) -> &str {
     match language {
-        Language::Chinese => text.chinese,
-        Language::English => text.english,
+        Language::Chinese => &text.chinese,
+        Language::English => &text.english,
     }
 }
 
 fn category_label(category: ItemCategory, language: Language) -> &'static str {
-    localized_text(category.label(), language)
+    static_localized_text(category.label(), language)
 }
 
 fn rarity_label(rarity: Rarity, language: Language) -> &'static str {
-    localized_text(rarity.label(), language)
+    static_localized_text(rarity.label(), language)
+}
+
+fn static_localized_text(text: StaticLocalizedTextDef, language: Language) -> &'static str {
+    match language {
+        Language::Chinese => text.chinese,
+        Language::English => text.english,
+    }
 }
 
 fn rarity_color(rarity: Rarity) -> Color {
@@ -1478,9 +1493,9 @@ mod tests {
             assert!(project_root.join(path).exists(), "{path} should exist");
         }
 
-        for definition in items::ITEM_DEFS {
+        for definition in items::item_defs() {
             assert!(
-                project_root.join(definition.icon_path).exists(),
+                project_root.join(&definition.icon_path).exists(),
                 "{} should exist",
                 definition.icon_path
             );
@@ -1505,9 +1520,12 @@ mod tests {
                 assert!(!rarity_label(rarity, language).is_empty());
             }
 
-            for definition in items::ITEM_DEFS {
-                assert!(!localized_text(definition.name, language).is_empty());
-                assert_eq!(inventory_item_weight(definition.id), definition.weight);
+            for definition in items::item_defs() {
+                assert!(!localized_text(&definition.name, language).is_empty());
+                assert_eq!(
+                    inventory_item_weight(definition.id.as_str()),
+                    definition.weight
+                );
             }
         }
     }

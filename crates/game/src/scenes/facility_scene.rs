@@ -97,7 +97,7 @@ impl FacilityScene {
             return true;
         }
 
-        let added = ctx.add_inventory_item(reward.item_id, reward.quantity, reward.locked);
+        let added = ctx.add_inventory_item(&reward.item_id, reward.quantity, reward.locked);
         if added == 0 {
             self.notice.push_inventory_full(ctx.language);
             ctx.log_inventory_full();
@@ -107,7 +107,8 @@ impl FacilityScene {
         ctx.collect_entity(&self.map_path, &entity.id);
         self.world
             .remove_entities_by_id(&ctx.collected_entity_ids_for_map(&self.map_path));
-        self.notice.push_pickup(ctx.language, reward.item_id, added);
+        self.notice
+            .push_pickup(ctx.language, &reward.item_id, added);
         true
     }
 

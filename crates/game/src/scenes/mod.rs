@@ -324,7 +324,7 @@ impl GameContext {
 
         self.apply_scan_profile_progress(codex_id);
         if let Some(reward) = rewards::scan_reward_for_codex(codex_id) {
-            self.add_inventory_item(reward.item_id, reward.quantity, reward.locked);
+            self.add_inventory_item(&reward.item_id, reward.quantity, reward.locked);
         }
         self.log_codex_scan(codex_id);
         self.request_save();
@@ -524,21 +524,22 @@ impl GameContext {
         let Some(effect) = items::consumable_effect(&item_id) else {
             return QuickItemUseResult::NotUsable { item_id };
         };
-        if self.profile_meter_value(effect.meter_id) >= self.profile_meter_max(effect.meter_id) {
+        let meter_id = effect.meter_id.as_str();
+        if self.profile_meter_value(meter_id) >= self.profile_meter_max(meter_id) {
             return QuickItemUseResult::AlreadyFull {
                 item_id,
-                meter_id: effect.meter_id.to_owned(),
+                meter_id: meter_id.to_owned(),
             };
         }
 
-        self.change_profile_meter(effect.meter_id, effect.amount as i32);
+        self.change_profile_meter(meter_id, effect.amount as i32);
         self.save_data.inventory.consume_slot(slot_index, 1);
         self.sync_inventory_load_meter();
-        self.log_item_used(&item_id, effect.meter_id, effect.amount);
+        self.log_item_used(&item_id, meter_id, effect.amount);
         self.request_save();
         QuickItemUseResult::Used {
             item_id,
-            meter_id: effect.meter_id,
+            meter_id,
             amount: effect.amount,
         }
     }

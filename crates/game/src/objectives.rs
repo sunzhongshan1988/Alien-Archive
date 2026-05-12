@@ -1,49 +1,17 @@
-use std::{collections::BTreeMap, fs, path::Path};
+#[cfg(test)]
+use std::path::Path;
 
-use anyhow::{Context, Result};
-use serde::Deserialize;
+#[cfg(test)]
+use anyhow::Result;
+use content::{ObjectiveDatabase as ObjectiveDefinitions, ObjectiveDefinition, ObjectiveText};
 
 use crate::save::{ObjectiveStateSave, ObjectivesSave};
 use crate::scenes::Language;
 use crate::ui::localization;
 
-pub const DEFAULT_OBJECTIVE_DB_PATH: &str = "assets/data/objectives/field_objectives.ron";
-
 #[derive(Clone, Debug)]
 pub struct ObjectiveDatabase {
-    objectives: Vec<ObjectiveDefinition>,
-    by_id: BTreeMap<String, usize>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(default)]
-struct ObjectiveDocument {
-    objectives: Vec<ObjectiveDefinition>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(default)]
-pub struct ObjectiveDefinition {
-    pub id: String,
-    pub title: ObjectiveText,
-    pub summary: ObjectiveText,
-    pub initial_status: String,
-    pub checkpoints: Vec<ObjectiveCheckpoint>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(default)]
-pub struct ObjectiveCheckpoint {
-    pub id: String,
-    pub title: ObjectiveText,
-    pub detail: ObjectiveText,
-}
-
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(default)]
-pub struct ObjectiveText {
-    pub english: String,
-    pub chinese: String,
+    definitions: ObjectiveDefinitions,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -72,31 +40,18 @@ enum ObjectiveStatus {
 
 impl Default for ObjectiveDatabase {
     fn default() -> Self {
-        Self::from_document(fallback_document())
+        Self::from_definitions(ObjectiveDefinitions::default())
     }
 }
 
 impl ObjectiveDatabase {
-    pub fn load(path: &Path) -> Result<Self> {
-        let source = fs::read_to_string(path)
-            .with_context(|| format!("failed to read objectives {}", path.display()))?;
-        let document: ObjectiveDocument = ron::from_str(&source)
-            .with_context(|| format!("failed to parse objectives {}", path.display()))?;
-        Ok(Self::from_document(document))
-    }
-
     pub fn load_default() -> Self {
-        match Self::load(Path::new(DEFAULT_OBJECTIVE_DB_PATH)) {
-            Ok(database) => database,
-            Err(error) => {
-                eprintln!("objective database load failed: {error:?}");
-                Self::default()
-            }
-        }
+        Self::from_definitions(ObjectiveDefinitions::load_default())
     }
 
     pub fn menu_rows(&self, save: &ObjectivesSave, language: Language) -> Vec<ObjectiveMenuRow> {
-        self.objectives
+        self.definitions
+            .objectives()
             .iter()
             .map(|objective| {
                 let state = save.states.get(&objective.id);
@@ -240,34 +195,31 @@ impl ObjectiveDatabase {
         })
     }
 
-    fn from_document(document: ObjectiveDocument) -> Self {
-        let objectives = document
-            .objectives
-            .into_iter()
-            .filter(|objective| !objective.id.trim().is_empty())
-            .map(|mut objective| {
-                objective.id = objective.id.trim().to_owned();
-                objective.initial_status =
-                    status_key(status_from_key(&objective.initial_status)).to_owned();
-                objective
-            })
-            .collect::<Vec<_>>();
-        let by_id = objectives
-            .iter()
-            .enumerate()
-            .map(|(index, objective)| (objective.id.clone(), index))
-            .collect();
-        Self { objectives, by_id }
+    fn from_definitions(definitions: ObjectiveDefinitions) -> Self {
+        Self { definitions }
     }
 
     fn objective(&self, id: &str) -> Option<&ObjectiveDefinition> {
-        self.by_id
-            .get(id.trim())
-            .and_then(|index| self.objectives.get(*index))
+        self.definitions.get(id)
     }
 }
 
-impl ObjectiveText {
+#[cfg(test)]
+impl ObjectiveDatabase {
+    fn load(path: &Path) -> Result<Self> {
+        ObjectiveDefinitions::load(path).map(Self::from_definitions)
+    }
+
+    fn from_ron(source: &str) -> Result<Self> {
+        ObjectiveDefinitions::from_ron(source).map(Self::from_definitions)
+    }
+}
+
+trait ObjectiveTextExt {
+    fn get(&self, language: Language, fallback: &str) -> String;
+}
+
+impl ObjectiveTextExt for ObjectiveText {
     fn get(&self, language: Language, fallback: &str) -> String {
         let value = match language {
             Language::Chinese => self.chinese.trim(),
@@ -363,91 +315,13 @@ fn status_key(status: ObjectiveStatus) -> &'static str {
     }
 }
 
-fn fallback_document() -> ObjectiveDocument {
-    ObjectiveDocument {
-        objectives: vec![
-            ObjectiveDefinition {
-                id: "secure_landing_site".to_owned(),
-                title: ObjectiveText {
-                    english: "Secure Landing Site".to_owned(),
-                    chinese: "稳固着陆点".to_owned(),
-                },
-                summary: ObjectiveText {
-                    english: "Confirm the first safe route out of the landing perimeter."
-                        .to_owned(),
-                    chinese: "确认着陆点外围的第一条安全路线。".to_owned(),
-                },
-                initial_status: "active".to_owned(),
-                checkpoints: vec![
-                    ObjectiveCheckpoint {
-                        id: "landing_perimeter".to_owned(),
-                        title: ObjectiveText {
-                            english: "Reach the landing perimeter".to_owned(),
-                            chinese: "抵达着陆点外围".to_owned(),
-                        },
-                        detail: ObjectiveText::default(),
-                    },
-                    ObjectiveCheckpoint {
-                        id: "scan_first_signal".to_owned(),
-                        title: ObjectiveText {
-                            english: "Record the first anomaly signal".to_owned(),
-                            chinese: "记录第一处异常信号".to_owned(),
-                        },
-                        detail: ObjectiveText::default(),
-                    },
-                ],
-            },
-            ObjectiveDefinition {
-                id: "survey_crystal_field".to_owned(),
-                title: ObjectiveText {
-                    english: "Survey Crystal Field".to_owned(),
-                    chinese: "调查晶体田".to_owned(),
-                },
-                summary: ObjectiveText {
-                    english: "Build an initial survey record for the crystal field.".to_owned(),
-                    chinese: "为晶体田建立第一份调查记录。".to_owned(),
-                },
-                initial_status: "inactive".to_owned(),
-                checkpoints: vec![ObjectiveCheckpoint {
-                    id: "enter_crystal_field".to_owned(),
-                    title: ObjectiveText {
-                        english: "Enter the crystal field".to_owned(),
-                        chinese: "进入晶体田".to_owned(),
-                    },
-                    detail: ObjectiveText::default(),
-                }],
-            },
-            ObjectiveDefinition {
-                id: "decode_ruin_signal".to_owned(),
-                title: ObjectiveText {
-                    english: "Decode Ruin Signal".to_owned(),
-                    chinese: "解析遗迹信号".to_owned(),
-                },
-                summary: ObjectiveText {
-                    english: "Find enough ruin data to identify the signal source.".to_owned(),
-                    chinese: "收集足够遗迹资料以定位信号来源。".to_owned(),
-                },
-                initial_status: "inactive".to_owned(),
-                checkpoints: vec![ObjectiveCheckpoint {
-                    id: "find_ruin_terminal".to_owned(),
-                    title: ObjectiveText {
-                        english: "Find a ruin terminal".to_owned(),
-                        chinese: "找到遗迹终端".to_owned(),
-                    },
-                    detail: ObjectiveText::default(),
-                }],
-            },
-        ],
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn parses_objective_document() {
-        let document: ObjectiveDocument = ron::from_str(
+        let database = ObjectiveDatabase::from_ron(
             r#"(
                 objectives: [
                     (
@@ -464,7 +338,6 @@ mod tests {
         )
         .expect("objective document should parse");
 
-        let database = ObjectiveDatabase::from_document(document);
         let rows = database.menu_rows(&ObjectivesSave::default(), Language::Chinese);
         assert_eq!(rows[0].title, "测试");
         assert_eq!(rows[0].progress, 0);
@@ -506,7 +379,7 @@ mod tests {
     fn bundled_objective_file_loads_when_present() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
-            .join(DEFAULT_OBJECTIVE_DB_PATH);
+            .join(content::DEFAULT_OBJECTIVE_DB_PATH);
         if path.exists() {
             let database = ObjectiveDatabase::load(&path).expect("objective file should load");
             assert!(

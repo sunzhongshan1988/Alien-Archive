@@ -2,6 +2,7 @@ mod assets;
 mod codex;
 pub mod items;
 mod map;
+mod objectives;
 pub mod semantics;
 mod validation;
 
@@ -14,6 +15,10 @@ pub use map::{
     HazardEffect, HazardRule, InstanceRect, LayerKind, MapDocument, MapLayers, ObjectInstance,
     ObjectiveRule, PromptRule, SpawnPoint, SurfaceGateRule, TileInstance, TransitionTarget,
     UnlockRule, WalkSurfaceKind, WalkSurfaceRule, ZoneInstance,
+};
+pub use objectives::{
+    DEFAULT_OBJECTIVE_DB_PATH, ObjectiveCheckpoint, ObjectiveDatabase, ObjectiveDefinition,
+    ObjectiveText,
 };
 pub use validation::{
     MapValidationIssue, MapValidationSeverity, validate_map, validate_map_with_codex,

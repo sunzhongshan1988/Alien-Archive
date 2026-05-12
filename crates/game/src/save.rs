@@ -348,9 +348,9 @@ impl InventorySave {
 impl Default for InventorySave {
     fn default() -> Self {
         let mut slots = vec![None; DEFAULT_INVENTORY_SLOTS];
-        for (index, stack) in items::DEFAULT_INVENTORY_STACKS.iter().enumerate() {
+        for (index, stack) in items::default_inventory_stacks().iter().enumerate() {
             slots[index] = Some(ItemStackSave::new(
-                stack.item_id,
+                stack.item_id.as_str(),
                 stack.quantity,
                 stack.locked,
             ));
@@ -358,7 +358,7 @@ impl Default for InventorySave {
 
         Self {
             slots,
-            quickbar: items::DEFAULT_QUICKBAR_SLOTS.to_vec(),
+            quickbar: items::default_quickbar_slots().to_vec(),
             selected_slot: 0,
             active_category: items::ItemCategory::Samples.key().to_owned(),
         }

@@ -5,13 +5,15 @@ use runtime::Rect;
 
 use crate::world::{MapHazardRule, MapObjectiveRule, MapPromptRule, MapZone, World};
 
-use super::{GameContext, Language, notice_system::NoticeState, profile_meter_label};
+use super::{
+    GameContext, Language, notice_system::NoticeState, profile_meter_label, zone_progress_key,
+};
 
 #[derive(Default)]
 pub(super) struct ZoneRuntimeState {
-    active_hazards: BTreeSet<String>,
-    active_prompts: BTreeSet<String>,
-    active_objectives: BTreeSet<String>,
+    hazards: ZoneActivationTracker,
+    prompts: ZoneActivationTracker,
+    objectives: ZoneActivationTracker,
 }
 
 impl ZoneRuntimeState {
@@ -24,122 +26,162 @@ impl ZoneRuntimeState {
         player_rect: Rect,
         dt: f32,
     ) {
-        let mut current_hazards = BTreeSet::new();
-        let mut current_prompts = BTreeSet::new();
-        let mut current_objectives = BTreeSet::new();
+        self.begin_frame();
+        {
+            let mut executor = ZoneRuleExecutor {
+                ctx,
+                notice,
+                map_path,
+                dt,
+            };
 
-        for zone in world.overlapping_zones(player_rect) {
-            match zone.zone_type.as_str() {
-                semantics::ZONE_HAZARD => {
-                    current_hazards.insert(zone_progress_key(map_path, &zone.id));
-                    self.update_hazard_zone(ctx, notice, map_path, zone, dt);
+            for zone in world.overlapping_zones(player_rect) {
+                match zone.zone_type.as_str() {
+                    semantics::ZONE_HAZARD => {
+                        if let Some(hazard) = effectful_hazard(zone) {
+                            let presence = self.hazards.track(map_path, &zone.id);
+                            executor.apply_hazard(zone, hazard, presence);
+                        }
+                    }
+                    semantics::ZONE_PROMPT => {
+                        if let Some(prompt) = zone.prompt.as_ref() {
+                            let presence = self.prompts.track(map_path, &zone.id);
+                            executor.apply_prompt(zone, prompt, presence);
+                        }
+                    }
+                    semantics::ZONE_OBJECTIVE | semantics::ZONE_CHECKPOINT => {
+                        if let Some(objective) = zone.objective.as_ref() {
+                            let presence = self.objectives.track(map_path, &zone.id);
+                            executor.apply_objective(zone, objective, presence);
+                        }
+                    }
+                    _ => {}
                 }
-                semantics::ZONE_PROMPT => {
-                    current_prompts.insert(zone_progress_key(map_path, &zone.id));
-                    self.update_prompt_zone(ctx, notice, map_path, zone);
-                }
-                semantics::ZONE_OBJECTIVE | semantics::ZONE_CHECKPOINT => {
-                    current_objectives.insert(zone_progress_key(map_path, &zone.id));
-                    self.update_objective_zone(ctx, notice, map_path, zone);
-                }
-                _ => {}
             }
         }
-
-        self.active_hazards
-            .retain(|key| current_hazards.contains(key));
-        self.active_prompts
-            .retain(|key| current_prompts.contains(key));
-        self.active_objectives
-            .retain(|key| current_objectives.contains(key));
+        self.finish_frame();
     }
 
-    fn update_hazard_zone(
-        &mut self,
-        ctx: &mut GameContext,
-        notice: &mut NoticeState,
-        map_path: &str,
-        zone: &MapZone,
-        dt: f32,
-    ) {
-        let Some(hazard) = zone.hazard.as_ref() else {
-            return;
-        };
+    fn begin_frame(&mut self) {
+        self.hazards.begin_frame();
+        self.prompts.begin_frame();
+        self.objectives.begin_frame();
+    }
 
-        if hazard.effects.is_empty() {
-            return;
+    fn finish_frame(&mut self) {
+        self.hazards.finish_frame();
+        self.prompts.finish_frame();
+        self.objectives.finish_frame();
+    }
+}
+
+#[derive(Default)]
+struct ZoneActivationTracker {
+    active: BTreeSet<String>,
+    current: BTreeSet<String>,
+}
+
+impl ZoneActivationTracker {
+    fn begin_frame(&mut self) {
+        self.current.clear();
+    }
+
+    fn track(&mut self, map_path: &str, zone_id: &str) -> ZonePresence {
+        let key = zone_progress_key(map_path, zone_id);
+        self.current.insert(key.clone());
+        if self.active.insert(key) {
+            ZonePresence::Entered
+        } else {
+            ZonePresence::Stayed
         }
+    }
 
-        let key = zone_progress_key(map_path, &zone.id);
-        let entered = self.active_hazards.insert(key);
-        if entered {
-            let message = hazard_message(ctx.language, &zone.id, hazard);
-            notice.push_warning_message(message.clone());
-            ctx.log_zone_hazard(&zone.id, message);
+    fn finish_frame(&mut self) {
+        self.active.retain(|key| self.current.contains(key));
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ZonePresence {
+    Entered,
+    Stayed,
+}
+
+impl ZonePresence {
+    fn is_entered(self) -> bool {
+        self == Self::Entered
+    }
+}
+
+struct ZoneRuleExecutor<'a> {
+    ctx: &'a mut GameContext,
+    notice: &'a mut NoticeState,
+    map_path: &'a str,
+    dt: f32,
+}
+
+impl ZoneRuleExecutor<'_> {
+    fn apply_hazard(&mut self, zone: &MapZone, hazard: &MapHazardRule, presence: ZonePresence) {
+        if presence.is_entered() {
+            let message = hazard_message(self.ctx.language, &zone.id, hazard);
+            self.notice.push_warning_message(message.clone());
+            self.ctx.log_zone_hazard(&zone.id, message);
         }
 
         let mut changed = false;
         for effect in &hazard.effects {
-            changed |= ctx.apply_zone_meter_effect(&effect.meter_id, effect.rate_per_second, dt);
+            changed |=
+                self.ctx
+                    .apply_zone_meter_effect(&effect.meter_id, effect.rate_per_second, self.dt);
         }
         if changed {
-            ctx.update_zone_status_alerts();
+            self.ctx.update_zone_status_alerts();
         }
     }
 
-    fn update_prompt_zone(
+    fn apply_prompt(&mut self, zone: &MapZone, prompt: &MapPromptRule, presence: ZonePresence) {
+        if !presence.is_entered() || self.once_zone_already_triggered(zone, prompt.once) {
+            return;
+        }
+
+        let message = prompt_message(self.ctx.language, &zone.id, prompt);
+        self.notice.push_info_message(message.clone());
+        self.ctx.log_zone_prompt(prompt, &message);
+        self.mark_once_zone_triggered(zone, prompt.once);
+    }
+
+    fn apply_objective(
         &mut self,
-        ctx: &mut GameContext,
-        notice: &mut NoticeState,
-        map_path: &str,
         zone: &MapZone,
+        objective: &MapObjectiveRule,
+        presence: ZonePresence,
     ) {
-        let Some(prompt) = zone.prompt.as_ref() else {
-            return;
-        };
-
-        let key = zone_progress_key(map_path, &zone.id);
-        if !self.active_prompts.insert(key) {
-            return;
-        }
-        if prompt.once && ctx.is_zone_triggered(map_path, &zone.id) {
+        if !presence.is_entered() || self.once_zone_already_triggered(zone, objective.once) {
             return;
         }
 
-        let message = prompt_message(ctx.language, &zone.id, prompt);
-        notice.push_info_message(message.clone());
-        ctx.log_zone_prompt(prompt, &message);
-        if prompt.once {
-            ctx.mark_zone_triggered(map_path, &zone.id);
+        if let Some(event) = self.ctx.apply_objective_zone(objective) {
+            self.notice
+                .push_info_message(objective_message(objective, event.notice));
+            self.mark_once_zone_triggered(zone, objective.once);
         }
     }
 
-    fn update_objective_zone(
-        &mut self,
-        ctx: &mut GameContext,
-        notice: &mut NoticeState,
-        map_path: &str,
-        zone: &MapZone,
-    ) {
-        let Some(objective) = zone.objective.as_ref() else {
-            return;
-        };
+    fn once_zone_already_triggered(&self, zone: &MapZone, once: bool) -> bool {
+        once && self.ctx.is_zone_triggered(self.map_path, &zone.id)
+    }
 
-        let key = zone_progress_key(map_path, &zone.id);
-        if !self.active_objectives.insert(key) {
-            return;
-        }
-        if objective.once && ctx.is_zone_triggered(map_path, &zone.id) {
-            return;
-        }
-
-        if let Some(event) = ctx.apply_objective_zone(objective) {
-            notice.push_info_message(objective_message(objective, event.notice));
-            if objective.once {
-                ctx.mark_zone_triggered(map_path, &zone.id);
-            }
+    fn mark_once_zone_triggered(&mut self, zone: &MapZone, once: bool) {
+        if once {
+            self.ctx.mark_zone_triggered(self.map_path, &zone.id);
         }
     }
+}
+
+fn effectful_hazard(zone: &MapZone) -> Option<&MapHazardRule> {
+    zone.hazard
+        .as_ref()
+        .filter(|hazard| !hazard.effects.is_empty())
 }
 
 fn hazard_message(language: Language, _zone_id: &str, hazard: &MapHazardRule) -> String {
@@ -174,10 +216,6 @@ fn prompt_message(language: Language, zone_id: &str, prompt: &MapPromptRule) -> 
 
 fn objective_message(objective: &MapObjectiveRule, fallback: String) -> String {
     objective.message.clone().unwrap_or(fallback)
-}
-
-fn zone_progress_key(map_path: &str, zone_id: &str) -> String {
-    format!("{map_path}::{zone_id}")
 }
 
 #[cfg(test)]
@@ -219,6 +257,34 @@ mod tests {
         assert_eq!(
             zone_progress_key("assets/data/maps/a.ron", "zone_001"),
             "assets/data/maps/a.ron::zone_001"
+        );
+    }
+
+    #[test]
+    fn activation_tracker_reports_entry_until_zone_exits() {
+        let mut tracker = ZoneActivationTracker::default();
+
+        tracker.begin_frame();
+        assert_eq!(
+            tracker.track("assets/data/maps/a.ron", "hazard_001"),
+            ZonePresence::Entered
+        );
+        tracker.finish_frame();
+
+        tracker.begin_frame();
+        assert_eq!(
+            tracker.track("assets/data/maps/a.ron", "hazard_001"),
+            ZonePresence::Stayed
+        );
+        tracker.finish_frame();
+
+        tracker.begin_frame();
+        tracker.finish_frame();
+
+        tracker.begin_frame();
+        assert_eq!(
+            tracker.track("assets/data/maps/a.ron", "hazard_001"),
+            ZonePresence::Entered
         );
     }
 
