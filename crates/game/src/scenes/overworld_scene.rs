@@ -1,4 +1,5 @@
 use anyhow::Result;
+use content::semantics;
 use runtime::{Button, Camera2d, InputState, Renderer, SceneCommand, collision::rects_overlap};
 
 use crate::{
@@ -75,7 +76,7 @@ impl OverworldScene {
 
     fn overlapping_transition_zone(&self) -> Option<&MapZone> {
         self.world
-            .zones("MapTransition")
+            .zones(semantics::ZONE_MAP_TRANSITION)
             .find(|zone| rects_overlap(self.player.rect(), zone.bounds))
     }
 

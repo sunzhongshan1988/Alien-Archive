@@ -2844,8 +2844,6 @@ fn draw_transition_target_editor(
     map_path_options: &[String],
     changed: &mut bool,
 ) {
-    const SCENE_OPTIONS: &[&str] = &["Overworld", "Facility"];
-
     ui.separator();
     ui.horizontal(|ui| {
         ui.label(label);
@@ -2869,7 +2867,7 @@ fn draw_transition_target_editor(
     };
 
     let mut scene = target.scene.clone().unwrap_or_default();
-    let scene_options = SCENE_OPTIONS
+    let scene_options = content::semantics::FIELD_SCENE_KEYS
         .iter()
         .map(|value| (*value).to_owned())
         .collect::<Vec<_>>();

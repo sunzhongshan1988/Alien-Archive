@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use content::semantics;
 use runtime::Rect;
 
 use crate::world::{MapHazardRule, MapObjectiveRule, MapPromptRule, MapZone, World};
@@ -29,15 +30,15 @@ impl ZoneRuntimeState {
 
         for zone in world.overlapping_zones(player_rect) {
             match zone.zone_type.as_str() {
-                "HazardZone" => {
+                semantics::ZONE_HAZARD => {
                     current_hazards.insert(zone_progress_key(map_path, &zone.id));
                     self.update_hazard_zone(ctx, notice, map_path, zone, dt);
                 }
-                "PromptZone" => {
+                semantics::ZONE_PROMPT => {
                     current_prompts.insert(zone_progress_key(map_path, &zone.id));
                     self.update_prompt_zone(ctx, notice, map_path, zone);
                 }
-                "ObjectiveZone" | "Checkpoint" => {
+                semantics::ZONE_OBJECTIVE | semantics::ZONE_CHECKPOINT => {
                     current_objectives.insert(zone_progress_key(map_path, &zone.id));
                     self.update_objective_zone(ctx, notice, map_path, zone);
                 }

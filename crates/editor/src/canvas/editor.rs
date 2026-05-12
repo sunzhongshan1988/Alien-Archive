@@ -734,7 +734,8 @@ impl EditorApp {
                 None
             }
             LayerKind::Entities => {
-                let entity_type = entity_type.unwrap_or_else(|| "Decoration".to_owned());
+                let entity_type =
+                    entity_type.unwrap_or_else(|| content::semantics::ENTITY_DECORATION.to_owned());
                 self.document
                     .place_entity(&asset_id, &entity_type, place_pos[0], place_pos[1]);
                 None
@@ -1405,9 +1406,9 @@ impl EditorApp {
         self.push_undo_snapshot();
         let id = next_editor_zone_id("zone", &self.document.layers.zones);
         let zone_type = if self.zone_draft_points.len() == 2 {
-            "CollisionLine"
+            content::semantics::ZONE_COLLISION_LINE
         } else {
-            "Trigger"
+            content::semantics::ZONE_TRIGGER
         };
         self.document.layers.zones.push(content::ZoneInstance {
             id: id.clone(),
@@ -1428,7 +1429,7 @@ impl EditorApp {
             id,
         }));
         self.mark_dirty();
-        self.status = if zone_type == "CollisionLine" {
+        self.status = if zone_type == content::semantics::ZONE_COLLISION_LINE {
             "碰撞线已创建".to_owned()
         } else {
             "区域已创建".to_owned()
@@ -3632,7 +3633,7 @@ impl EditorApp {
             if points.len() < 2 {
                 continue;
             }
-            if matches!(zone.zone_type.as_str(), "CollisionLine" | "SurfaceGate") {
+            if content::semantics::zone_type_is_line_like(&zone.zone_type) {
                 for pair in points.windows(2) {
                     painter.line_segment([pair[0], pair[1]], Stroke::new(3.0, stroke_color));
                 }
@@ -3742,7 +3743,7 @@ impl EditorApp {
             max.y = max.y.max(point.y);
         }
         let rect = Rect::from_min_max(min, max);
-        if matches!(zone.zone_type.as_str(), "CollisionLine" | "SurfaceGate") {
+        if content::semantics::zone_type_is_line_like(&zone.zone_type) {
             Some(rect.expand(6.0))
         } else {
             Some(rect)
@@ -5394,7 +5395,7 @@ mod tests {
         content::EntityInstance {
             id: id.to_owned(),
             asset: asset.to_owned(),
-            entity_type: "Decoration".to_owned(),
+            entity_type: content::semantics::ENTITY_DECORATION.to_owned(),
             x: 1.0,
             y: 1.0,
             scale_x: 1.0,
@@ -5413,7 +5414,7 @@ mod tests {
     fn zone_instance(id: &str) -> content::ZoneInstance {
         content::ZoneInstance {
             id: id.to_owned(),
-            zone_type: "PromptZone".to_owned(),
+            zone_type: content::semantics::ZONE_PROMPT.to_owned(),
             points: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]],
             hazard: None,
             prompt: None,

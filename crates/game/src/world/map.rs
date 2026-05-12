@@ -12,7 +12,7 @@ use content::{
     ObjectiveRule as EditorObjectiveRule, PromptRule as EditorPromptRule,
     SurfaceGateRule as EditorSurfaceGateRule, TransitionTarget, UnlockRule,
     WalkSurfaceKind as EditorWalkSurfaceKind, WalkSurfaceRule as EditorWalkSurfaceRule,
-    ZoneInstance as EditorZoneInstance,
+    ZoneInstance as EditorZoneInstance, semantics,
 };
 use image::{RgbaImage, imageops};
 use runtime::{Color, Rect, Renderer, Vec2, collision::rects_overlap};
@@ -27,6 +27,8 @@ const COLLISION_LINE_SAMPLE_STEP_TILES: f32 = COLLISION_LINE_WIDTH_TILES * 0.5;
 const WALK_SURFACE_EDGE_TOLERANCE: f32 = 4.0;
 const WALK_SURFACE_GATE_SIDE_TOLERANCE_PIXELS: f32 = 0.25;
 const WALK_SURFACE_GATE_INTERSECTION_TOLERANCE_PIXELS: f32 = 0.25;
+const WORLD_SOFT_SPOT_TEXTURE_ID: &str = "__world_soft_spot";
+const WORLD_SOFT_SPOT_SIZE: u32 = 64;
 
 #[derive(Clone, Debug)]
 pub struct Map {
@@ -34,6 +36,8 @@ pub struct Map {
     ground_cache: Option<MapGroundCache>,
     sprites: Vec<MapSprite>,
     entities: Vec<MapEntity>,
+    decal_draw_order: Vec<usize>,
+    depth_draw_order: Vec<MapDepthDrawableIndex>,
     zones: Vec<MapZone>,
     surface_gates: Vec<MapSurfaceGate>,
     collision_rects: Vec<Rect>,
@@ -63,7 +67,11 @@ impl Map {
     }
 
     pub fn remove_entities_by_id(&mut self, ids: &std::collections::BTreeSet<String>) {
+        let entity_count = self.entities.len();
         self.entities.retain(|entity| !ids.contains(&entity.id));
+        if self.entities.len() != entity_count {
+            self.rebuild_draw_orders();
+        }
     }
 
     pub fn entity_by_id(&self, id: &str) -> Option<&MapEntity> {
@@ -74,8 +82,15 @@ impl Map {
         let visible = renderer.visible_world_rect();
         self.draw_ground(renderer, visible);
         self.draw_decals(renderer, visible);
+        self.draw_world_shadows(renderer, visible);
 
-        for drawable in self.sorted_depth_drawables(visible) {
+        for draw_index in &self.depth_draw_order {
+            let Some(drawable) = draw_index.resolve(self) else {
+                continue;
+            };
+            if !drawable.is_visible(visible) {
+                continue;
+            }
             drawable.draw(renderer);
         }
     }
@@ -181,11 +196,18 @@ impl Map {
         let visible = renderer.visible_world_rect();
         self.draw_ground(renderer, visible);
         self.draw_decals(renderer, visible);
+        self.draw_world_shadows(renderer, visible);
 
         let actor_key = DepthKey::new(actor_depth_y, actor_z_index);
         let mut draw_actor = Some(draw_actor);
 
-        for drawable in self.sorted_depth_drawables(visible) {
+        for draw_index in &self.depth_draw_order {
+            let Some(drawable) = draw_index.resolve(self) else {
+                continue;
+            };
+            if !drawable.is_visible(visible) {
+                continue;
+            }
             if draw_actor.is_some() && actor_key.cmp(&drawable.depth_key()) == Ordering::Less {
                 draw_actor.take().expect("actor draw should exist")(renderer);
             }
@@ -230,19 +252,12 @@ impl Map {
     }
 
     fn draw_decals(&self, renderer: &mut dyn Renderer, visible: Rect) {
-        let mut sprites = self
-            .sprites
+        for sprite in self
+            .decal_draw_order
             .iter()
-            .filter(|sprite| {
-                sprite.layer == MapSpriteLayer::Decal && rects_overlap(sprite.rect, visible)
-            })
-            .collect::<Vec<_>>();
-        sprites.sort_by(|left, right| {
-            left.z_index
-                .cmp(&right.z_index)
-                .then_with(|| left.rect.bottom().total_cmp(&right.rect.bottom()))
-        });
-        for sprite in sprites {
+            .filter_map(|index| self.sprites.get(*index))
+            .filter(|sprite| rects_overlap(sprite.rect, visible))
+        {
             draw_texture_region(
                 renderer,
                 &sprite.texture_id,
@@ -255,29 +270,40 @@ impl Map {
         }
     }
 
-    fn sorted_depth_drawables(&self, visible: Rect) -> Vec<DepthDrawable<'_>> {
-        let mut drawables = self
-            .sprites
-            .iter()
-            .filter(|sprite| {
-                sprite.layer == MapSpriteLayer::Object && rects_overlap(sprite.rect, visible)
-            })
-            .map(DepthDrawable::Sprite)
-            .chain(
-                self.entities
-                    .iter()
-                    .filter(|entity| {
-                        entity.kind != MapEntityKind::PlayerSpawn
-                            && rects_overlap(entity.sprite_rect, visible)
-                    })
-                    .map(DepthDrawable::Entity),
-            )
-            .collect::<Vec<_>>();
-        drawables.sort_by(|left, right| left.depth_key().cmp(&right.depth_key()));
-        drawables
+    fn draw_world_shadows(&self, renderer: &mut dyn Renderer, visible: Rect) {
+        if renderer.texture_size(WORLD_SOFT_SPOT_TEXTURE_ID).is_none() {
+            return;
+        }
+
+        for draw_index in &self.depth_draw_order {
+            let Some(drawable) = draw_index.resolve(self) else {
+                continue;
+            };
+            match drawable.shadow_rect() {
+                Some(rect) if rects_overlap(rect, visible) => {
+                    draw_world_shadow(renderer, rect, visible, drawable.shadow_alpha());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn rebuild_draw_orders(&mut self) {
+        self.decal_draw_order = sorted_decal_draw_order(&self.sprites);
+        self.depth_draw_order = sorted_depth_draw_order(&self.sprites, &self.entities);
     }
 
     pub fn load_assets(&self, renderer: &mut dyn Renderer) -> Result<()> {
+        if renderer.texture_size(WORLD_SOFT_SPOT_TEXTURE_ID).is_none() {
+            let rgba = soft_spot_rgba(WORLD_SOFT_SPOT_SIZE, WORLD_SOFT_SPOT_SIZE);
+            renderer.load_texture_rgba(
+                WORLD_SOFT_SPOT_TEXTURE_ID,
+                WORLD_SOFT_SPOT_SIZE,
+                WORLD_SOFT_SPOT_SIZE,
+                &rgba,
+            )?;
+        }
+
         if let Some(atlas) = &self.texture_atlas {
             if renderer.texture_size(&atlas.texture_id).is_none() {
                 renderer.load_texture_rgba(
@@ -590,10 +616,12 @@ impl Map {
             })
             .collect();
 
-        Ok(Self {
+        let mut map = Self {
             tiles,
             sprites: Vec::new(),
             entities,
+            decal_draw_order: Vec::new(),
+            depth_draw_order: Vec::new(),
             zones: Vec::new(),
             surface_gates: Vec::new(),
             collision_rects: Vec::new(),
@@ -602,7 +630,9 @@ impl Map {
             ground_cache: None,
             textures: HashMap::new(),
             texture_atlas: None,
-        })
+        };
+        map.rebuild_draw_orders();
+        Ok(map)
     }
 
     fn from_editor_file(file: EditorMapFile) -> Result<Self> {
@@ -610,7 +640,7 @@ impl Map {
             bail!("tile_size must be greater than zero");
         }
 
-        if file.mode != "Overworld" {
+        if file.mode != semantics::SCENE_OVERWORLD {
             bail!("expected Overworld map mode, got {}", file.mode);
         }
 
@@ -848,10 +878,12 @@ impl Map {
                 }),
         );
 
-        Ok(Self {
+        let mut map = Self {
             tiles,
             sprites,
             entities,
+            decal_draw_order: Vec::new(),
+            depth_draw_order: Vec::new(),
             zones,
             surface_gates,
             collision_rects,
@@ -860,7 +892,9 @@ impl Map {
             ground_cache,
             textures,
             texture_atlas,
-        })
+        };
+        map.rebuild_draw_orders();
+        Ok(map)
     }
 }
 
@@ -1226,33 +1260,132 @@ fn draw_texture_region(
     }
 }
 
+fn sorted_decal_draw_order(sprites: &[MapSprite]) -> Vec<usize> {
+    let mut order = sprites
+        .iter()
+        .enumerate()
+        .filter_map(|(index, sprite)| (sprite.layer == MapSpriteLayer::Decal).then_some(index))
+        .collect::<Vec<_>>();
+    order.sort_by(|left, right| {
+        let left = &sprites[*left];
+        let right = &sprites[*right];
+        left.z_index
+            .cmp(&right.z_index)
+            .then_with(|| left.rect.bottom().total_cmp(&right.rect.bottom()))
+    });
+    order
+}
+
+fn sorted_depth_draw_order(
+    sprites: &[MapSprite],
+    entities: &[MapEntity],
+) -> Vec<MapDepthDrawableIndex> {
+    let mut order = Vec::with_capacity(sprites.len() + entities.len());
+    order.extend(sprites.iter().enumerate().filter_map(|(index, sprite)| {
+        (sprite.layer == MapSpriteLayer::Object).then_some(MapDepthDrawableIndex::Sprite(index))
+    }));
+    order.extend(entities.iter().enumerate().filter_map(|(index, entity)| {
+        (entity.kind != MapEntityKind::PlayerSpawn).then_some(MapDepthDrawableIndex::Entity(index))
+    }));
+    order.sort_by(|left, right| {
+        depth_key_for_draw_index(*left, sprites, entities)
+            .cmp(&depth_key_for_draw_index(*right, sprites, entities))
+    });
+    order
+}
+
+fn depth_key_for_draw_index(
+    draw_index: MapDepthDrawableIndex,
+    sprites: &[MapSprite],
+    entities: &[MapEntity],
+) -> DepthKey {
+    match draw_index {
+        MapDepthDrawableIndex::Sprite(index) => {
+            let sprite = &sprites[index];
+            DepthKey::new(sprite.depth_y, sprite.z_index)
+        }
+        MapDepthDrawableIndex::Entity(index) => {
+            let entity = &entities[index];
+            DepthKey::new(entity.depth_y, entity.z_index)
+        }
+    }
+}
+
+fn draw_world_shadow(renderer: &mut dyn Renderer, rect: Rect, visible: Rect, alpha: f32) {
+    if rect.size.x <= 0.0 || rect.size.y <= 0.0 {
+        return;
+    }
+
+    let shadow = world_shadow_rect(rect);
+    if !rects_overlap(shadow, visible) {
+        return;
+    }
+
+    renderer.draw_image(
+        WORLD_SOFT_SPOT_TEXTURE_ID,
+        shadow,
+        Color::rgba(0.018, 0.016, 0.012, alpha),
+    );
+}
+
+fn world_shadow_rect(rect: Rect) -> Rect {
+    let visual_width = rect.size.x.max(rect.size.y * 0.55);
+    let width = (visual_width * 0.68).clamp(18.0, 160.0);
+    let height = (width * 0.26).clamp(5.0, 32.0);
+    Rect::new(
+        Vec2::new(
+            rect.origin.x + rect.size.x * 0.5 - width * 0.5,
+            rect.bottom() - height * 0.62,
+        ),
+        Vec2::new(width, height),
+    )
+}
+
+fn soft_spot_rgba(width: u32, height: u32) -> Vec<u8> {
+    let width = width.max(1);
+    let height = height.max(1);
+    let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+
+    for y in 0..height {
+        for x in 0..width {
+            let nx = ((x as f32 + 0.5) / width as f32) * 2.0 - 1.0;
+            let ny = ((y as f32 + 0.5) / height as f32) * 2.0 - 1.0;
+            let distance = (nx * nx + (ny * 1.38) * (ny * 1.38)).sqrt();
+            let alpha = (1.0 - distance).clamp(0.0, 1.0).powf(2.15);
+            rgba.extend_from_slice(&[255, 255, 255, (alpha * 255.0).round() as u8]);
+        }
+    }
+
+    rgba
+}
+
 fn debug_zone_colors(zone: &MapZone) -> (Color, Color) {
     match zone.zone_type.as_str() {
-        "CollisionArea" | "CollisionLine" => (
+        semantics::ZONE_COLLISION_AREA | semantics::ZONE_COLLISION_LINE => (
             Color::rgba(1.0, 0.02, 0.02, 0.06),
             Color::rgba(1.0, 0.10, 0.08, 0.62),
         ),
-        "MapTransition" => (
+        semantics::ZONE_MAP_TRANSITION => (
             Color::rgba(1.0, 0.62, 0.08, 0.08),
             Color::rgba(1.0, 0.72, 0.16, 0.76),
         ),
-        "WalkSurface" => (
+        semantics::ZONE_WALK_SURFACE => (
             Color::rgba(0.12, 1.0, 0.42, 0.06),
             Color::rgba(0.24, 1.0, 0.52, 0.66),
         ),
-        "SurfaceGate" => (
+        semantics::ZONE_SURFACE_GATE => (
             Color::rgba(1.0, 0.74, 0.12, 0.08),
             Color::rgba(1.0, 0.80, 0.18, 0.76),
         ),
-        "HazardZone" => (
+        semantics::ZONE_HAZARD => (
             Color::rgba(1.0, 0.10, 0.04, 0.08),
             Color::rgba(1.0, 0.18, 0.10, 0.78),
         ),
-        "PromptZone" => (
+        semantics::ZONE_PROMPT => (
             Color::rgba(0.14, 0.52, 1.0, 0.07),
             Color::rgba(0.24, 0.62, 1.0, 0.70),
         ),
-        "ObjectiveZone" | "Checkpoint" => (
+        semantics::ZONE_OBJECTIVE | semantics::ZONE_CHECKPOINT => (
             Color::rgba(0.16, 1.0, 0.84, 0.08),
             Color::rgba(0.36, 1.0, 0.88, 0.74),
         ),
@@ -1342,6 +1475,21 @@ enum MapSpriteLayer {
 }
 
 #[derive(Clone, Copy, Debug)]
+enum MapDepthDrawableIndex {
+    Sprite(usize),
+    Entity(usize),
+}
+
+impl MapDepthDrawableIndex {
+    fn resolve(self, map: &Map) -> Option<DepthDrawable<'_>> {
+        match self {
+            Self::Sprite(index) => map.sprites.get(index).map(DepthDrawable::Sprite),
+            Self::Entity(index) => map.entities.get(index).map(DepthDrawable::Entity),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 enum DepthDrawable<'a> {
     Sprite(&'a MapSprite),
     Entity(&'a MapEntity),
@@ -1352,6 +1500,29 @@ impl DepthDrawable<'_> {
         match self {
             Self::Sprite(sprite) => DepthKey::new(sprite.depth_y, sprite.z_index),
             Self::Entity(entity) => DepthKey::new(entity.depth_y, entity.z_index),
+        }
+    }
+
+    fn is_visible(self, visible: Rect) -> bool {
+        match self {
+            Self::Sprite(sprite) => rects_overlap(sprite.rect, visible),
+            Self::Entity(entity) => rects_overlap(entity.sprite_rect, visible),
+        }
+    }
+
+    fn shadow_rect(self) -> Option<Rect> {
+        match self {
+            Self::Sprite(sprite) => Some(sprite.rect),
+            Self::Entity(entity) => {
+                (entity.kind != MapEntityKind::PlayerSpawn).then_some(entity.sprite_rect)
+            }
+        }
+    }
+
+    fn shadow_alpha(self) -> f32 {
+        match self {
+            Self::Sprite(_) => 0.30,
+            Self::Entity(_) => 0.32,
         }
     }
 
@@ -1576,7 +1747,7 @@ impl MapSurfaceGate {
         gate: Option<EditorSurfaceGateRule>,
         points: &[Vec2],
     ) -> Option<Self> {
-        if zone_type != "SurfaceGate" {
+        if zone_type != semantics::ZONE_SURFACE_GATE {
             return None;
         }
         let gate = gate?;
@@ -1883,8 +2054,12 @@ fn collision_rects_from_zones(
 
     for zone in zones {
         let rects = match zone.zone_type.as_str() {
-            "CollisionArea" => collision_area_rects(zone, origin, tile_size, map_width, map_height),
-            "CollisionLine" => collision_line_rects(zone, origin, tile_size, map_width, map_height),
+            semantics::ZONE_COLLISION_AREA => {
+                collision_area_rects(zone, origin, tile_size, map_width, map_height)
+            }
+            semantics::ZONE_COLLISION_LINE => {
+                collision_line_rects(zone, origin, tile_size, map_width, map_height)
+            }
             _ => Vec::new(),
         };
         if rects.is_empty() {
@@ -2192,10 +2367,10 @@ fn vec2_length_squared(vector: Vec2) -> f32 {
 fn map_entity_kind(value: &str) -> MapEntityKind {
     match value {
         "PlayerSpawn" => MapEntityKind::PlayerSpawn,
-        "FacilityEntrance" | "Entrance" => MapEntityKind::FacilityEntrance,
-        "FacilityExit" | "Exit" => MapEntityKind::FacilityExit,
-        "ScanTarget" => MapEntityKind::ScanTarget,
-        "Door" => MapEntityKind::Door,
+        semantics::ENTITY_FACILITY_ENTRANCE | "Entrance" => MapEntityKind::FacilityEntrance,
+        semantics::ENTITY_FACILITY_EXIT | "Exit" => MapEntityKind::FacilityExit,
+        semantics::ENTITY_SCAN_TARGET => MapEntityKind::ScanTarget,
+        semantics::ENTITY_DOOR => MapEntityKind::Door,
         _ => MapEntityKind::Decoration,
     }
 }
@@ -2276,7 +2451,7 @@ mod tests {
 
     #[test]
     fn actor_is_depth_sorted_between_world_objects() {
-        let map = Map {
+        let map = map_with_draw_order(Map {
             tiles: Vec::new(),
             sprites: vec![
                 sprite("front", 50.0, 0, MapSpriteLayer::Object),
@@ -2284,6 +2459,8 @@ mod tests {
                 sprite("rear", 0.0, 0, MapSpriteLayer::Object),
             ],
             entities: Vec::new(),
+            decal_draw_order: Vec::new(),
+            depth_draw_order: Vec::new(),
             zones: Vec::new(),
             surface_gates: Vec::new(),
             collision_rects: Vec::new(),
@@ -2292,7 +2469,7 @@ mod tests {
             ground_cache: None,
             textures: HashMap::new(),
             texture_atlas: None,
-        };
+        });
         let mut renderer = RecordingRenderer::default();
 
         map.draw_with_actor(&mut renderer, 30.0, |renderer| {
@@ -2312,10 +2489,12 @@ mod tests {
         body.rect = Rect::new(Vec2::new(0.0, 0.0), Vec2::new(64.0, 100.0));
         body.depth_y = 60.0;
 
-        let map = Map {
+        let map = map_with_draw_order(Map {
             tiles: Vec::new(),
             sprites: vec![body],
             entities: Vec::new(),
+            decal_draw_order: Vec::new(),
+            depth_draw_order: Vec::new(),
             zones: Vec::new(),
             surface_gates: Vec::new(),
             collision_rects: Vec::new(),
@@ -2324,7 +2503,7 @@ mod tests {
             ground_cache: None,
             textures: HashMap::new(),
             texture_atlas: None,
-        };
+        });
         let mut renderer = RecordingRenderer::default();
 
         map.draw_with_actor(&mut renderer, 80.0, |renderer| {
@@ -2410,13 +2589,15 @@ mod tests {
 
     #[test]
     fn walk_surface_z_index_can_lift_actor_above_object_depth() {
-        let map = Map {
+        let map = map_with_draw_order(Map {
             tiles: Vec::new(),
             sprites: vec![
                 sprite("front", 50.0, 0, MapSpriteLayer::Object),
                 sprite("rear", 0.0, 0, MapSpriteLayer::Object),
             ],
             entities: Vec::new(),
+            decal_draw_order: Vec::new(),
+            depth_draw_order: Vec::new(),
             zones: Vec::new(),
             surface_gates: Vec::new(),
             collision_rects: Vec::new(),
@@ -2425,7 +2606,7 @@ mod tests {
             ground_cache: None,
             textures: HashMap::new(),
             texture_atlas: None,
-        };
+        });
         let mut renderer = RecordingRenderer::default();
 
         map.draw_with_actor_at_depth(&mut renderer, 30.0, 64, |renderer| {
@@ -2441,13 +2622,15 @@ mod tests {
 
     #[test]
     fn walk_surface_z_index_beats_large_composite_object_depth() {
-        let map = Map {
+        let map = map_with_draw_order(Map {
             tiles: Vec::new(),
             sprites: vec![
                 sprite("large_platform_sprite", 260.0, 0, MapSpriteLayer::Object),
                 sprite("platform_crystal", 120.0, 999, MapSpriteLayer::Object),
             ],
             entities: Vec::new(),
+            decal_draw_order: Vec::new(),
+            depth_draw_order: Vec::new(),
             zones: Vec::new(),
             surface_gates: Vec::new(),
             collision_rects: Vec::new(),
@@ -2456,7 +2639,7 @@ mod tests {
             ground_cache: None,
             textures: HashMap::new(),
             texture_atlas: None,
-        };
+        });
         let mut renderer = RecordingRenderer::default();
 
         map.draw_with_actor_at_depth(&mut renderer, 170.0, 64, |renderer| {
@@ -2476,6 +2659,8 @@ mod tests {
             tiles: Vec::new(),
             sprites: Vec::new(),
             entities: Vec::new(),
+            decal_draw_order: Vec::new(),
+            depth_draw_order: Vec::new(),
             zones: vec![MapZone {
                 id: "ramp_surface".to_owned(),
                 zone_type: "WalkSurface".to_owned(),
@@ -2545,6 +2730,8 @@ mod tests {
                 flip_x: false,
                 rotation: 0,
             }],
+            decal_draw_order: Vec::new(),
+            depth_draw_order: Vec::new(),
             zones: vec![MapZone {
                 id: "exit_zone".to_owned(),
                 zone_type: "MapTransition".to_owned(),
@@ -2585,11 +2772,45 @@ mod tests {
     }
 
     #[test]
+    fn removing_entities_rebuilds_cached_depth_order() {
+        let mut map = map_with_draw_order(Map {
+            tiles: Vec::new(),
+            sprites: Vec::new(),
+            entities: vec![
+                entity("front", 40.0),
+                entity("remove_me", 10.0),
+                entity("rear", 20.0),
+            ],
+            decal_draw_order: Vec::new(),
+            depth_draw_order: Vec::new(),
+            zones: Vec::new(),
+            surface_gates: Vec::new(),
+            collision_rects: Vec::new(),
+            zone_collision_rects: Vec::new(),
+            surface_collision_rects: Vec::new(),
+            ground_cache: None,
+            textures: HashMap::new(),
+            texture_atlas: None,
+        });
+        assert_eq!(map.depth_draw_order.len(), 3);
+
+        let ids = std::collections::BTreeSet::from(["remove_me".to_owned()]);
+        map.remove_entities_by_id(&ids);
+
+        assert_eq!(map.depth_draw_order.len(), 2);
+        let mut renderer = RecordingRenderer::default();
+        map.draw(&mut renderer);
+        assert_eq!(renderer.commands, ["rear", "front"]);
+    }
+
+    #[test]
     fn walk_surface_entry_requires_ramp_and_groups_by_surface_id() {
         let map = Map {
             tiles: Vec::new(),
             sprites: Vec::new(),
             entities: Vec::new(),
+            decal_draw_order: Vec::new(),
+            depth_draw_order: Vec::new(),
             zones: vec![
                 surface_zone(
                     "platform_top",
@@ -2642,6 +2863,8 @@ mod tests {
             tiles: Vec::new(),
             sprites: Vec::new(),
             entities: Vec::new(),
+            decal_draw_order: Vec::new(),
+            depth_draw_order: Vec::new(),
             zones: vec![
                 surface_zone(
                     "platform_ramp",
@@ -2862,6 +3085,8 @@ mod tests {
             tiles: Vec::new(),
             sprites: Vec::new(),
             entities: Vec::new(),
+            decal_draw_order: Vec::new(),
+            depth_draw_order: Vec::new(),
             zones: vec![
                 surface_zone(
                     "platform_top",
@@ -2981,6 +3206,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    fn map_with_draw_order(mut map: Map) -> Map {
+        map.rebuild_draw_orders();
+        map
+    }
+
     fn sprite(texture_id: &str, y: f32, z_index: i32, layer: MapSpriteLayer) -> MapSprite {
         MapSprite {
             texture_id: texture_id.to_owned(),
@@ -2989,6 +3219,28 @@ mod tests {
             z_index,
             depth_y: y + 10.0,
             layer,
+            flip_x: false,
+            rotation: 0,
+        }
+    }
+
+    fn entity(id: &str, depth_y: f32) -> MapEntity {
+        MapEntity {
+            id: id.to_owned(),
+            kind: MapEntityKind::Decoration,
+            rect: Rect::new(Vec2::new(0.0, depth_y), Vec2::new(10.0, 10.0)),
+            collision_rect: None,
+            sprite_rect: Rect::new(Vec2::new(0.0, depth_y), Vec2::new(10.0, 10.0)),
+            depth_y,
+            color: Color::rgb(1.0, 1.0, 1.0),
+            solid: false,
+            z_index: 0,
+            asset_id: None,
+            codex_id: None,
+            unlock: None,
+            transition: None,
+            texture_id: Some(id.to_owned()),
+            source: None,
             flip_x: false,
             rotation: 0,
         }
@@ -3040,6 +3292,8 @@ mod tests {
             tiles: Vec::new(),
             sprites: Vec::new(),
             entities: Vec::new(),
+            decal_draw_order: Vec::new(),
+            depth_draw_order: Vec::new(),
             zones: vec![
                 surface_zone(
                     "platform_top",

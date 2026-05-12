@@ -1,3 +1,5 @@
+use content::semantics;
+
 use crate::world::MapEntity;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -32,32 +34,36 @@ pub(super) fn pickup_reward_for_entity(entity: &MapEntity) -> Option<ItemReward>
 
 pub(super) fn pickup_reward_for_asset(asset_id: &str) -> Option<ItemReward> {
     match asset_id {
-        "ow_pickup_bio_sample" => Some(ItemReward::new("bio_sample_vial", 1)),
-        "ow_pickup_crystal_sample" => Some(ItemReward::new("alien_crystal_sample", 1)),
-        "ow_pickup_data_shard" => Some(ItemReward::new("data_shard", 1)),
-        "ow_pickup_energy_cell" => Some(ItemReward::new("energy_cell", 1)),
-        "ow_pickup_ruin_key" => Some(ItemReward::locked("ruin_key", 1)),
-        "ow_pickup_scrap_part" => Some(ItemReward::new("scrap_part", 3)),
-        "ow_pickup_signal_chip" => Some(ItemReward::new("data_shard", 2)),
+        "ow_pickup_bio_sample" => Some(ItemReward::new(semantics::ITEM_BIO_SAMPLE_VIAL, 1)),
+        "ow_pickup_crystal_sample" => {
+            Some(ItemReward::new(semantics::ITEM_ALIEN_CRYSTAL_SAMPLE, 1))
+        }
+        "ow_pickup_data_shard" => Some(ItemReward::new(semantics::ITEM_DATA_SHARD, 1)),
+        "ow_pickup_energy_cell" => Some(ItemReward::new(semantics::ITEM_ENERGY_CELL, 1)),
+        "ow_pickup_ruin_key" => Some(ItemReward::locked(semantics::ITEM_RUIN_KEY, 1)),
+        "ow_pickup_scrap_part" => Some(ItemReward::new(semantics::ITEM_SCRAP_PART, 3)),
+        "ow_pickup_signal_chip" => Some(ItemReward::new(semantics::ITEM_DATA_SHARD, 2)),
         _ => None,
     }
 }
 
 pub(super) fn scan_reward_for_codex(codex_id: &str) -> Option<ItemReward> {
     match codex_id {
-        "codex.flora.glowfungus" => Some(ItemReward::new("glow_fungus_sample", 1)),
-        id if id.starts_with("codex.flora.") => Some(ItemReward::new("bio_sample_vial", 1)),
+        "codex.flora.glowfungus" => Some(ItemReward::new(semantics::ITEM_GLOW_FUNGUS_SAMPLE, 1)),
+        id if id.starts_with("codex.flora.") => {
+            Some(ItemReward::new(semantics::ITEM_BIO_SAMPLE_VIAL, 1))
+        }
         id if id.contains("generator") || id.contains("power_node") => {
-            Some(ItemReward::new("energy_cell", 1))
+            Some(ItemReward::new(semantics::ITEM_ENERGY_CELL, 1))
         }
         id if id.contains("terminal") || id.contains("data") || id.contains("signal") => {
-            Some(ItemReward::new("data_shard", 1))
+            Some(ItemReward::new(semantics::ITEM_DATA_SHARD, 1))
         }
         id if id.contains("locked_door") || id.contains("gate") => {
-            Some(ItemReward::locked("ruin_key", 1))
+            Some(ItemReward::locked(semantics::ITEM_RUIN_KEY, 1))
         }
         id if id.starts_with("codex.ruin.") || id.starts_with("ruin.") => {
-            Some(ItemReward::new("data_shard", 1))
+            Some(ItemReward::new(semantics::ITEM_DATA_SHARD, 1))
         }
         _ => None,
     }
@@ -65,13 +71,13 @@ pub(super) fn scan_reward_for_codex(codex_id: &str) -> Option<ItemReward> {
 
 pub(super) fn research_meter_for_codex(codex_id: &str) -> &'static str {
     if codex_id.starts_with("codex.flora.") {
-        "bio"
+        semantics::METER_BIO
     } else if codex_id.contains("mineral") {
-        "mineral"
+        semantics::METER_MINERAL
     } else if codex_id.starts_with("codex.ruin.") || codex_id.starts_with("ruin.") {
-        "ruin"
+        semantics::METER_RUIN
     } else {
-        "data"
+        semantics::METER_DATA
     }
 }
 

@@ -4,6 +4,8 @@ use anyhow::{Context, Result};
 use ron::ser::PrettyConfig;
 use serde::{Deserialize, Serialize};
 
+use crate::semantics;
+
 pub const DEFAULT_MAP_ID: &str = "overworld_landing_site";
 pub const DEFAULT_MAP_PATH: &str = "assets/data/maps/overworld_landing_site.ron";
 
@@ -65,7 +67,7 @@ impl MapDocument {
     pub fn new_landing_site() -> Self {
         Self {
             id: DEFAULT_MAP_ID.to_owned(),
-            mode: "Overworld".to_owned(),
+            mode: semantics::SCENE_OVERWORLD.to_owned(),
             tile_size: 32,
             width: 80,
             height: 60,

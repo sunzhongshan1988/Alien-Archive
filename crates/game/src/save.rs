@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use content::semantics;
 use runtime::Vec2;
 use serde::{Deserialize, Serialize};
 
@@ -128,10 +129,10 @@ impl Default for PlayerProfileSave {
             xp: 0,
             xp_next: 1_000,
             vitals: vec![
-                MeterSave::new("health", 100, 100),
-                MeterSave::new("stamina", 100, 100),
-                MeterSave::new("suit", 100, 100),
-                MeterSave::new("load", 0, 60),
+                MeterSave::new(semantics::METER_HEALTH, 100, 100),
+                MeterSave::new(semantics::METER_STAMINA, 100, 100),
+                MeterSave::new(semantics::METER_SUIT, 100, 100),
+                MeterSave::new(semantics::METER_LOAD, 0, 60),
             ],
             attributes: vec![
                 ScoreSave::new("survival", 0, 10),
@@ -141,16 +142,16 @@ impl Default for PlayerProfileSave {
                 ScoreSave::new("analysis", 0, 10),
             ],
             research: vec![
-                MeterSave::new("bio", 0, 100),
-                MeterSave::new("mineral", 0, 100),
-                MeterSave::new("ruin", 0, 100),
-                MeterSave::new("data", 0, 100),
+                MeterSave::new(semantics::METER_BIO, 0, 100),
+                MeterSave::new(semantics::METER_MINERAL, 0, 100),
+                MeterSave::new(semantics::METER_RUIN, 0, 100),
+                MeterSave::new(semantics::METER_DATA, 0, 100),
             ],
             resistances: vec![
-                MeterSave::new("spores", 100, 100),
-                MeterSave::new("heat", 100, 100),
-                MeterSave::new("radiation", 100, 100),
-                MeterSave::new("oxygen", 100, 100),
+                MeterSave::new(semantics::METER_SPORES, 100, 100),
+                MeterSave::new(semantics::METER_HEAT, 100, 100),
+                MeterSave::new(semantics::METER_RADIATION, 100, 100),
+                MeterSave::new(semantics::METER_OXYGEN, 100, 100),
             ],
         }
     }
@@ -348,18 +349,18 @@ impl Default for InventorySave {
     fn default() -> Self {
         let mut slots = vec![None; DEFAULT_INVENTORY_SLOTS];
         for (index, stack) in [
-            ItemStackSave::new("alien_crystal_sample", 3, false),
-            ItemStackSave::new("bio_sample_vial", 2, false),
-            ItemStackSave::new("data_shard", 8, false),
-            ItemStackSave::new("energy_cell", 4, false),
-            ItemStackSave::new("scrap_part", 17, false),
-            ItemStackSave::new("ruin_key", 1, true),
-            ItemStackSave::new("scanner_tool", 1, true),
-            ItemStackSave::new("med_injector", 2, false),
-            ItemStackSave::new("coolant_canister", 1, false),
-            ItemStackSave::new("metal_fragment", 9, false),
-            ItemStackSave::new("glow_fungus_sample", 2, false),
-            ItemStackSave::new("artifact_core", 1, true),
+            ItemStackSave::new(semantics::ITEM_ALIEN_CRYSTAL_SAMPLE, 3, false),
+            ItemStackSave::new(semantics::ITEM_BIO_SAMPLE_VIAL, 2, false),
+            ItemStackSave::new(semantics::ITEM_DATA_SHARD, 8, false),
+            ItemStackSave::new(semantics::ITEM_ENERGY_CELL, 4, false),
+            ItemStackSave::new(semantics::ITEM_SCRAP_PART, 17, false),
+            ItemStackSave::new(semantics::ITEM_RUIN_KEY, 1, true),
+            ItemStackSave::new(semantics::ITEM_SCANNER_TOOL, 1, true),
+            ItemStackSave::new(semantics::ITEM_MED_INJECTOR, 2, false),
+            ItemStackSave::new(semantics::ITEM_COOLANT_CANISTER, 1, false),
+            ItemStackSave::new(semantics::ITEM_METAL_FRAGMENT, 9, false),
+            ItemStackSave::new(semantics::ITEM_GLOW_FUNGUS_SAMPLE, 2, false),
+            ItemStackSave::new(semantics::ITEM_ARTIFACT_CORE, 1, true),
         ]
         .into_iter()
         .enumerate()

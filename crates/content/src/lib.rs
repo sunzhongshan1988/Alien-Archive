@@ -1,6 +1,7 @@
 mod assets;
 mod codex;
 mod map;
+pub mod semantics;
 mod validation;
 
 pub use assets::{

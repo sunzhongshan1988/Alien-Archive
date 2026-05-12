@@ -6,7 +6,7 @@ mod ui;
 mod world;
 
 use anyhow::{Result, anyhow, bail};
-use content::{CodexDatabase, DEFAULT_CODEX_DB_PATH};
+use content::{CodexDatabase, DEFAULT_CODEX_DB_PATH, semantics};
 use runtime::{Camera2d, Game, InputState, Renderer, run};
 use save::{DEFAULT_SAVE_PATH, SaveData};
 use scenes::{GameContext, SceneId, SceneStack};
@@ -228,11 +228,14 @@ fn required_arg_value(args: &mut impl Iterator<Item = String>, key: &str) -> Res
 }
 
 fn parse_scene_id(value: &str) -> Result<SceneId> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "overworld" | "world" => Ok(SceneId::Overworld),
-        "facility" => Ok(SceneId::Facility),
-        "main-menu" | "main_menu" | "mainmenu" | "menu" => Ok(SceneId::MainMenu),
-        _ => bail!("unknown scene '{value}', expected overworld or facility"),
+    let Some(scene) = semantics::runtime_scene_def(value) else {
+        bail!("unknown scene '{value}', expected overworld or facility");
+    };
+
+    match scene.key {
+        semantics::SCENE_FACILITY => Ok(SceneId::Facility),
+        semantics::SCENE_MAIN_MENU => Ok(SceneId::MainMenu),
+        _ => Ok(SceneId::Overworld),
     }
 }
 

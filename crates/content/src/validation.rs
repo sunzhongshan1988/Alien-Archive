@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 
-use crate::{AssetDatabase, AssetKind, CodexDatabase, LayerKind, MapDocument, UnlockRule};
+use crate::{
+    AssetDatabase, AssetKind, CodexDatabase, LayerKind, MapDocument, UnlockRule, semantics,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MapValidationSeverity {
@@ -265,13 +267,13 @@ pub fn validate_map_with_codex(
                 "zone {} has empty zone_type",
                 zone.id
             )));
-        } else if !KNOWN_ZONE_TYPES.contains(&zone.zone_type.as_str()) {
+        } else if !semantics::is_known_zone_type(&zone.zone_type) {
             issues.push(MapValidationIssue::warning(format!(
                 "zone {} uses unknown zone_type {}",
                 zone.id, zone.zone_type
             )));
         }
-        let min_zone_points = if zone_type_is_line_like(&zone.zone_type) {
+        let min_zone_points = if semantics::zone_type_is_line_like(&zone.zone_type) {
             2
         } else {
             3
@@ -282,7 +284,7 @@ pub fn validate_map_with_codex(
                 zone.id, min_zone_points
             )));
         }
-        if zone.zone_type == "WalkSurface" && zone.surface.is_none() {
+        if zone.zone_type == semantics::ZONE_WALK_SURFACE && zone.surface.is_none() {
             issues.push(MapValidationIssue::warning(format!(
                 "zone {} is WalkSurface but has no surface settings",
                 zone.id
@@ -293,7 +295,7 @@ pub fn validate_map_with_codex(
                 .as_deref()
                 .map(str::trim)
                 .filter(|value| !value.is_empty());
-            if !zone_type_allows_surface(&zone.zone_type) {
+            if !semantics::zone_type_allows_surface(&zone.zone_type) {
                 issues.push(MapValidationIssue::warning(format!(
                     "zone {} has walk surface data but zone_type is {}",
                     zone.id, zone.zone_type
@@ -306,7 +308,7 @@ pub fn validate_map_with_codex(
                 )));
             }
         }
-        if zone.zone_type == "SurfaceGate" {
+        if zone.zone_type == semantics::ZONE_SURFACE_GATE {
             if let Some(gate) = &zone.gate {
                 if gate
                     .surface_id
@@ -331,7 +333,7 @@ pub fn validate_map_with_codex(
             )));
         }
         if let Some(collision) = &zone.collision {
-            if !matches!(zone.zone_type.as_str(), "CollisionArea" | "CollisionLine") {
+            if !semantics::zone_type_is_collision_scope(&zone.zone_type) {
                 issues.push(MapValidationIssue::warning(format!(
                     "zone {} has collision scope data but zone_type is {}",
                     zone.id, zone.zone_type
@@ -348,7 +350,7 @@ pub fn validate_map_with_codex(
                 )));
             }
         }
-        if zone.zone_type == "HazardZone" {
+        if zone.zone_type == semantics::ZONE_HAZARD {
             if let Some(hazard) = &zone.hazard {
                 validate_hazard_rule("zone", &zone.id, hazard, &mut issues);
             } else {
@@ -364,7 +366,7 @@ pub fn validate_map_with_codex(
                 zone.id, zone.zone_type
             )));
         }
-        if zone.zone_type == "PromptZone" {
+        if zone.zone_type == semantics::ZONE_PROMPT {
             if let Some(prompt) = &zone.prompt {
                 validate_prompt_rule("zone", &zone.id, prompt, &mut issues);
             } else {
@@ -380,7 +382,7 @@ pub fn validate_map_with_codex(
                 zone.id, zone.zone_type
             )));
         }
-        if matches!(zone.zone_type.as_str(), "ObjectiveZone" | "Checkpoint") {
+        if semantics::zone_type_is_objective_like(&zone.zone_type) {
             if let Some(objective) = &zone.objective {
                 validate_objective_rule("zone", &zone.id, &zone.zone_type, objective, &mut issues);
             } else {
@@ -399,7 +401,7 @@ pub fn validate_map_with_codex(
         if let Some(unlock) = &zone.unlock {
             validate_unlock_rule("zone", &zone.id, unlock, codex, &mut issues);
         }
-        if zone.zone_type == "MapTransition" {
+        if zone.zone_type == semantics::ZONE_MAP_TRANSITION {
             if let Some(transition) = &zone.transition {
                 validate_transition_target("zone", &zone.id, transition, &mut issues);
             } else {
@@ -414,33 +416,6 @@ pub fn validate_map_with_codex(
     }
 
     issues
-}
-
-const KNOWN_ZONE_TYPES: &[&str] = &[
-    "ScanArea",
-    "MapTransition",
-    "NoSpawn",
-    "CameraBounds",
-    "WalkSurface",
-    "SurfaceGate",
-    "CollisionArea",
-    "CollisionLine",
-    "HazardZone",
-    "PromptZone",
-    "ObjectiveZone",
-    "Checkpoint",
-    "Trigger",
-];
-
-const KNOWN_HAZARD_METERS: &[&str] =
-    &["health", "stamina", "suit", "oxygen", "radiation", "spores"];
-
-fn zone_type_allows_surface(zone_type: &str) -> bool {
-    matches!(zone_type, "WalkSurface" | "ObjectiveZone" | "Checkpoint")
-}
-
-fn zone_type_is_line_like(zone_type: &str) -> bool {
-    matches!(zone_type, "CollisionLine" | "SurfaceGate")
 }
 
 fn validate_hazard_rule(
@@ -461,7 +436,7 @@ fn validate_hazard_rule(
             issues.push(MapValidationIssue::warning(format!(
                 "{owner} {id} has hazard effect with empty meter"
             )));
-        } else if !KNOWN_HAZARD_METERS.contains(&meter) {
+        } else if !semantics::is_known_hazard_meter(meter) {
             issues.push(MapValidationIssue::warning(format!(
                 "{owner} {id} hazard effect meter {meter} is not a known runtime meter"
             )));
@@ -509,7 +484,7 @@ fn validate_objective_rule(
             "{owner} {id} objective rule has no objective_id"
         )));
     }
-    if zone_type == "Checkpoint"
+    if zone_type == semantics::ZONE_CHECKPOINT
         && objective
             .checkpoint_id
             .as_deref()
@@ -598,11 +573,7 @@ fn validate_transition_target(
     }
 
     if let Some(scene) = scene {
-        let normalized = scene.to_ascii_lowercase();
-        if !matches!(
-            normalized.as_str(),
-            "overworld" | "world" | "facility" | "mainmenu" | "main_menu" | "main-menu"
-        ) {
+        if !semantics::is_known_runtime_scene(scene) {
             issues.push(MapValidationIssue::warning(format!(
                 "{owner} {id} transition scene {scene} is not a known runtime scene"
             )));
@@ -627,7 +598,7 @@ fn validate_transition_target(
 }
 
 fn entity_uses_implicit_legacy_unlock(entity_type: &str) -> bool {
-    matches!(entity_type, "FacilityEntrance" | "Entrance" | "Door")
+    semantics::entity_type_uses_implicit_legacy_unlock(entity_type)
 }
 
 fn validate_codex_reference(

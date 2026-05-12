@@ -1,4 +1,5 @@
 use anyhow::Result;
+use content::semantics;
 use runtime::{
     Button, Camera2d, InputState, Renderer, SceneCommand, Vec2, collision::rects_overlap,
 };
@@ -80,7 +81,7 @@ impl FacilityScene {
 
     fn overlapping_transition_zone(&self) -> Option<&MapZone> {
         self.world
-            .zones("MapTransition")
+            .zones(semantics::ZONE_MAP_TRANSITION)
             .find(|zone| rects_overlap(self.player.rect(), zone.bounds))
     }
 

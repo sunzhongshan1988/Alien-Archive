@@ -106,11 +106,11 @@ pub(crate) fn paint_transformed_image(
 
 pub(crate) fn zone_colors(zone_type: &str) -> (Color32, Color32) {
     match zone_type {
-        "ScanArea" => (
+        content::semantics::ZONE_SCAN_AREA => (
             Color32::from_rgb(156, 166, 126),
             Color32::from_rgba_unmultiplied(156, 166, 126, 34),
         ),
-        "MapTransition" => (
+        content::semantics::ZONE_MAP_TRANSITION => (
             THEME_WARNING,
             Color32::from_rgba_unmultiplied(
                 THEME_WARNING.r(),
@@ -119,39 +119,39 @@ pub(crate) fn zone_colors(zone_type: &str) -> (Color32, Color32) {
                 34,
             ),
         ),
-        "NoSpawn" => (
+        content::semantics::ZONE_NO_SPAWN => (
             THEME_ERROR,
             Color32::from_rgba_unmultiplied(THEME_ERROR.r(), THEME_ERROR.g(), THEME_ERROR.b(), 34),
         ),
-        "CameraBounds" => (
+        content::semantics::ZONE_CAMERA_BOUNDS => (
             Color32::from_rgb(152, 156, 126),
             Color32::from_rgba_unmultiplied(152, 156, 126, 34),
         ),
-        "WalkSurface" => (
+        content::semantics::ZONE_WALK_SURFACE => (
             Color32::from_rgb(100, 184, 170),
             Color32::from_rgba_unmultiplied(100, 184, 170, 34),
         ),
-        "SurfaceGate" => (
+        content::semantics::ZONE_SURFACE_GATE => (
             Color32::from_rgb(248, 198, 86),
             Color32::from_rgba_unmultiplied(248, 198, 86, 28),
         ),
-        "CollisionArea" => (
+        content::semantics::ZONE_COLLISION_AREA => (
             THEME_ERROR,
             Color32::from_rgba_unmultiplied(THEME_ERROR.r(), THEME_ERROR.g(), THEME_ERROR.b(), 28),
         ),
-        "CollisionLine" => (
+        content::semantics::ZONE_COLLISION_LINE => (
             Color32::from_rgb(236, 126, 92),
             Color32::from_rgba_unmultiplied(236, 126, 92, 20),
         ),
-        "HazardZone" => (
+        content::semantics::ZONE_HAZARD => (
             Color32::from_rgb(236, 92, 74),
             Color32::from_rgba_unmultiplied(236, 92, 74, 34),
         ),
-        "PromptZone" => (
+        content::semantics::ZONE_PROMPT => (
             Color32::from_rgb(112, 172, 255),
             Color32::from_rgba_unmultiplied(112, 172, 255, 34),
         ),
-        "ObjectiveZone" | "Checkpoint" => (
+        content::semantics::ZONE_OBJECTIVE | content::semantics::ZONE_CHECKPOINT => (
             Color32::from_rgb(92, 230, 202),
             Color32::from_rgba_unmultiplied(92, 230, 202, 34),
         ),

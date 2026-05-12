@@ -539,14 +539,17 @@ impl EditorApp {
                     changed |= labeled_text_edit(ui, "区域类型", &mut zone.zone_type);
                     changed |= draw_zone_type_preset_checkboxes(ui, zone);
 
-                    if zone.zone_type == "WalkSurface" || zone.surface.is_some() {
+                    if zone.zone_type == content::semantics::ZONE_WALK_SURFACE
+                        || zone.surface.is_some()
+                    {
                         ui.separator();
                         ui.horizontal(|ui| {
                             ui.label("可走表面");
                             if zone.surface.is_none() && ui.button("添加").clicked() {
                                 zone.surface = Some(content::WalkSurfaceRule::default());
-                                if zone.zone_type == "Trigger" {
-                                    zone.zone_type = "WalkSurface".to_owned();
+                                if zone.zone_type == content::semantics::ZONE_TRIGGER {
+                                    zone.zone_type =
+                                        content::semantics::ZONE_WALK_SURFACE.to_owned();
                                 }
                                 changed = true;
                             }
@@ -604,14 +607,17 @@ impl EditorApp {
                         }
                     }
 
-                    if zone.zone_type == "SurfaceGate" || zone.gate.is_some() {
+                    if zone.zone_type == content::semantics::ZONE_SURFACE_GATE
+                        || zone.gate.is_some()
+                    {
                         ui.separator();
                         ui.horizontal(|ui| {
                             ui.label("表面门");
                             if zone.gate.is_none() && ui.button("添加").clicked() {
                                 zone.gate = Some(content::SurfaceGateRule::default());
-                                if zone.zone_type == "Trigger" {
-                                    zone.zone_type = "SurfaceGate".to_owned();
+                                if zone.zone_type == content::semantics::ZONE_TRIGGER {
+                                    zone.zone_type =
+                                        content::semantics::ZONE_SURFACE_GATE.to_owned();
                                 }
                                 changed = true;
                             }
@@ -633,7 +639,7 @@ impl EditorApp {
                         }
                     }
 
-                    if matches!(zone.zone_type.as_str(), "CollisionArea" | "CollisionLine")
+                    if content::semantics::zone_type_is_collision_scope(&zone.zone_type)
                         || zone.collision.is_some()
                     {
                         ui.separator();
@@ -661,17 +667,17 @@ impl EditorApp {
                         );
                     }
 
-                    if zone.zone_type == "HazardZone" || zone.hazard.is_some() {
+                    if zone.zone_type == content::semantics::ZONE_HAZARD || zone.hazard.is_some() {
                         ui.separator();
                         draw_zone_hazard_editor(ui, zone, &mut changed);
                     }
 
-                    if zone.zone_type == "PromptZone" || zone.prompt.is_some() {
+                    if zone.zone_type == content::semantics::ZONE_PROMPT || zone.prompt.is_some() {
                         ui.separator();
                         draw_zone_prompt_editor(ui, zone, &mut changed);
                     }
 
-                    if matches!(zone.zone_type.as_str(), "ObjectiveZone" | "Checkpoint")
+                    if content::semantics::zone_type_is_objective_like(&zone.zone_type)
                         || zone.objective.is_some()
                     {
                         ui.separator();
@@ -721,7 +727,7 @@ impl EditorApp {
                             changed = true;
                         }
                         let min_points =
-                            if matches!(zone.zone_type.as_str(), "CollisionLine" | "SurfaceGate") {
+                            if content::semantics::zone_type_is_line_like(&zone.zone_type) {
                                 2
                             } else {
                                 3
@@ -811,68 +817,13 @@ impl EditorApp {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ZoneTypePreset {
-    WalkSurface,
-    SurfaceGate,
-    CollisionArea,
-    CollisionLine,
-    MapTransition,
-    HazardZone,
-    PromptZone,
-    ObjectiveZone,
-    Checkpoint,
-}
-
-impl ZoneTypePreset {
-    const ALL: [Self; 9] = [
-        Self::WalkSurface,
-        Self::SurfaceGate,
-        Self::CollisionArea,
-        Self::CollisionLine,
-        Self::MapTransition,
-        Self::HazardZone,
-        Self::PromptZone,
-        Self::ObjectiveZone,
-        Self::Checkpoint,
-    ];
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::WalkSurface => "可走表面",
-            Self::SurfaceGate => "表面门",
-            Self::CollisionArea => "碰撞区域",
-            Self::CollisionLine => "碰撞线",
-            Self::MapTransition => "转场",
-            Self::HazardZone => "危险区",
-            Self::PromptZone => "提示区",
-            Self::ObjectiveZone => "目标区",
-            Self::Checkpoint => "检查点",
-        }
-    }
-
-    fn zone_type(self) -> &'static str {
-        match self {
-            Self::WalkSurface => "WalkSurface",
-            Self::SurfaceGate => "SurfaceGate",
-            Self::CollisionArea => "CollisionArea",
-            Self::CollisionLine => "CollisionLine",
-            Self::MapTransition => "MapTransition",
-            Self::HazardZone => "HazardZone",
-            Self::PromptZone => "PromptZone",
-            Self::ObjectiveZone => "ObjectiveZone",
-            Self::Checkpoint => "Checkpoint",
-        }
-    }
-}
-
 fn draw_zone_type_preset_checkboxes(ui: &mut egui::Ui, zone: &mut content::ZoneInstance) -> bool {
     let mut changed = false;
     ui.label("快速类型");
     ui.horizontal_wrapped(|ui| {
-        for preset in ZoneTypePreset::ALL {
-            let mut selected = zone.zone_type == preset.zone_type();
-            if ui.checkbox(&mut selected, preset.label()).clicked() {
+        for &preset in content::semantics::EDITOR_ZONE_TYPE_PRESETS {
+            let mut selected = zone.zone_type == preset.key;
+            if ui.checkbox(&mut selected, preset.zh_label).clicked() {
                 changed |= apply_zone_type_preset(zone, preset);
             }
         }
@@ -880,12 +831,15 @@ fn draw_zone_type_preset_checkboxes(ui: &mut egui::Ui, zone: &mut content::ZoneI
     changed
 }
 
-fn apply_zone_type_preset(zone: &mut content::ZoneInstance, preset: ZoneTypePreset) -> bool {
-    let mut changed = zone.zone_type != preset.zone_type();
-    zone.zone_type = preset.zone_type().to_owned();
+fn apply_zone_type_preset(
+    zone: &mut content::ZoneInstance,
+    preset: content::semantics::ZoneTypeDef,
+) -> bool {
+    let mut changed = zone.zone_type != preset.key;
+    zone.zone_type = preset.key.to_owned();
 
-    match preset {
-        ZoneTypePreset::WalkSurface => {
+    match preset.kind {
+        content::semantics::ZoneTypeKind::WalkSurface => {
             if zone.surface.is_none() {
                 zone.surface = Some(content::WalkSurfaceRule::default());
                 changed = true;
@@ -897,7 +851,7 @@ fn apply_zone_type_preset(zone: &mut content::ZoneInstance, preset: ZoneTypePres
                 changed = true;
             }
         }
-        ZoneTypePreset::SurfaceGate => {
+        content::semantics::ZoneTypeKind::SurfaceGate => {
             let surface_id = zone
                 .surface
                 .as_ref()
@@ -913,20 +867,22 @@ fn apply_zone_type_preset(zone: &mut content::ZoneInstance, preset: ZoneTypePres
                 changed = true;
             }
         }
-        ZoneTypePreset::CollisionArea
-        | ZoneTypePreset::CollisionLine
-        | ZoneTypePreset::MapTransition => {
+        content::semantics::ZoneTypeKind::CollisionArea
+        | content::semantics::ZoneTypeKind::CollisionLine
+        | content::semantics::ZoneTypeKind::MapTransition => {
             if zone.surface.take().is_some() {
                 changed = true;
             }
             if zone.gate.take().is_some() {
                 changed = true;
             }
-            if preset == ZoneTypePreset::MapTransition && zone.collision.take().is_some() {
+            if preset.kind == content::semantics::ZoneTypeKind::MapTransition
+                && zone.collision.take().is_some()
+            {
                 changed = true;
             }
         }
-        ZoneTypePreset::HazardZone => {
+        content::semantics::ZoneTypeKind::Hazard => {
             if zone.gate.take().is_some() {
                 changed = true;
             }
@@ -941,7 +897,7 @@ fn apply_zone_type_preset(zone: &mut content::ZoneInstance, preset: ZoneTypePres
                 changed = true;
             }
         }
-        ZoneTypePreset::PromptZone => {
+        content::semantics::ZoneTypeKind::Prompt => {
             if zone.gate.take().is_some() {
                 changed = true;
             }
@@ -953,7 +909,8 @@ fn apply_zone_type_preset(zone: &mut content::ZoneInstance, preset: ZoneTypePres
                 changed = true;
             }
         }
-        ZoneTypePreset::ObjectiveZone | ZoneTypePreset::Checkpoint => {
+        content::semantics::ZoneTypeKind::Objective
+        | content::semantics::ZoneTypeKind::Checkpoint => {
             if zone.gate.take().is_some() {
                 changed = true;
             }
@@ -965,6 +922,10 @@ fn apply_zone_type_preset(zone: &mut content::ZoneInstance, preset: ZoneTypePres
                 changed = true;
             }
         }
+        content::semantics::ZoneTypeKind::ScanArea
+        | content::semantics::ZoneTypeKind::NoSpawn
+        | content::semantics::ZoneTypeKind::CameraBounds
+        | content::semantics::ZoneTypeKind::Trigger => {}
     }
 
     changed
@@ -979,11 +940,14 @@ fn draw_zone_hazard_editor(
         ui.label("危险区域");
         if zone.hazard.is_none() && ui.button("添加").clicked() {
             zone.hazard = Some(content::HazardRule {
-                effects: vec![content::HazardEffect::new("oxygen", -2.0)],
+                effects: vec![content::HazardEffect::new(
+                    content::semantics::METER_OXYGEN,
+                    -2.0,
+                )],
                 message: None,
             });
-            if zone.zone_type == "Trigger" {
-                zone.zone_type = "HazardZone".to_owned();
+            if zone.zone_type == content::semantics::ZONE_TRIGGER {
+                zone.zone_type = content::semantics::ZONE_HAZARD.to_owned();
             }
             *changed = true;
         }
@@ -1027,9 +991,10 @@ fn draw_zone_hazard_editor(
         *changed = true;
     }
     if ui.button("添加效果").clicked() {
-        hazard
-            .effects
-            .push(content::HazardEffect::new("oxygen", -2.0));
+        hazard.effects.push(content::HazardEffect::new(
+            content::semantics::METER_OXYGEN,
+            -2.0,
+        ));
         *changed = true;
     }
     ui.colored_label(
@@ -1047,8 +1012,8 @@ fn draw_zone_prompt_editor(
         ui.label("提示区域");
         if zone.prompt.is_none() && ui.button("添加").clicked() {
             zone.prompt = Some(content::PromptRule::default());
-            if zone.zone_type == "Trigger" {
-                zone.zone_type = "PromptZone".to_owned();
+            if zone.zone_type == content::semantics::ZONE_TRIGGER {
+                zone.zone_type = content::semantics::ZONE_PROMPT.to_owned();
             }
             *changed = true;
         }
@@ -1091,8 +1056,8 @@ fn draw_zone_objective_editor(
         ui.label("任务目标");
         if zone.objective.is_none() && ui.button("添加").clicked() {
             zone.objective = Some(content::ObjectiveRule::default());
-            if zone.zone_type == "Trigger" {
-                zone.zone_type = "ObjectiveZone".to_owned();
+            if zone.zone_type == content::semantics::ZONE_TRIGGER {
+                zone.zone_type = content::semantics::ZONE_OBJECTIVE.to_owned();
             }
             *changed = true;
         }
@@ -1151,14 +1116,14 @@ mod tests {
 
         assert!(apply_zone_type_preset(
             &mut zone,
-            ZoneTypePreset::WalkSurface
+            content::semantics::ZONE_DEF_WALK_SURFACE
         ));
         assert_eq!(zone.zone_type, "WalkSurface");
         assert!(zone.surface.is_some());
 
         assert!(apply_zone_type_preset(
             &mut zone,
-            ZoneTypePreset::SurfaceGate
+            content::semantics::ZONE_DEF_SURFACE_GATE
         ));
         assert_eq!(zone.zone_type, "SurfaceGate");
         assert!(zone.gate.is_some());
@@ -1166,7 +1131,7 @@ mod tests {
 
         assert!(apply_zone_type_preset(
             &mut zone,
-            ZoneTypePreset::CollisionLine
+            content::semantics::ZONE_DEF_COLLISION_LINE
         ));
         assert_eq!(zone.zone_type, "CollisionLine");
         assert!(zone.surface.is_none());
@@ -1174,14 +1139,14 @@ mod tests {
 
         assert!(apply_zone_type_preset(
             &mut zone,
-            ZoneTypePreset::PromptZone
+            content::semantics::ZONE_DEF_PROMPT
         ));
         assert_eq!(zone.zone_type, "PromptZone");
         assert!(zone.prompt.is_some());
 
         assert!(apply_zone_type_preset(
             &mut zone,
-            ZoneTypePreset::Checkpoint
+            content::semantics::ZONE_DEF_CHECKPOINT
         ));
         assert_eq!(zone.zone_type, "Checkpoint");
         assert!(zone.objective.is_some());
@@ -1194,14 +1159,14 @@ mod tests {
 
         assert!(apply_zone_type_preset(
             &mut zone,
-            ZoneTypePreset::WalkSurface
+            content::semantics::ZONE_DEF_WALK_SURFACE
         ));
         assert_eq!(zone.zone_type, "WalkSurface");
         assert!(zone.surface.is_some());
 
         assert!(!apply_zone_type_preset(
             &mut zone,
-            ZoneTypePreset::WalkSurface
+            content::semantics::ZONE_DEF_WALK_SURFACE
         ));
 
         let mut zone = test_zone("SurfaceGate");
@@ -1209,7 +1174,7 @@ mod tests {
 
         assert!(apply_zone_type_preset(
             &mut zone,
-            ZoneTypePreset::SurfaceGate
+            content::semantics::ZONE_DEF_SURFACE_GATE
         ));
         assert_eq!(zone.zone_type, "SurfaceGate");
         assert!(zone.gate.is_some());

@@ -445,12 +445,11 @@ impl EditorApp {
                     color: THEME_WARNING,
                 });
             }
-            let min_zone_points =
-                if matches!(zone.zone_type.as_str(), "CollisionLine" | "SurfaceGate") {
-                    2
-                } else {
-                    3
-                };
+            let min_zone_points = if content::semantics::zone_type_is_line_like(&zone.zone_type) {
+                2
+            } else {
+                3
+            };
             if zone.points.len() < min_zone_points {
                 badges.push(OutlinerBadge {
                     label: "few points",

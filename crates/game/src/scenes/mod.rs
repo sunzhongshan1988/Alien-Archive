@@ -13,7 +13,7 @@ mod scan_system;
 mod zone_system;
 
 use anyhow::Result;
-use content::CodexDatabase;
+use content::{CodexDatabase, semantics};
 use runtime::{Button, Camera2d, InputState, Renderer, SceneCommand, Vec2};
 use std::{collections::HashSet, path::PathBuf};
 
@@ -1596,16 +1596,16 @@ struct ConsumableEffect {
 
 fn consumable_effect_for_item(item_id: &str) -> Option<ConsumableEffect> {
     let effect = match item_id {
-        "med_injector" => ConsumableEffect {
-            meter_id: "health",
+        semantics::ITEM_MED_INJECTOR => ConsumableEffect {
+            meter_id: semantics::METER_HEALTH,
             amount: 35,
         },
-        "energy_cell" => ConsumableEffect {
-            meter_id: "stamina",
+        semantics::ITEM_ENERGY_CELL => ConsumableEffect {
+            meter_id: semantics::METER_STAMINA,
             amount: 35,
         },
-        "coolant_canister" => ConsumableEffect {
-            meter_id: "suit",
+        semantics::ITEM_COOLANT_CANISTER => ConsumableEffect {
+            meter_id: semantics::METER_SUIT,
             amount: 30,
         },
         _ => return None,
@@ -1614,22 +1614,13 @@ fn consumable_effect_for_item(item_id: &str) -> Option<ConsumableEffect> {
 }
 
 fn profile_meter_label(id: &str, language: Language) -> &'static str {
-    match (id, language) {
-        ("health", Language::Chinese) => "生命",
-        ("stamina", Language::Chinese) => "体力",
-        ("suit", Language::Chinese) => "外骨骼",
-        ("load", Language::Chinese) => "负重",
-        ("oxygen", Language::Chinese) => "氧气",
-        ("radiation", Language::Chinese) => "辐射抗性",
-        ("spores", Language::Chinese) => "孢子抗性",
-        ("health", Language::English) => "Health",
-        ("stamina", Language::English) => "Stamina",
-        ("suit", Language::English) => "Suit",
-        ("load", Language::English) => "Load",
-        ("oxygen", Language::English) => "Oxygen",
-        ("radiation", Language::English) => "Radiation",
-        ("spores", Language::English) => "Spore resistance",
-        _ => "Status",
+    if let Some(meter) = semantics::meter_def(id) {
+        match language {
+            Language::Chinese => meter.zh_label,
+            Language::English => meter.english_label,
+        }
+    } else {
+        "Status"
     }
 }
 

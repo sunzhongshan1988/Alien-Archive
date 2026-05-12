@@ -2,10 +2,12 @@ use std::{collections::HashMap, path::Path};
 
 use anyhow::{Context, Result, bail};
 use bytemuck::{Pod, Zeroable};
-use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
 
 use crate::{Camera2d, Color, Rect, RenderStats, Renderer, Vec2};
+
+const MIN_VERTEX_BUFFER_BYTES: u64 = 4096;
+type TextureIndex = usize;
 
 const RECT_SHADER: &str = r#"
 struct VertexInput {
@@ -132,10 +134,11 @@ struct RectCommand {
     color: Color,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 struct ImageCommand {
     camera: Camera2d,
-    texture_id: String,
+    texture_index: Option<TextureIndex>,
+    is_ground_chunk: bool,
     rect: Rect,
     source: Option<Rect>,
     tint: Color,
@@ -143,29 +146,29 @@ struct ImageCommand {
     rotation: i32,
 }
 
+#[derive(Clone, Copy)]
 enum RenderCommand {
     Rect(RectCommand),
     Image(ImageCommand),
 }
 
+#[derive(Clone, Copy)]
 enum PreparedCommand {
     Rect {
-        buffer: wgpu::Buffer,
+        buffer_index: usize,
         vertex_count: u32,
     },
     Image {
-        texture_id: String,
-        buffer: wgpu::Buffer,
+        texture_index: TextureIndex,
+        buffer_index: usize,
         vertex_count: u32,
     },
 }
 
-enum PendingBatch {
-    Rect(Vec<RectVertex>),
-    Image {
-        texture_id: String,
-        vertices: Vec<ImageVertex>,
-    },
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PendingBatchKind {
+    Rect,
+    Image(TextureIndex),
 }
 
 struct GpuTexture {
@@ -173,6 +176,23 @@ struct GpuTexture {
     _sampler: wgpu::Sampler,
     bind_group: wgpu::BindGroup,
     size: Vec2,
+}
+
+struct ReusableVertexBuffer {
+    buffer: wgpu::Buffer,
+    capacity_bytes: u64,
+}
+
+#[derive(Default)]
+struct VertexBufferPool {
+    buffers: Vec<ReusableVertexBuffer>,
+    next: usize,
+}
+
+impl VertexBufferPool {
+    fn reset(&mut self) {
+        self.next = 0;
+    }
 }
 
 pub struct WgpuRenderer {
@@ -187,8 +207,14 @@ pub struct WgpuRenderer {
     camera: Camera2d,
     clear_color: Color,
     commands: Vec<RenderCommand>,
-    textures: HashMap<String, GpuTexture>,
+    prepared_commands: Vec<PreparedCommand>,
+    texture_lookup: HashMap<String, TextureIndex>,
+    textures: Vec<GpuTexture>,
     last_frame_stats: RenderStats,
+    rect_vertex_buffers: VertexBufferPool,
+    image_vertex_buffers: VertexBufferPool,
+    pending_rect_vertices: Vec<RectVertex>,
+    pending_image_vertices: Vec<ImageVertex>,
 }
 
 impl WgpuRenderer {
@@ -356,8 +382,14 @@ impl WgpuRenderer {
             camera: Camera2d::default(),
             clear_color: Color::rgb(0.015, 0.019, 0.035),
             commands: Vec::with_capacity(256),
-            textures: HashMap::new(),
+            prepared_commands: Vec::with_capacity(256),
+            texture_lookup: HashMap::new(),
+            textures: Vec::new(),
             last_frame_stats: RenderStats::default(),
+            rect_vertex_buffers: VertexBufferPool::default(),
+            image_vertex_buffers: VertexBufferPool::default(),
+            pending_rect_vertices: Vec::with_capacity(256),
+            pending_image_vertices: Vec::with_capacity(256),
         })
     }
 
@@ -394,7 +426,7 @@ impl WgpuRenderer {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let prepared_commands = self.prepare_commands();
+        self.prepare_commands();
 
         let mut encoder = self
             .device
@@ -420,29 +452,39 @@ impl WgpuRenderer {
                 multiview_mask: None,
             });
 
-            for command in &prepared_commands {
+            for command_index in 0..self.prepared_commands.len() {
+                let command = self.prepared_commands[command_index];
                 match command {
                     PreparedCommand::Rect {
-                        buffer,
+                        buffer_index,
                         vertex_count,
                     } => {
+                        let Some(buffer) = self.rect_vertex_buffers.buffers.get(buffer_index)
+                        else {
+                            continue;
+                        };
+
                         pass.set_pipeline(&self.rect_pipeline);
-                        pass.set_vertex_buffer(0, buffer.slice(..));
-                        pass.draw(0..*vertex_count, 0..1);
+                        pass.set_vertex_buffer(0, buffer.buffer.slice(..));
+                        pass.draw(0..vertex_count, 0..1);
                     }
                     PreparedCommand::Image {
-                        texture_id,
-                        buffer,
+                        texture_index,
+                        buffer_index,
                         vertex_count,
                     } => {
-                        let Some(texture) = self.textures.get(texture_id) else {
+                        let Some(texture) = self.textures.get(texture_index) else {
+                            continue;
+                        };
+                        let Some(buffer) = self.image_vertex_buffers.buffers.get(buffer_index)
+                        else {
                             continue;
                         };
 
                         pass.set_pipeline(&self.image_pipeline);
                         pass.set_bind_group(0, &texture.bind_group, &[]);
-                        pass.set_vertex_buffer(0, buffer.slice(..));
-                        pass.draw(0..*vertex_count, 0..1);
+                        pass.set_vertex_buffer(0, buffer.buffer.slice(..));
+                        pass.draw(0..vertex_count, 0..1);
                     }
                 }
             }
@@ -454,122 +496,159 @@ impl WgpuRenderer {
         Ok(())
     }
 
-    fn prepare_commands(&mut self) -> Vec<PreparedCommand> {
-        let mut prepared = Vec::with_capacity(self.commands.len());
-        let mut pending: Option<PendingBatch> = None;
+    fn prepare_commands(&mut self) {
+        self.rect_vertex_buffers.reset();
+        self.image_vertex_buffers.reset();
+        self.pending_rect_vertices.clear();
+        self.pending_image_vertices.clear();
+        self.prepared_commands.clear();
+
+        let mut pending: Option<PendingBatchKind> = None;
         let mut stats = RenderStats {
             queued_commands: self.commands.len(),
             loaded_textures: self.textures.len(),
             ..RenderStats::default()
         };
 
-        for command in &self.commands {
+        for command_index in 0..self.commands.len() {
+            let command = self.commands[command_index];
             match command {
                 RenderCommand::Rect(command) => {
                     stats.rect_commands += 1;
-                    let vertices = self.build_rect_vertices(*command);
-                    match &mut pending {
-                        Some(PendingBatch::Rect(batch_vertices)) => {
-                            batch_vertices.extend_from_slice(&vertices);
-                        }
-                        _ => {
-                            self.flush_pending_batch(&mut pending, &mut prepared, &mut stats);
-                            pending = Some(PendingBatch::Rect(vertices.to_vec()));
-                        }
+                    let vertices = self.build_rect_vertices(command);
+                    if pending != Some(PendingBatchKind::Rect) {
+                        self.flush_pending_batch(&mut pending, &mut stats);
+                        pending = Some(PendingBatchKind::Rect);
                     }
+                    self.pending_rect_vertices.extend_from_slice(&vertices);
                 }
                 RenderCommand::Image(command) => {
                     stats.image_commands += 1;
-                    if command.texture_id.starts_with("__map_ground_cache_") {
+                    if command.is_ground_chunk {
                         stats.ground_chunk_commands += 1;
                     }
 
-                    if !self.textures.contains_key(&command.texture_id) {
+                    let Some(texture_index) = command.texture_index else {
                         stats.skipped_image_commands += 1;
-                        continue;
-                    }
-
-                    let Some(texture) = self.textures.get(&command.texture_id) else {
                         continue;
                     };
 
-                    let vertices = self.build_image_vertices(command, texture.size);
-                    match &mut pending {
-                        Some(PendingBatch::Image {
-                            texture_id,
-                            vertices: batch_vertices,
-                        }) if texture_id == &command.texture_id => {
-                            batch_vertices.extend_from_slice(&vertices);
-                        }
-                        _ => {
-                            self.flush_pending_batch(&mut pending, &mut prepared, &mut stats);
-                            pending = Some(PendingBatch::Image {
-                                texture_id: command.texture_id.clone(),
-                                vertices: vertices.to_vec(),
-                            });
-                        }
+                    let Some(texture) = self.textures.get(texture_index) else {
+                        stats.skipped_image_commands += 1;
+                        continue;
+                    };
+
+                    let vertices = self.build_image_vertices(&command, texture.size);
+                    if pending != Some(PendingBatchKind::Image(texture_index)) {
+                        self.flush_pending_batch(&mut pending, &mut stats);
+                        pending = Some(PendingBatchKind::Image(texture_index));
                     }
+                    self.pending_image_vertices.extend_from_slice(&vertices);
                 }
             }
         }
 
-        self.flush_pending_batch(&mut pending, &mut prepared, &mut stats);
-        stats.draw_calls = prepared.len();
+        self.flush_pending_batch(&mut pending, &mut stats);
+        stats.draw_calls = self.prepared_commands.len();
         self.last_frame_stats = stats;
-
-        prepared
     }
 
     fn flush_pending_batch(
-        &self,
-        pending: &mut Option<PendingBatch>,
-        prepared: &mut Vec<PreparedCommand>,
+        &mut self,
+        pending: &mut Option<PendingBatchKind>,
         stats: &mut RenderStats,
     ) {
-        let Some(batch) = pending.take() else {
+        let Some(batch_kind) = pending.take() else {
             return;
         };
 
-        match batch {
-            PendingBatch::Rect(vertices) => {
-                if vertices.is_empty() {
+        match batch_kind {
+            PendingBatchKind::Rect => {
+                if self.pending_rect_vertices.is_empty() {
                     return;
                 }
                 stats.rect_batches += 1;
                 stats.vertex_buffers += 1;
-                prepared.push(PreparedCommand::Rect {
-                    buffer: self.create_vertex_buffer("Rectangle Vertex Buffer", &vertices),
-                    vertex_count: vertices.len() as u32,
+                let vertex_count = self.pending_rect_vertices.len() as u32;
+                let buffer_index = Self::write_vertices_to_pool(
+                    &self.device,
+                    &self.queue,
+                    &mut self.rect_vertex_buffers,
+                    "Rectangle Vertex Buffer",
+                    &self.pending_rect_vertices,
+                );
+                self.prepared_commands.push(PreparedCommand::Rect {
+                    buffer_index,
+                    vertex_count,
                 });
+                self.pending_rect_vertices.clear();
             }
-            PendingBatch::Image {
-                texture_id,
-                vertices,
-            } => {
-                if vertices.is_empty() {
+            PendingBatchKind::Image(texture_index) => {
+                if self.pending_image_vertices.is_empty() {
                     return;
                 }
                 stats.image_batches += 1;
                 stats.vertex_buffers += 1;
-                prepared.push(PreparedCommand::Image {
-                    texture_id,
-                    buffer: self.create_vertex_buffer("Image Vertex Buffer", &vertices),
-                    vertex_count: vertices.len() as u32,
+                let vertex_count = self.pending_image_vertices.len() as u32;
+                let buffer_index = Self::write_vertices_to_pool(
+                    &self.device,
+                    &self.queue,
+                    &mut self.image_vertex_buffers,
+                    "Image Vertex Buffer",
+                    &self.pending_image_vertices,
+                );
+                self.prepared_commands.push(PreparedCommand::Image {
+                    texture_index,
+                    buffer_index,
+                    vertex_count,
                 });
+                self.pending_image_vertices.clear();
             }
         }
     }
 
-    fn create_vertex_buffer<T>(&self, label: &str, vertices: &[T]) -> wgpu::Buffer
+    fn write_vertices_to_pool<T>(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        pool: &mut VertexBufferPool,
+        label: &str,
+        vertices: &[T],
+    ) -> usize
     where
         T: Pod,
     {
-        self.device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some(label),
-                contents: bytemuck::cast_slice(vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            })
+        let bytes = bytemuck::cast_slice(vertices);
+        let required_bytes = bytes.len() as u64;
+        let capacity_bytes = required_bytes
+            .max(MIN_VERTEX_BUFFER_BYTES)
+            .next_power_of_two();
+        let buffer_index = pool.next;
+
+        if buffer_index == pool.buffers.len() {
+            pool.buffers.push(ReusableVertexBuffer {
+                buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(label),
+                    size: capacity_bytes,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }),
+                capacity_bytes,
+            });
+        } else if pool.buffers[buffer_index].capacity_bytes < required_bytes {
+            pool.buffers[buffer_index] = ReusableVertexBuffer {
+                buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(label),
+                    size: capacity_bytes,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }),
+                capacity_bytes,
+            };
+        }
+
+        queue.write_buffer(&pool.buffers[buffer_index].buffer, 0, bytes);
+        pool.next += 1;
+        buffer_index
     }
 
     fn build_rect_vertices(&self, command: RectCommand) -> [RectVertex; 6] {
@@ -772,21 +851,30 @@ impl Renderer for WgpuRenderer {
             ],
         });
 
-        self.textures.insert(
-            id.to_owned(),
-            GpuTexture {
-                _texture: texture,
-                _sampler: sampler,
-                bind_group,
-                size: Vec2::new(width as f32, height as f32),
-            },
-        );
+        let texture = GpuTexture {
+            _texture: texture,
+            _sampler: sampler,
+            bind_group,
+            size: Vec2::new(width as f32, height as f32),
+        };
+        if let Some(index) = self.texture_lookup.get(id).copied() {
+            if let Some(slot) = self.textures.get_mut(index) {
+                *slot = texture;
+            }
+        } else {
+            let index = self.textures.len();
+            self.textures.push(texture);
+            self.texture_lookup.insert(id.to_owned(), index);
+        }
 
         Ok(())
     }
 
     fn texture_size(&self, id: &str) -> Option<Vec2> {
-        self.textures.get(id).map(|texture| texture.size)
+        self.texture_lookup
+            .get(id)
+            .and_then(|index| self.textures.get(*index))
+            .map(|texture| texture.size)
     }
 
     fn screen_size(&self) -> Vec2 {
@@ -825,15 +913,7 @@ impl Renderer for WgpuRenderer {
     }
 
     fn draw_image(&mut self, texture_id: &str, rect: Rect, tint: Color) {
-        self.commands.push(RenderCommand::Image(ImageCommand {
-            camera: self.camera,
-            texture_id: texture_id.to_owned(),
-            rect,
-            source: None,
-            tint,
-            flip_x: false,
-            rotation: 0,
-        }));
+        self.queue_image_command(texture_id, rect, None, tint, false, 0);
     }
 
     fn draw_image_transformed(
@@ -844,27 +924,11 @@ impl Renderer for WgpuRenderer {
         flip_x: bool,
         rotation: i32,
     ) {
-        self.commands.push(RenderCommand::Image(ImageCommand {
-            camera: self.camera,
-            texture_id: texture_id.to_owned(),
-            rect,
-            source: None,
-            tint,
-            flip_x,
-            rotation,
-        }));
+        self.queue_image_command(texture_id, rect, None, tint, flip_x, rotation);
     }
 
     fn draw_image_region(&mut self, texture_id: &str, rect: Rect, source: Rect, tint: Color) {
-        self.commands.push(RenderCommand::Image(ImageCommand {
-            camera: self.camera,
-            texture_id: texture_id.to_owned(),
-            rect,
-            source: Some(source),
-            tint,
-            flip_x: false,
-            rotation: 0,
-        }));
+        self.queue_image_command(texture_id, rect, Some(source), tint, false, 0);
     }
 
     fn draw_image_region_transformed(
@@ -876,11 +940,26 @@ impl Renderer for WgpuRenderer {
         flip_x: bool,
         rotation: i32,
     ) {
+        self.queue_image_command(texture_id, rect, Some(source), tint, flip_x, rotation);
+    }
+}
+
+impl WgpuRenderer {
+    fn queue_image_command(
+        &mut self,
+        texture_id: &str,
+        rect: Rect,
+        source: Option<Rect>,
+        tint: Color,
+        flip_x: bool,
+        rotation: i32,
+    ) {
         self.commands.push(RenderCommand::Image(ImageCommand {
             camera: self.camera,
-            texture_id: texture_id.to_owned(),
+            texture_index: self.texture_lookup.get(texture_id).copied(),
+            is_ground_chunk: texture_id.starts_with("__map_ground_cache_"),
             rect,
-            source: Some(source),
+            source,
             tint,
             flip_x,
             rotation,

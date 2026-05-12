@@ -5,21 +5,7 @@ use super::state::{OutlinerBadge, OutlinerEntry, SelectedItem};
 
 pub(crate) const OUTLINER_GROUPS: &[&str] =
     &["Spawns", "Entities", "Objects", "Decals", "Zones", "Ground"];
-pub(crate) const EDITOR_KNOWN_ZONE_TYPES: &[&str] = &[
-    "ScanArea",
-    "MapTransition",
-    "NoSpawn",
-    "CameraBounds",
-    "WalkSurface",
-    "SurfaceGate",
-    "CollisionArea",
-    "CollisionLine",
-    "HazardZone",
-    "PromptZone",
-    "ObjectiveZone",
-    "Checkpoint",
-    "Trigger",
-];
+pub(crate) const EDITOR_KNOWN_ZONE_TYPES: &[&str] = content::semantics::KNOWN_ZONE_TYPE_KEYS;
 
 pub(crate) fn outliner_entry(
     group: &'static str,

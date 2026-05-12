@@ -81,7 +81,7 @@ pub(crate) fn apply_kind_defaults(draft: &mut AssetDraft) {
             draft.anchor = AnchorKind::BottomCenter;
             draft.snap = SnapMode::Grid;
             if draft.entity_type.trim().is_empty() {
-                draft.entity_type = "Decoration".to_owned();
+                draft.entity_type = content::semantics::ENTITY_DECORATION.to_owned();
             }
         }
         AssetKind::Zone => {
