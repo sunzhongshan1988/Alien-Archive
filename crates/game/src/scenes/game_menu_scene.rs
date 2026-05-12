@@ -1,23 +1,20 @@
-use std::{collections::BTreeMap, ops::Range, path::Path};
+use std::path::Path;
 
 use anyhow::Result;
-use content::{CodexEntry, items};
 use runtime::{Button, Color, InputState, Rect, Renderer, SceneCommand, Vec2};
 use rusttype::Font;
 
 use crate::objectives::ObjectiveMenuRow;
 use crate::save::{ActivityLogEntrySave, InventorySave, PlayerProfileSave};
 use crate::ui::game_menu_content::{
-    BOTTOM_ACTIONS, activity_category_label, activity_log_empty, activity_log_header,
-    category_label, close_hint, codex_discoveries_title, compact_vital_label, empty_slot_body,
-    empty_slot_title, equipment_empty_slot, equipment_hint, equipment_modules_header,
-    equipment_no_modules, equipment_quickbar_header, equipment_status_header, equipment_subtitle,
-    equipment_title, inventory_hint, language_option_label, language_setting_label, locked_label,
-    map_labels, menu_status, placeholder_text, profile_core_header, profile_level_label,
-    profile_research_header, quantity_label, rarity_label, research_label, return_label,
-    return_sublabel, settings_hint, stack_limit_label, stat_header, tab_index, tab_label,
-    tab_sublabel, tab_subtitle, tab_title, top_location_label, top_location_value,
-    top_status_label, top_status_value,
+    BOTTOM_ACTIONS, activity_log_empty, activity_log_header, close_hint, codex_discoveries_title,
+    compact_vital_label, empty_slot_body, empty_slot_title, equipment_empty_slot, equipment_hint,
+    equipment_modules_header, equipment_no_modules, equipment_quickbar_header,
+    equipment_status_header, equipment_subtitle, equipment_title, inventory_hint,
+    language_option_label, language_setting_label, map_labels, menu_status, placeholder_text,
+    profile_core_header, profile_level_label, profile_research_header, return_label,
+    return_sublabel, settings_hint, stat_header, tab_index, tab_label, tab_sublabel, tab_subtitle,
+    tab_title, top_location_label, top_location_value, top_status_label, top_status_value,
 };
 use crate::ui::layout::{Align, Grid, Insets, Justify, Stack};
 use crate::ui::menu_style::{
@@ -32,6 +29,26 @@ use crate::ui::menu_widgets::{
 };
 use crate::ui::text::{TextSprite, draw_text, draw_text_centered, load_ui_font, upload_text};
 
+use super::game_menu_activity::{
+    ACTIVITY_LOG_ROW_GAP, ACTIVITY_LOG_ROW_HEIGHT, ActivityLogRowText, activity_category_color,
+    activity_log_clamped_scroll, activity_log_panel_rect, activity_log_row_area_rect,
+    activity_log_scroll_from_track, activity_log_scrollbar_track_rect, activity_log_scrolled,
+    activity_log_visible_capacity, activity_log_visible_range, activity_objective_panel_rect,
+    draw_activity_log_scrollbar, short_activity_text, upload_activity_log_rows,
+};
+use super::game_menu_art::{draw_bottom_icon, draw_nav_icon};
+use super::game_menu_codex::{
+    CodexEntryCardText, CodexMenuSnapshot, CodexSummaryText, codex_summary_views,
+    upload_codex_entry_cards,
+};
+use super::game_menu_feedback::{
+    GameMenuToast, GameMenuToastTone, draw_game_menu_toast, game_menu_action_pending_message,
+    game_menu_log_jump_message, game_menu_save_error_message, game_menu_save_success_message,
+};
+use super::game_menu_inventory::{
+    InventoryDetailText, equipment_module_slots, inventory_capacity, upload_inventory_slot_counts,
+    upload_inventory_slot_details,
+};
 use super::{GameContext, GameMenuTab, Language, RenderContext, Scene, SceneId};
 use super::{inventory_scene, profile_scene};
 
@@ -40,14 +57,6 @@ const EXPLORER_PORTRAIT_PATH: &str = "assets/images/ui/profile/explorer_portrait
 const CODEX_VISIBLE_ROWS: usize = 4;
 const CODEX_VISIBLE_COLUMNS: usize = 2;
 const CODEX_VISIBLE_COUNT: usize = CODEX_VISIBLE_ROWS * CODEX_VISIBLE_COLUMNS;
-const ACTIVITY_LOG_ROW_HEIGHT: f32 = 55.0;
-const ACTIVITY_LOG_ROW_GAP: f32 = 8.0;
-const ACTIVITY_LOG_HEADER_HEIGHT: f32 = 62.0;
-const ACTIVITY_LOG_BOTTOM_PADDING: f32 = 16.0;
-const MENU_TOAST_VISIBLE_TIME: f32 = 2.8;
-const MENU_TOAST_WIDTH: f32 = 560.0;
-const MENU_TOAST_HEIGHT: f32 = 42.0;
-
 #[derive(Default)]
 struct GameMenuText {
     language: Option<Language>,
@@ -111,106 +120,15 @@ struct GameMenuText {
     toast: Option<TextSprite>,
 }
 
-struct InventoryDetailText {
-    name: TextSprite,
-    category: TextSprite,
-    quantity: TextSprite,
-    rarity: TextSprite,
-    stack_limit: TextSprite,
-    research: TextSprite,
-    lock_state: Option<TextSprite>,
-}
-
-struct CodexSummaryText {
-    label: TextSprite,
-    value: TextSprite,
-    ratio: f32,
-}
-
-struct CodexEntryCardText {
-    title: TextSprite,
-    category: TextSprite,
-    status: TextSprite,
-    description_lines: Vec<TextSprite>,
-    unlocked: bool,
-}
-
 struct ObjectiveRowText {
     label: TextSprite,
     status: TextSprite,
     progress: u32,
 }
 
-struct ActivityLogRowText {
-    category: TextSprite,
-    title: TextSprite,
-    detail: TextSprite,
-    meta: TextSprite,
-    category_key: String,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum GameMenuToastTone {
-    Info,
-    Success,
-    Error,
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum GameMenuBottomPage {
     Equipment,
-}
-
-#[derive(Clone, Debug)]
-struct GameMenuToast {
-    message: String,
-    tone: GameMenuToastTone,
-    remaining: f32,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct CodexMenuSnapshot {
-    entries: Vec<CodexEntryView>,
-}
-
-impl CodexMenuSnapshot {
-    fn from_context(ctx: &GameContext) -> Self {
-        Self {
-            entries: ctx
-                .codex_database
-                .entries()
-                .iter()
-                .map(|entry| {
-                    CodexEntryView::from_entry(entry, ctx.scanned_codex_ids.contains(&entry.id))
-                })
-                .collect(),
-        }
-    }
-
-    fn unlocked_count(&self) -> usize {
-        self.entries.iter().filter(|entry| entry.unlocked).count()
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct CodexEntryView {
-    id: String,
-    title: String,
-    category: String,
-    description: String,
-    unlocked: bool,
-}
-
-impl CodexEntryView {
-    fn from_entry(entry: &CodexEntry, unlocked: bool) -> Self {
-        Self {
-            id: entry.id.clone(),
-            title: non_empty_or(&entry.title, &entry.id).to_owned(),
-            category: non_empty_or(&entry.category, "Unknown").to_owned(),
-            description: entry.description.clone(),
-            unlocked,
-        }
-    }
 }
 
 pub struct GameMenuScene {
@@ -239,7 +157,10 @@ impl GameMenuScene {
             selected_inventory_slot: 0,
             selected_codex_entry: 0,
             activity_log_scroll: 0,
-            codex_snapshot: CodexMenuSnapshot::from_context(ctx),
+            codex_snapshot: CodexMenuSnapshot::from_database(
+                &ctx.codex_database,
+                &ctx.scanned_codex_ids,
+            ),
             profile_snapshot: ctx.save_data.profile.clone(),
             inventory_snapshot: ctx.save_data.inventory.clone(),
             collection_snapshot: ctx.save_data.world.collected_entities.len(),
@@ -269,7 +190,8 @@ impl GameMenuScene {
     }
 
     fn sync_codex_snapshot(&mut self, ctx: &GameContext) {
-        let snapshot = CodexMenuSnapshot::from_context(ctx);
+        let snapshot =
+            CodexMenuSnapshot::from_database(&ctx.codex_database, &ctx.scanned_codex_ids);
         if snapshot == self.codex_snapshot {
             return;
         }
@@ -315,48 +237,27 @@ impl GameMenuScene {
         self.text = GameMenuText::default();
     }
 
-    fn max_activity_log_scroll(&self, visible_rows: usize) -> usize {
-        self.activity_log_snapshot
-            .len()
-            .saturating_sub(visible_rows.max(1))
-    }
-
     fn clamp_activity_log_scroll(&mut self) {
-        self.activity_log_scroll = self
-            .activity_log_scroll
-            .min(self.activity_log_snapshot.len().saturating_sub(1));
+        self.activity_log_scroll =
+            activity_log_clamped_scroll(self.activity_log_scroll, self.activity_log_snapshot.len());
     }
 
     fn scroll_activity_log(&mut self, rows: isize, visible_rows: usize) {
-        if rows == 0 {
-            return;
-        }
-
-        let current = self.activity_log_scroll as isize;
-        let max_scroll = self.max_activity_log_scroll(visible_rows) as isize;
-        self.activity_log_scroll = (current + rows).clamp(0, max_scroll) as usize;
+        self.activity_log_scroll = activity_log_scrolled(
+            self.activity_log_scroll,
+            rows,
+            self.activity_log_snapshot.len(),
+            visible_rows,
+        );
     }
 
     fn set_activity_log_scroll_from_track(&mut self, cursor_y: f32, layout: &MenuLayout) {
-        let log_panel = activity_log_panel_rect(layout);
-        let visible_rows = activity_log_visible_capacity(log_panel, layout.scale);
-        let max_scroll = self.max_activity_log_scroll(visible_rows);
-        if max_scroll == 0 {
-            self.activity_log_scroll = 0;
-            return;
-        }
-
-        let track = activity_log_scrollbar_track_rect(log_panel, layout.scale);
-        let ratio = ((cursor_y - track.origin.y) / track.size.y).clamp(0.0, 1.0);
-        self.activity_log_scroll = (ratio * max_scroll as f32).round() as usize;
+        self.activity_log_scroll =
+            activity_log_scroll_from_track(cursor_y, layout, self.activity_log_snapshot.len());
     }
 
     fn show_toast(&mut self, message: impl Into<String>, tone: GameMenuToastTone) {
-        self.toast = Some(GameMenuToast {
-            message: message.into(),
-            tone,
-            remaining: MENU_TOAST_VISIBLE_TIME,
-        });
+        self.toast = Some(GameMenuToast::new(message, tone));
         self.text = GameMenuText::default();
     }
 
@@ -862,23 +763,7 @@ impl GameMenuScene {
         let (Some(toast), Some(text)) = (&self.toast, &self.text.toast) else {
             return;
         };
-        let rect = game_menu_toast_rect(layout);
-        draw_screen_rect(renderer, viewport, rect, game_menu_toast_fill(toast.tone));
-        draw_border(
-            renderer,
-            viewport,
-            rect,
-            1.0 * layout.scale,
-            game_menu_toast_border(toast.tone),
-        );
-        draw_text_centered(
-            renderer,
-            text,
-            viewport,
-            rect.origin.x + rect.size.x * 0.5,
-            centered_text_y(rect, text, 0.0),
-            game_menu_toast_text(toast.tone),
-        );
+        draw_game_menu_toast(renderer, viewport, layout, toast, text);
     }
 
     fn draw_content(&self, renderer: &mut dyn Renderer, viewport: Vec2, layout: &MenuLayout) {
@@ -1511,7 +1396,7 @@ impl GameMenuScene {
         panel: Rect,
     ) {
         let slots = inventory_scene::inventory_slots(&self.inventory_snapshot);
-        let module_slots = self.equipment_module_slots();
+        let module_slots = equipment_module_slots(&self.inventory_snapshot);
         if module_slots.is_empty() {
             if let Some(empty) = &self.text.equipment_no_modules {
                 draw_text(
@@ -1693,19 +1578,6 @@ impl GameMenuScene {
                 layout.scale,
             );
         }
-    }
-
-    fn equipment_module_slots(&self) -> Vec<usize> {
-        self.inventory_snapshot
-            .slots
-            .iter()
-            .enumerate()
-            .filter_map(|(index, stack)| {
-                let stack = stack.as_ref()?;
-                is_equipment_module(&stack.item_id, stack.locked).then_some(index)
-            })
-            .take(4)
-            .collect()
     }
 
     fn draw_inventory_page(
@@ -2597,30 +2469,16 @@ impl GameMenuScene {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        let inventory_slots = inventory_scene::inventory_slots(&self.inventory_snapshot);
-        let inventory_used = inventory_slots.iter().filter(|slot| slot.is_some()).count();
+        let (inventory_used, inventory_total) = inventory_capacity(&self.inventory_snapshot);
         self.text.inventory_capacity = Some(upload_text(
             renderer,
             font,
             "game_menu_inventory_capacity",
-            &format!("{inventory_used} / {}", inventory_slots.len()),
+            &format!("{inventory_used} / {inventory_total}"),
             17.0,
         )?);
-        self.text.inventory_slot_counts = inventory_slots
-            .iter()
-            .copied()
-            .enumerate()
-            .map(|(index, item)| match item {
-                Some(item) => Ok(Some(upload_text(
-                    renderer,
-                    font,
-                    &format!("game_menu_inventory_count_{index}"),
-                    &item.quantity.to_string(),
-                    14.0,
-                )?)),
-                None => Ok(None),
-            })
-            .collect::<Result<Vec<_>>>()?;
+        self.text.inventory_slot_counts =
+            upload_inventory_slot_counts(renderer, font, &self.inventory_snapshot)?;
         self.text.inventory_slot_details =
             upload_inventory_slot_details(renderer, font, language, &self.inventory_snapshot)?;
         self.text.inventory_empty_title = Some(upload_text(
@@ -2807,45 +2665,8 @@ impl GameMenuScene {
             activity_log_empty(language).as_ref(),
             16.0,
         )?);
-        self.text.activity_log_rows = self
-            .activity_log_snapshot
-            .iter()
-            .rev()
-            .enumerate()
-            .map(|(index, entry)| {
-                Ok(ActivityLogRowText {
-                    category: upload_text(
-                        renderer,
-                        font,
-                        &format!("game_menu_activity_category_{index}"),
-                        activity_category_label(&entry.category, language).as_ref(),
-                        14.0,
-                    )?,
-                    title: upload_text(
-                        renderer,
-                        font,
-                        &format!("game_menu_activity_title_{index}"),
-                        &short_activity_text(&entry.title, 28),
-                        17.0,
-                    )?,
-                    detail: upload_text(
-                        renderer,
-                        font,
-                        &format!("game_menu_activity_detail_{index}"),
-                        &short_activity_text(&entry.detail, 58),
-                        14.0,
-                    )?,
-                    meta: upload_text(
-                        renderer,
-                        font,
-                        &format!("game_menu_activity_meta_{index}"),
-                        &activity_log_meta(entry, language),
-                        13.0,
-                    )?,
-                    category_key: entry.category.clone(),
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
+        self.text.activity_log_rows =
+            upload_activity_log_rows(renderer, font, &self.activity_log_snapshot, language)?;
         self.text.settings_language = Some(upload_text(
             renderer,
             font,
@@ -3132,28 +2953,6 @@ fn load_menu_textures(renderer: &mut dyn Renderer) -> Result<()> {
     Ok(())
 }
 
-fn nav_icon_texture_id(tab: GameMenuTab) -> &'static str {
-    match tab {
-        GameMenuTab::Profile => "menu.nav_profile",
-        GameMenuTab::Inventory => "menu.nav_inventory",
-        GameMenuTab::Codex => "menu.nav_codex",
-        GameMenuTab::Map => "menu.nav_map",
-        GameMenuTab::Quests => "menu.nav_quests",
-        GameMenuTab::Settings => "menu.nav_settings",
-    }
-}
-
-fn bottom_action_texture_id(index: usize) -> &'static str {
-    match index {
-        0 => "menu.action_equip",
-        1 => "menu.action_skills",
-        2 => "menu.action_logs",
-        3 => "menu.action_craft",
-        4 => "menu.action_comms",
-        _ => "menu.action_save",
-    }
-}
-
 fn attribute_icon_texture_id(index: usize) -> &'static str {
     match index {
         0 => "menu.attr_survival",
@@ -3188,299 +2987,6 @@ fn xp_ratio(profile: &PlayerProfileSave) -> f32 {
     }
 
     profile.xp as f32 / profile.xp_next as f32
-}
-
-fn is_equipment_module(item_id: &str, locked: bool) -> bool {
-    items::is_equipment_module(item_id, locked)
-}
-
-fn upload_inventory_slot_details(
-    renderer: &mut dyn Renderer,
-    font: &Font<'static>,
-    language: Language,
-    inventory: &InventorySave,
-) -> Result<Vec<Option<InventoryDetailText>>> {
-    let mut details = Vec::with_capacity(grid::INVENTORY_SLOTS);
-    for (index, item) in inventory_scene::inventory_slots(inventory)
-        .into_iter()
-        .enumerate()
-    {
-        let Some(item) = item else {
-            details.push(None);
-            continue;
-        };
-
-        details.push(Some(InventoryDetailText {
-            name: upload_text(
-                renderer,
-                font,
-                &format!("game_menu_inventory_detail_name_{index}"),
-                item.name(language),
-                24.0,
-            )?,
-            category: upload_text(
-                renderer,
-                font,
-                &format!("game_menu_inventory_detail_category_{index}"),
-                &format!("{}: {}", category_label(language), item.category(language)),
-                17.0,
-            )?,
-            quantity: upload_text(
-                renderer,
-                font,
-                &format!("game_menu_inventory_detail_quantity_{index}"),
-                &format!("{}: {}", quantity_label(language), item.quantity),
-                17.0,
-            )?,
-            rarity: upload_text(
-                renderer,
-                font,
-                &format!("game_menu_inventory_detail_rarity_{index}"),
-                &format!("{}: {}", rarity_label(language), item.rarity(language)),
-                18.0,
-            )?,
-            stack_limit: upload_text(
-                renderer,
-                font,
-                &format!("game_menu_inventory_detail_stack_{index}"),
-                &format!("{}: {}", stack_limit_label(language), item.max_stack),
-                17.0,
-            )?,
-            research: upload_text(
-                renderer,
-                font,
-                &format!("game_menu_inventory_detail_research_{index}"),
-                &format!("{}: {}%", research_label(language), item.research),
-                17.0,
-            )?,
-            lock_state: if item.locked {
-                Some(upload_text(
-                    renderer,
-                    font,
-                    &format!("game_menu_inventory_detail_lock_{index}"),
-                    locked_label(language).as_ref(),
-                    17.0,
-                )?)
-            } else {
-                None
-            },
-        }));
-    }
-
-    Ok(details)
-}
-
-#[derive(Clone, Debug)]
-struct CodexSummaryView {
-    label: String,
-    value: String,
-    ratio: f32,
-}
-
-fn codex_summary_views(snapshot: &CodexMenuSnapshot, language: Language) -> Vec<CodexSummaryView> {
-    let mut by_category = BTreeMap::<String, (usize, usize)>::new();
-    for entry in &snapshot.entries {
-        let counts = by_category.entry(entry.category.clone()).or_default();
-        counts.1 += 1;
-        if entry.unlocked {
-            counts.0 += 1;
-        }
-    }
-
-    let mut summaries = by_category
-        .into_iter()
-        .map(|(category, (unlocked, total))| CodexSummaryView {
-            label: category,
-            value: format!("{unlocked} / {total}"),
-            ratio: unlocked as f32 / total.max(1) as f32,
-        })
-        .collect::<Vec<_>>();
-    summaries.sort_by(|left, right| right.ratio.total_cmp(&left.ratio));
-    summaries.truncate(4);
-
-    if summaries.is_empty() {
-        summaries.push(CodexSummaryView {
-            label: match language {
-                Language::Chinese => "图鉴数据库".to_owned(),
-                Language::English => "Codex Database".to_owned(),
-            },
-            value: "0 / 0".to_owned(),
-            ratio: 0.0,
-        });
-    }
-
-    summaries
-}
-
-fn upload_codex_entry_cards(
-    renderer: &mut dyn Renderer,
-    font: &Font<'static>,
-    language: Language,
-    snapshot: &CodexMenuSnapshot,
-) -> Result<Vec<CodexEntryCardText>> {
-    snapshot
-        .entries
-        .iter()
-        .enumerate()
-        .map(|(index, entry)| {
-            let title = if entry.unlocked {
-                entry.title.as_str()
-            } else {
-                locked_codex_title(language)
-            };
-            let description = if entry.unlocked {
-                non_empty_or(&entry.description, codex_empty_description(language))
-            } else {
-                locked_codex_description(language)
-            };
-            let description_lines = wrap_text(description, 54, 2);
-
-            Ok(CodexEntryCardText {
-                title: upload_text(
-                    renderer,
-                    font,
-                    &format!("game_menu_codex_entry_title_{index}"),
-                    title,
-                    19.0,
-                )?,
-                category: upload_text(
-                    renderer,
-                    font,
-                    &format!("game_menu_codex_entry_category_{index}"),
-                    &entry.category,
-                    14.0,
-                )?,
-                status: upload_text(
-                    renderer,
-                    font,
-                    &format!("game_menu_codex_entry_status_{index}"),
-                    codex_status_label(language, entry.unlocked),
-                    14.0,
-                )?,
-                description_lines: description_lines
-                    .iter()
-                    .enumerate()
-                    .map(|(line_index, line)| {
-                        upload_text(
-                            renderer,
-                            font,
-                            &format!("game_menu_codex_entry_desc_{index}_{line_index}"),
-                            line,
-                            13.0,
-                        )
-                    })
-                    .collect::<Result<Vec<_>>>()?,
-                unlocked: entry.unlocked,
-            })
-        })
-        .collect()
-}
-
-fn locked_codex_title(language: Language) -> &'static str {
-    match language {
-        Language::Chinese => "未识别条目",
-        Language::English => "Undiscovered Entry",
-    }
-}
-
-fn codex_status_label(language: Language, unlocked: bool) -> &'static str {
-    match (language, unlocked) {
-        (Language::Chinese, true) => "已解锁",
-        (Language::Chinese, false) => "未扫描",
-        (Language::English, true) => "Unlocked",
-        (Language::English, false) => "Locked",
-    }
-}
-
-fn locked_codex_description(language: Language) -> &'static str {
-    match language {
-        Language::Chinese => "靠近目标并完成扫描后显示完整记录。",
-        Language::English => "Scan the target to unlock the full field record.",
-    }
-}
-
-fn codex_empty_description(language: Language) -> &'static str {
-    match language {
-        Language::Chinese => "该条目还没有正文记录。",
-        Language::English => "No field note has been written for this entry.",
-    }
-}
-
-fn wrap_text(text: &str, max_chars: usize, max_lines: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    let mut current = String::new();
-
-    for word in text.split_whitespace() {
-        let next_len = if current.is_empty() {
-            word.len()
-        } else {
-            current.len() + 1 + word.len()
-        };
-        if next_len > max_chars && !current.is_empty() {
-            lines.push(current);
-            current = String::new();
-            if lines.len() == max_lines {
-                break;
-            }
-        }
-        if !current.is_empty() {
-            current.push(' ');
-        }
-        current.push_str(word);
-    }
-
-    if !current.is_empty() && lines.len() < max_lines {
-        lines.push(current);
-    }
-    if lines.is_empty() {
-        lines.push(String::new());
-    }
-
-    lines
-}
-
-fn non_empty_or<'a>(value: &'a str, fallback: &'a str) -> &'a str {
-    let value = value.trim();
-    if value.is_empty() { fallback } else { value }
-}
-
-fn short_activity_text(text: &str, max_chars: usize) -> String {
-    let trimmed = text.trim();
-    let count = trimmed.chars().count();
-    if count <= max_chars {
-        return trimmed.to_owned();
-    }
-
-    let mut shortened = trimmed
-        .chars()
-        .take(max_chars.saturating_sub(3))
-        .collect::<String>();
-    shortened.push_str("...");
-    shortened
-}
-
-fn activity_log_meta(entry: &ActivityLogEntrySave, language: Language) -> String {
-    let scene = if entry.scene.trim().is_empty() {
-        "-"
-    } else {
-        entry.scene.as_str()
-    };
-    let prefix = match language {
-        Language::Chinese => "记录",
-        Language::English => "Log",
-    };
-    format!("{prefix} #{:03} · {scene}", entry.sequence)
-}
-
-fn activity_category_color(category: &str) -> Color {
-    match category {
-        "pickup" => Color::rgba(0.06, 0.34, 0.22, 0.88),
-        "scan" => Color::rgba(0.07, 0.28, 0.42, 0.88),
-        "unlock" => Color::rgba(0.30, 0.20, 0.48, 0.88),
-        "status" => Color::rgba(0.42, 0.24, 0.08, 0.88),
-        "objective" => Color::rgba(0.04, 0.36, 0.34, 0.88),
-        _ => Color::rgba(0.16, 0.24, 0.28, 0.88),
-    }
 }
 
 fn draw_crystal_glyph(renderer: &mut dyn Renderer, viewport: Vec2, rect: Rect, scale: f32) {
@@ -3625,211 +3131,6 @@ fn centered_text_y(rect: Rect, text: &TextSprite, y_offset: f32) -> f32 {
     let text_padding = 8.0;
     let visual_height = (text.size.y - text_padding * 2.0).max(0.0);
     rect.origin.y + (rect.size.y - visual_height) * 0.5 + y_offset - text_padding
-}
-
-fn activity_objective_panel_rect(layout: &MenuLayout) -> Rect {
-    let content = layout.content_body();
-    Rect::new(
-        content.origin,
-        Vec2::new(content.size.x, 166.0 * layout.scale),
-    )
-}
-
-fn activity_log_panel_rect(layout: &MenuLayout) -> Rect {
-    let objective_panel = activity_objective_panel_rect(layout);
-    let top = objective_panel.bottom() + 18.0 * layout.scale;
-    let bottom = layout.bottom.origin.y - 12.0 * layout.scale;
-    Rect::new(
-        Vec2::new(layout.content_body().origin.x, top),
-        Vec2::new(layout.content_body().size.x, (bottom - top).max(0.0)),
-    )
-}
-
-fn activity_log_row_area_rect(log_panel: Rect, scale: f32) -> Rect {
-    let top = log_panel.origin.y + ACTIVITY_LOG_HEADER_HEIGHT * scale;
-    let bottom = log_panel.bottom() - ACTIVITY_LOG_BOTTOM_PADDING * scale;
-    Rect::new(
-        Vec2::new(log_panel.origin.x + 18.0 * scale, top),
-        Vec2::new(
-            (log_panel.size.x - 36.0 * scale).max(0.0),
-            (bottom - top).max(0.0),
-        ),
-    )
-}
-
-fn activity_log_visible_capacity(log_panel: Rect, scale: f32) -> usize {
-    let rows = activity_log_row_area_rect(log_panel, scale);
-    let row_height = ACTIVITY_LOG_ROW_HEIGHT * scale;
-    let row_gap = ACTIVITY_LOG_ROW_GAP * scale;
-    if rows.size.y < row_height {
-        return 1;
-    }
-
-    ((rows.size.y + row_gap) / (row_height + row_gap))
-        .floor()
-        .max(1.0) as usize
-}
-
-fn activity_log_visible_range(
-    total_rows: usize,
-    scroll: usize,
-    visible_rows: usize,
-) -> Range<usize> {
-    let visible_rows = visible_rows.max(1);
-    let start = scroll.min(total_rows.saturating_sub(visible_rows));
-    let end = (start + visible_rows).min(total_rows);
-    start..end
-}
-
-fn activity_log_scrollbar_track_rect(log_panel: Rect, scale: f32) -> Rect {
-    Rect::new(
-        Vec2::new(
-            log_panel.right() - 18.0 * scale,
-            log_panel.origin.y + 58.0 * scale,
-        ),
-        Vec2::new(
-            4.0 * scale,
-            (log_panel.size.y - 76.0 * scale).max(24.0 * scale),
-        ),
-    )
-}
-
-fn draw_activity_log_scrollbar(
-    renderer: &mut dyn Renderer,
-    viewport: Vec2,
-    log_panel: Rect,
-    total_rows: usize,
-    scroll: usize,
-    visible_rows: usize,
-    scale: f32,
-) {
-    let track = activity_log_scrollbar_track_rect(log_panel, scale);
-    draw_screen_rect(
-        renderer,
-        viewport,
-        track,
-        Color::rgba(0.035, 0.082, 0.096, 0.86),
-    );
-
-    let visible_ratio = (visible_rows.max(1) as f32 / total_rows.max(1) as f32).min(1.0);
-    let thumb_height = (track.size.y * visible_ratio).max(24.0 * scale);
-    let max_scroll = total_rows.saturating_sub(visible_rows.max(1));
-    let thumb_travel = (track.size.y - thumb_height).max(0.0);
-    let scroll_ratio = if max_scroll == 0 {
-        0.0
-    } else {
-        scroll.min(max_scroll) as f32 / max_scroll as f32
-    };
-    let thumb = Rect::new(
-        Vec2::new(track.origin.x, track.origin.y + thumb_travel * scroll_ratio),
-        Vec2::new(track.size.x, thumb_height),
-    );
-    draw_screen_rect(
-        renderer,
-        viewport,
-        thumb,
-        Color::rgba(0.40, 0.94, 1.0, 0.92),
-    );
-}
-
-fn game_menu_toast_rect(layout: &MenuLayout) -> Rect {
-    let width = (MENU_TOAST_WIDTH * layout.scale).min(layout.root.size.x - 48.0 * layout.scale);
-    Rect::new(
-        Vec2::new(
-            layout.root.origin.x + (layout.root.size.x - width) * 0.5,
-            layout.bottom.origin.y - (MENU_TOAST_HEIGHT + 12.0) * layout.scale,
-        ),
-        Vec2::new(width, MENU_TOAST_HEIGHT * layout.scale),
-    )
-}
-
-fn game_menu_toast_fill(tone: GameMenuToastTone) -> Color {
-    match tone {
-        GameMenuToastTone::Info => Color::rgba(0.015, 0.052, 0.066, 0.94),
-        GameMenuToastTone::Success => Color::rgba(0.018, 0.090, 0.062, 0.95),
-        GameMenuToastTone::Error => Color::rgba(0.126, 0.032, 0.034, 0.95),
-    }
-}
-
-fn game_menu_toast_border(tone: GameMenuToastTone) -> Color {
-    match tone {
-        GameMenuToastTone::Info => Color::rgba(0.34, 0.90, 1.0, 0.88),
-        GameMenuToastTone::Success => Color::rgba(0.42, 1.0, 0.72, 0.90),
-        GameMenuToastTone::Error => Color::rgba(1.0, 0.42, 0.42, 0.92),
-    }
-}
-
-fn game_menu_toast_text(tone: GameMenuToastTone) -> Color {
-    match tone {
-        GameMenuToastTone::Info => Color::rgba(0.82, 0.96, 1.0, 1.0),
-        GameMenuToastTone::Success => Color::rgba(0.82, 1.0, 0.90, 1.0),
-        GameMenuToastTone::Error => Color::rgba(1.0, 0.82, 0.82, 1.0),
-    }
-}
-
-fn game_menu_log_jump_message(language: Language) -> &'static str {
-    match language {
-        Language::Chinese => "已切到外勤日志",
-        Language::English => "Field log opened",
-    }
-}
-
-fn game_menu_action_pending_message(language: Language) -> &'static str {
-    match language {
-        Language::Chinese => "这个动作还在接入中",
-        Language::English => "This action is still being wired in",
-    }
-}
-
-fn game_menu_save_success_message(language: Language, save_path: &Path) -> String {
-    let target = save_target_label(language, save_path);
-    match language {
-        Language::Chinese => format!("已手动保存到 {target}"),
-        Language::English => format!("Saved manually to {target}"),
-    }
-}
-
-fn game_menu_save_error_message(language: Language, detail: &str) -> String {
-    match language {
-        Language::Chinese => format!("手动保存失败：{}", short_menu_error_detail(detail)),
-        Language::English => format!("Manual save failed: {}", short_menu_error_detail(detail)),
-    }
-}
-
-fn save_target_label(language: Language, save_path: &Path) -> String {
-    if let Some(slot_index) = save_slot_index_from_path(save_path) {
-        return match language {
-            Language::Chinese => format!("槽位 {}", slot_index + 1),
-            Language::English => format!("Slot {}", slot_index + 1),
-        };
-    }
-
-    save_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| !name.is_empty())
-        .unwrap_or("save")
-        .to_owned()
-}
-
-fn save_slot_index_from_path(save_path: &Path) -> Option<usize> {
-    let stem = save_path.file_stem()?.to_str()?;
-    let number = stem.strip_prefix("profile_")?.parse::<usize>().ok()?;
-    number.checked_sub(1)
-}
-
-fn short_menu_error_detail(detail: &str) -> &str {
-    const MAX_CHARS: usize = 42;
-    let trimmed = detail.trim();
-    if trimmed.chars().count() <= MAX_CHARS {
-        return trimmed;
-    }
-
-    let cut = trimmed
-        .char_indices()
-        .nth(MAX_CHARS)
-        .map_or(trimmed.len(), |(index, _)| index);
-    &trimmed[..cut]
 }
 
 fn draw_header_resources(
@@ -4369,254 +3670,6 @@ fn draw_codex_discovery_card(
     );
 }
 
-fn draw_nav_icon(
-    renderer: &mut dyn Renderer,
-    viewport: Vec2,
-    tab: GameMenuTab,
-    icon: Rect,
-    active: bool,
-    scale: f32,
-) {
-    let scale = scale * 1.65;
-    let color = if active {
-        Color::rgba(0.72, 1.0, 0.90, 1.0)
-    } else {
-        Color::rgba(0.28, 0.68, 0.78, 0.92)
-    };
-
-    let texture_id = nav_icon_texture_id(tab);
-    if let Some(image_size) = renderer.texture_size(texture_id) {
-        renderer.draw_image(
-            texture_id,
-            screen_rect(viewport, contain_rect(icon, image_size)),
-            if active {
-                Color::rgba(1.0, 1.0, 1.0, 1.0)
-            } else {
-                Color::rgba(0.70, 0.92, 0.96, 0.72)
-            },
-        );
-        return;
-    }
-
-    match tab {
-        GameMenuTab::Profile => {
-            draw_screen_rect(renderer, viewport, inset_rect(icon, 6.0 * scale), color);
-            draw_screen_rect(
-                renderer,
-                viewport,
-                Rect::new(
-                    Vec2::new(icon.origin.x + 4.0 * scale, icon.origin.y + 15.0 * scale),
-                    Vec2::new(14.0 * scale, 5.0 * scale),
-                ),
-                color,
-            );
-        }
-        GameMenuTab::Inventory => {
-            for col in 0..2 {
-                for row in 0..2 {
-                    draw_screen_rect(
-                        renderer,
-                        viewport,
-                        Rect::new(
-                            Vec2::new(
-                                icon.origin.x + col as f32 * 12.0 * scale,
-                                icon.origin.y + row as f32 * 12.0 * scale,
-                            ),
-                            Vec2::new(8.0 * scale, 8.0 * scale),
-                        ),
-                        color,
-                    );
-                }
-            }
-        }
-        GameMenuTab::Codex => {
-            draw_screen_rect(
-                renderer,
-                viewport,
-                Rect::new(
-                    Vec2::new(icon.origin.x + 7.0 * scale, icon.origin.y),
-                    Vec2::new(8.0 * scale, 22.0 * scale),
-                ),
-                color,
-            );
-            draw_screen_rect(
-                renderer,
-                viewport,
-                Rect::new(
-                    Vec2::new(icon.origin.x + 2.0 * scale, icon.origin.y + 4.0 * scale),
-                    Vec2::new(18.0 * scale, 4.0 * scale),
-                ),
-                color,
-            );
-        }
-        GameMenuTab::Map => {
-            draw_border(renderer, viewport, icon, 2.0 * scale, color);
-            draw_screen_rect(
-                renderer,
-                viewport,
-                Rect::new(
-                    Vec2::new(icon.origin.x + 5.0 * scale, icon.origin.y + 10.0 * scale),
-                    Vec2::new(12.0 * scale, 3.0 * scale),
-                ),
-                color,
-            );
-        }
-        GameMenuTab::Quests => {
-            for row in 0..3 {
-                draw_screen_rect(
-                    renderer,
-                    viewport,
-                    Rect::new(
-                        Vec2::new(icon.origin.x, icon.origin.y + row as f32 * 8.0 * scale),
-                        Vec2::new(22.0 * scale, 3.0 * scale),
-                    ),
-                    color,
-                );
-            }
-        }
-        GameMenuTab::Settings => {
-            draw_border(
-                renderer,
-                viewport,
-                inset_rect(icon, 3.0 * scale),
-                3.0 * scale,
-                color,
-            );
-            draw_screen_rect(renderer, viewport, inset_rect(icon, 9.0 * scale), color);
-        }
-    }
-}
-
-fn draw_bottom_icon(
-    renderer: &mut dyn Renderer,
-    viewport: Vec2,
-    rect: Rect,
-    index: usize,
-    scale: f32,
-) {
-    let color = Color::rgba(0.40, 0.92, 1.0, 0.94);
-    let icon = Rect::new(
-        Vec2::new(rect.origin.x + 22.0 * scale, rect.origin.y + 13.0 * scale),
-        Vec2::new(42.0 * scale, 42.0 * scale),
-    );
-    let texture_id = bottom_action_texture_id(index);
-    if let Some(image_size) = renderer.texture_size(texture_id) {
-        renderer.draw_image(
-            texture_id,
-            screen_rect(viewport, contain_rect(icon, image_size)),
-            Color::rgba(1.0, 1.0, 1.0, 1.0),
-        );
-        return;
-    }
-
-    match index {
-        0 => {
-            draw_screen_rect(
-                renderer,
-                viewport,
-                Rect::new(icon.origin, Vec2::new(28.0 * scale, 7.0 * scale)),
-                color,
-            );
-            draw_screen_rect(
-                renderer,
-                viewport,
-                Rect::new(
-                    Vec2::new(icon.origin.x + 20.0 * scale, icon.origin.y + 4.0 * scale),
-                    Vec2::new(7.0 * scale, 24.0 * scale),
-                ),
-                color,
-            );
-        }
-        1 => {
-            draw_screen_rect(
-                renderer,
-                viewport,
-                Rect::new(
-                    Vec2::new(icon.origin.x + 5.0 * scale, icon.origin.y),
-                    Vec2::new(6.0 * scale, 30.0 * scale),
-                ),
-                color,
-            );
-            draw_screen_rect(
-                renderer,
-                viewport,
-                Rect::new(
-                    Vec2::new(icon.origin.x + 20.0 * scale, icon.origin.y + 4.0 * scale),
-                    Vec2::new(6.0 * scale, 28.0 * scale),
-                ),
-                color,
-            );
-        }
-        2 => {
-            draw_border(renderer, viewport, icon, 2.0 * scale, color);
-            for row in 0..3 {
-                draw_screen_rect(
-                    renderer,
-                    viewport,
-                    Rect::new(
-                        Vec2::new(
-                            icon.origin.x + 7.0 * scale,
-                            icon.origin.y + (8.0 + row as f32 * 8.0) * scale,
-                        ),
-                        Vec2::new(20.0 * scale, 2.0 * scale),
-                    ),
-                    color,
-                );
-            }
-        }
-        3 => {
-            draw_screen_rect(
-                renderer,
-                viewport,
-                Rect::new(
-                    Vec2::new(icon.origin.x + 7.0 * scale, icon.origin.y + 5.0 * scale),
-                    Vec2::new(20.0 * scale, 6.0 * scale),
-                ),
-                color,
-            );
-            draw_screen_rect(
-                renderer,
-                viewport,
-                Rect::new(
-                    Vec2::new(icon.origin.x + 14.0 * scale, icon.origin.y + 11.0 * scale),
-                    Vec2::new(6.0 * scale, 20.0 * scale),
-                ),
-                color,
-            );
-        }
-        4 => {
-            draw_border(
-                renderer,
-                viewport,
-                inset_rect(icon, 4.0 * scale),
-                2.0 * scale,
-                color,
-            );
-            draw_screen_rect(
-                renderer,
-                viewport,
-                Rect::new(
-                    Vec2::new(icon.origin.x + 10.0 * scale, icon.origin.y + 14.0 * scale),
-                    Vec2::new(14.0 * scale, 6.0 * scale),
-                ),
-                color,
-            );
-        }
-        _ => {
-            draw_border(renderer, viewport, icon, 2.0 * scale, color);
-            draw_screen_rect(
-                renderer,
-                viewport,
-                Rect::new(
-                    Vec2::new(icon.origin.x + 9.0 * scale, icon.origin.y + 6.0 * scale),
-                    Vec2::new(16.0 * scale, 22.0 * scale),
-                ),
-                color,
-            );
-        }
-    }
-}
-
 fn draw_compact_stat_bar(
     renderer: &mut dyn Renderer,
     viewport: Vec2,
@@ -4877,6 +3930,8 @@ fn map_point(rect: Rect, point: Vec2) -> Vec2 {
 
 #[cfg(test)]
 mod tests {
+    use crate::ui::game_menu_content::activity_category_label;
+
     use super::*;
 
     #[test]
@@ -4923,51 +3978,6 @@ mod tests {
         assert!(layout.bottom.origin.y > layout.content.bottom());
         assert!(layout.bottom.bottom() <= layout.root.bottom());
         assert!(layout.return_button().right() <= layout.bottom.right());
-    }
-
-    #[test]
-    fn game_menu_save_feedback_names_fixed_slots() {
-        assert_eq!(
-            save_target_label(Language::Chinese, Path::new("saves/profile_02.ron")),
-            "槽位 2"
-        );
-        assert!(
-            game_menu_save_success_message(Language::English, Path::new("saves/profile_03.ron"))
-                .contains("Slot 3")
-        );
-        assert!(game_menu_save_error_message(Language::Chinese, "disk is full").contains("失败"));
-    }
-
-    #[test]
-    fn activity_log_visible_range_clamps_to_scrollable_window() {
-        assert_eq!(activity_log_visible_range(3, 0, 5), 0..3);
-        assert_eq!(activity_log_visible_range(12, 0, 3), 0..3);
-        assert_eq!(activity_log_visible_range(12, 4, 3), 4..7);
-        assert_eq!(activity_log_visible_range(12, 99, 3), 9..12);
-    }
-
-    #[test]
-    fn activity_log_capacity_fits_only_whole_rows_inside_panel() {
-        let panel = Rect::new(Vec2::ZERO, Vec2::new(500.0, 235.0));
-
-        assert_eq!(activity_log_visible_capacity(panel, 1.0), 2);
-    }
-
-    #[test]
-    fn activity_log_rows_stay_inside_frame_at_screenshot_size() {
-        let layout = MenuLayout::new(Vec2::new(1534.0, 800.0));
-        let log_panel = activity_log_panel_rect(&layout);
-        let row_area = activity_log_row_area_rect(log_panel, layout.scale);
-        let visible_rows = activity_log_visible_capacity(log_panel, layout.scale);
-        let row_height = ACTIVITY_LOG_ROW_HEIGHT * layout.scale;
-        let row_gap = ACTIVITY_LOG_ROW_GAP * layout.scale;
-        let last_row_bottom = row_area.origin.y
-            + visible_rows as f32 * row_height
-            + visible_rows.saturating_sub(1) as f32 * row_gap;
-
-        assert!(visible_rows > 0);
-        assert!(last_row_bottom <= log_panel.bottom() - ACTIVITY_LOG_BOTTOM_PADDING * layout.scale);
-        assert!(log_panel.bottom() < layout.bottom.origin.y);
     }
 
     #[test]
@@ -5037,43 +4047,5 @@ mod tests {
 
         assert!(first.right() < second.origin.x);
         assert!(first.bottom() <= panel.bottom());
-    }
-
-    #[test]
-    fn codex_snapshot_tracks_unlocked_entries() {
-        let mut database = content::CodexDatabase::new("Overworld");
-        database.entries.push(content::CodexEntry {
-            id: "codex.test.flora".to_owned(),
-            category: "Flora".to_owned(),
-            title: "Test Flora".to_owned(),
-            description: "A plant used by the menu tests.".to_owned(),
-            scan_time: Some(1.25),
-            unlock_tags: vec!["flora".to_owned()],
-            image: None,
-        });
-        database.entries.push(content::CodexEntry {
-            id: "codex.test.ruin".to_owned(),
-            category: "Ruins".to_owned(),
-            title: "Test Ruin".to_owned(),
-            description: "A ruin used by the menu tests.".to_owned(),
-            scan_time: Some(1.25),
-            unlock_tags: vec!["ruin".to_owned()],
-            image: None,
-        });
-        database.reindex();
-
-        let mut ctx = GameContext {
-            codex_database: database,
-            ..GameContext::default()
-        };
-        ctx.scanned_codex_ids.insert("codex.test.flora".to_owned());
-
-        let snapshot = CodexMenuSnapshot::from_context(&ctx);
-        let summaries = codex_summary_views(&snapshot, Language::English);
-
-        assert_eq!(snapshot.entries.len(), 2);
-        assert_eq!(snapshot.unlocked_count(), 1);
-        assert!(snapshot.entries[0].unlocked);
-        assert!(summaries.iter().any(|summary| summary.label == "Flora"));
     }
 }
