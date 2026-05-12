@@ -1,4 +1,5 @@
 use anyhow::Result;
+use content::semantics;
 use runtime::{Camera2d, Color, Rect, RenderStats, Renderer, Vec2};
 use rusttype::Font;
 
@@ -58,9 +59,39 @@ impl SceneDebugSnapshot {
 #[derive(Default)]
 pub(super) struct DebugOverlay {
     visible: bool,
+    page: DebugOverlayPage,
     font: Option<Font<'static>>,
     text_key: String,
     lines: Vec<TextSprite>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) enum DebugOverlayPage {
+    #[default]
+    Runtime,
+    Gpu,
+    World,
+    Profile,
+}
+
+impl DebugOverlayPage {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Runtime => "runtime",
+            Self::Gpu => "gpu",
+            Self::World => "world",
+            Self::Profile => "profile",
+        }
+    }
+
+    fn next(self) -> Option<Self> {
+        match self {
+            Self::Runtime => Some(Self::Gpu),
+            Self::Gpu => Some(Self::World),
+            Self::World => Some(Self::Profile),
+            Self::Profile => None,
+        }
+    }
 }
 
 impl DebugOverlay {
@@ -69,7 +100,17 @@ impl DebugOverlay {
     }
 
     pub(super) fn toggle(&mut self) {
-        self.visible = !self.visible;
+        if self.visible {
+            if let Some(next) = self.page.next() {
+                self.page = next;
+            } else {
+                self.visible = false;
+                self.page = DebugOverlayPage::Runtime;
+            }
+        } else {
+            self.visible = true;
+            self.page = DebugOverlayPage::Runtime;
+        }
         self.text_key.clear();
     }
 
@@ -83,7 +124,7 @@ impl DebugOverlay {
             return Ok(());
         }
 
-        let lines = debug_overlay_lines(ctx, snapshot, renderer.frame_stats());
+        let lines = debug_overlay_lines(ctx, snapshot, renderer.frame_stats(), self.page);
         self.upload_lines(renderer, &lines)?;
 
         let viewport = renderer.screen_size();
@@ -164,6 +205,7 @@ pub(super) fn debug_overlay_lines(
     ctx: &GameContext,
     snapshot: &SceneDebugSnapshot,
     render_stats: RenderStats,
+    page: DebugOverlayPage,
 ) -> Vec<String> {
     let scene = match snapshot.overlay_scene_name.as_deref() {
         Some(overlay) => format!(
@@ -187,67 +229,135 @@ pub(super) fn debug_overlay_lines(
         .unwrap_or_else(|| "-".to_owned());
     let scan_target = snapshot.scan_target.as_deref().unwrap_or("-");
 
-    vec![
-        "F3 Debug Overlay".to_owned(),
-        "world layer: collision red | interaction cyan | zones color-coded | scan yellow"
-            .to_owned(),
-        scene,
-        player,
-        map,
-        format!("colliders: {collider_count}"),
-        format!("scan target: {scan_target}"),
-        format!(
-            "render: commands {} rect {} image {} ground_chunks {}",
-            render_stats.queued_commands,
-            render_stats.rect_commands,
-            render_stats.image_commands,
-            render_stats.ground_chunk_commands
-        ),
-        format!(
-            "gpu submit: draw_calls {} batches r{} i{} buffers {} textures {} skipped {}",
-            render_stats.draw_calls,
-            render_stats.rect_batches,
-            render_stats.image_batches,
-            render_stats.vertex_buffers,
-            render_stats.loaded_textures,
-            render_stats.skipped_image_commands
-        ),
-        format!(
-            "save: {} dirty={} requested={} timer={:.1}s",
-            ctx.save_path.display(),
-            ctx.save_dirty,
-            ctx.save_requested,
-            ctx.save_timer
-        ),
-        format!(
-            "world save: scene={} spawn={} collected={}",
-            ctx.save_data.world.current_scene,
-            ctx.save_data.world.spawn_id.as_deref().unwrap_or("-"),
-            ctx.save_data.world.collected_entities.len()
-        ),
-        format!(
-            "profile: lv{} xp {}/{} hp {} sta {}",
-            ctx.save_data.profile.level,
-            ctx.save_data.profile.xp,
-            ctx.save_data.profile.xp_next,
-            meter_text(ctx, "health"),
-            meter_text(ctx, "stamina")
-        ),
-        format!(
-            "meters: suit {} load {} oxygen {} radiation {} spores {}",
-            meter_text(ctx, "suit"),
-            meter_text(ctx, "load"),
-            meter_text(ctx, "oxygen"),
-            meter_text(ctx, "radiation"),
-            meter_text(ctx, "spores")
-        ),
-        format!(
-            "codex: scanned {}/{} log entries {}",
-            ctx.scanned_codex_ids.len(),
-            ctx.codex_database.entries().len(),
-            ctx.save_data.activity_log.entries.len()
-        ),
-    ]
+    let mut lines = vec![
+        format!("F3 Debug Overlay [{}]", page.label()),
+        "F3 cycles pages: runtime -> gpu -> world -> profile -> off".to_owned(),
+    ];
+
+    match page {
+        DebugOverlayPage::Runtime => {
+            lines.extend([
+                scene,
+                format!("scan target: {scan_target}"),
+                "world layer: collision red | interaction cyan | zones color-coded | scan yellow"
+                    .to_owned(),
+                format!(
+                    "render: commands {} rect {} image {} ground_chunks {}",
+                    render_stats.queued_commands,
+                    render_stats.rect_commands,
+                    render_stats.image_commands,
+                    render_stats.ground_chunk_commands
+                ),
+                format!(
+                    "gpu submit: draw_calls {} batches r{} i{} buffers {} textures {} skipped {}",
+                    render_stats.draw_calls,
+                    render_stats.rect_batches,
+                    render_stats.image_batches,
+                    render_stats.vertex_buffers,
+                    render_stats.loaded_textures,
+                    render_stats.skipped_image_commands
+                ),
+            ]);
+        }
+        DebugOverlayPage::Gpu => {
+            lines.extend([
+                format!(
+                    "gpu: {} backend={} type={} timestamp={}",
+                    value_or_dash(&render_stats.gpu_info.name),
+                    value_or_dash(&render_stats.gpu_info.backend),
+                    value_or_dash(&render_stats.gpu_info.device_type),
+                    render_stats.gpu_info.timestamp_query
+                ),
+                format!(
+                    "driver: {} {}",
+                    value_or_dash(&render_stats.gpu_info.driver),
+                    value_or_dash(&render_stats.gpu_info.driver_info)
+                ),
+                format!(
+                    "features enabled: {}",
+                    value_or_dash(&render_stats.gpu_info.enabled_features)
+                ),
+                format!(
+                    "features supported: {}",
+                    value_or_dash(&render_stats.gpu_info.supported_features)
+                ),
+                format!(
+                    "limits: tex2d {} bind_groups {} frame_ms {}",
+                    render_stats.gpu_info.max_texture_dimension_2d,
+                    render_stats.gpu_info.max_bind_groups,
+                    render_stats
+                        .gpu_frame_ms
+                        .map(|ms| format!("{ms:.3}"))
+                        .unwrap_or_else(|| "-".to_owned())
+                ),
+            ]);
+        }
+        DebugOverlayPage::World => {
+            lines.extend([
+                scene,
+                player,
+                map,
+                format!("colliders: {collider_count}"),
+                format!("scan target: {scan_target}"),
+                format!(
+                    "save: {} dirty={} requested={} timer={:.1}s",
+                    ctx.save_path.display(),
+                    ctx.save_dirty,
+                    ctx.save_requested,
+                    ctx.save_timer
+                ),
+                format!(
+                    "world save: scene={} spawn={} collected={} zones={}",
+                    ctx.save_data.world.current_scene,
+                    ctx.save_data.world.spawn_id.as_deref().unwrap_or("-"),
+                    ctx.save_data.world.collected_entities.len(),
+                    ctx.save_data.world.triggered_zones.len()
+                ),
+                format!(
+                    "codex: scanned {}/{} log entries {}",
+                    ctx.scanned_codex_ids.len(),
+                    ctx.codex_database.entries().len(),
+                    ctx.save_data.activity_log.entries.len()
+                ),
+            ]);
+        }
+        DebugOverlayPage::Profile => {
+            let derived = ctx.profile_derived_state();
+            lines.extend([
+                format!(
+                    "profile save: lv{} xp {}/{} hp {} sta {}",
+                    ctx.save_data.profile.level,
+                    ctx.save_data.profile.xp,
+                    ctx.save_data.profile.xp_next,
+                    meter_text(ctx, semantics::METER_HEALTH),
+                    meter_text(ctx, semantics::METER_STAMINA)
+                ),
+                format!(
+                    "profile derived: lv{} xp {}/{} speed x{:.2}",
+                    derived.level, derived.xp, derived.xp_next, derived.movement_speed_multiplier
+                ),
+                format!(
+                    "meters: suit {} load {} oxygen {} radiation {} spores {}",
+                    meter_text(ctx, semantics::METER_SUIT),
+                    meter_text(ctx, semantics::METER_LOAD),
+                    meter_text(ctx, semantics::METER_OXYGEN),
+                    meter_text(ctx, semantics::METER_RADIATION),
+                    meter_text(ctx, semantics::METER_SPORES)
+                ),
+                format!("attributes: {}", format_derived_scores(&derived.attributes)),
+                format!("research: {}", format_derived_meters(&derived.research)),
+                format!(
+                    "progress sources: scans {}/{} collected {} discoveries {}",
+                    derived.scanned_codex_count,
+                    derived.codex_entry_count,
+                    derived.collected_entity_count,
+                    derived.inventory_discovery_count
+                ),
+            ]);
+        }
+    }
+
+    lines
 }
 
 fn meter_text(ctx: &GameContext, id: &str) -> String {
@@ -258,8 +368,36 @@ fn meter_text(ctx: &GameContext, id: &str) -> String {
         .unwrap_or_else(|| "-".to_owned())
 }
 
+fn value_or_dash(value: &str) -> &str {
+    if value.is_empty() { "-" } else { value }
+}
+
 fn format_meter(meter: &MeterSave) -> String {
     format!("{}/{}", meter.value, meter.max)
+}
+
+fn format_derived_meters(meters: &[super::DerivedMeterValue]) -> String {
+    if meters.is_empty() {
+        return "-".to_owned();
+    }
+
+    meters
+        .iter()
+        .map(|meter| format!("{} {}/{}", meter.id, meter.value, meter.max))
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+fn format_derived_scores(scores: &[super::DerivedScoreValue]) -> String {
+    if scores.is_empty() {
+        return "-".to_owned();
+    }
+
+    scores
+        .iter()
+        .map(|score| format!("{} {}/{}", score.id, score.value, score.max))
+        .collect::<Vec<_>>()
+        .join(" | ")
 }
 
 fn debug_line_color(index: usize) -> Color {
@@ -300,11 +438,11 @@ mod tests {
                 draw_calls: 6,
                 vertex_buffers: 6,
                 loaded_textures: 10,
+                ..RenderStats::default()
             },
+            DebugOverlayPage::Runtime,
         );
 
-        assert!(lines.iter().any(|line| line.contains("dirty=true")));
-        assert!(lines.iter().any(|line| line.contains("hp 100/100")));
         assert!(lines.iter().any(|line| line.contains("ground_chunks 2")));
         assert!(lines.iter().any(|line| line.contains("draw_calls 6")));
         assert!(lines.iter().any(|line| line.contains("world layer:")));
@@ -312,6 +450,36 @@ mod tests {
             lines
                 .iter()
                 .any(|line| line.contains("scan target: codex.test.target"))
+        );
+
+        let world_lines = debug_overlay_lines(
+            &ctx,
+            &snapshot,
+            RenderStats::default(),
+            DebugOverlayPage::World,
+        );
+        assert!(world_lines.iter().any(|line| line.contains("dirty=true")));
+
+        let gpu_lines = debug_overlay_lines(
+            &ctx,
+            &snapshot,
+            RenderStats::default(),
+            DebugOverlayPage::Gpu,
+        );
+        assert!(gpu_lines.iter().any(|line| line.contains("gpu:")));
+        assert!(gpu_lines.iter().any(|line| line.contains("features")));
+
+        let profile_lines = debug_overlay_lines(
+            &ctx,
+            &snapshot,
+            RenderStats::default(),
+            DebugOverlayPage::Profile,
+        );
+        assert!(profile_lines.iter().any(|line| line.contains("hp 100/100")));
+        assert!(
+            profile_lines
+                .iter()
+                .any(|line| line.contains("profile derived:"))
         );
     }
 }

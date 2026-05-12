@@ -8,7 +8,21 @@ use crate::{Camera2d, Color, Rect, Vec2};
 
 pub use wgpu_renderer::WgpuRenderer;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GpuInfo {
+    pub name: String,
+    pub backend: String,
+    pub device_type: String,
+    pub driver: String,
+    pub driver_info: String,
+    pub enabled_features: String,
+    pub supported_features: String,
+    pub max_texture_dimension_2d: u32,
+    pub max_bind_groups: u32,
+    pub timestamp_query: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct RenderStats {
     pub queued_commands: usize,
     pub rect_commands: usize,
@@ -20,6 +34,8 @@ pub struct RenderStats {
     pub draw_calls: usize,
     pub vertex_buffers: usize,
     pub loaded_textures: usize,
+    pub gpu_info: GpuInfo,
+    pub gpu_frame_ms: Option<f32>,
 }
 
 pub trait Renderer {

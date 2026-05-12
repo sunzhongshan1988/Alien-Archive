@@ -1,5 +1,6 @@
 mod assets;
 mod codex;
+pub mod items;
 mod map;
 pub mod semantics;
 mod validation;

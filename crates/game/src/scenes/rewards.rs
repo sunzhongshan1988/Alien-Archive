@@ -1,31 +1,8 @@
-use content::semantics;
+use content::items;
 
 use crate::world::MapEntity;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct ItemReward {
-    pub(super) item_id: &'static str,
-    pub(super) quantity: u32,
-    pub(super) locked: bool,
-}
-
-impl ItemReward {
-    const fn new(item_id: &'static str, quantity: u32) -> Self {
-        Self {
-            item_id,
-            quantity,
-            locked: false,
-        }
-    }
-
-    const fn locked(item_id: &'static str, quantity: u32) -> Self {
-        Self {
-            item_id,
-            quantity,
-            locked: true,
-        }
-    }
-}
+pub(super) type ItemReward = items::ItemRewardDef;
 
 pub(super) fn pickup_reward_for_entity(entity: &MapEntity) -> Option<ItemReward> {
     let asset_id = entity.asset_id.as_deref()?;
@@ -33,57 +10,23 @@ pub(super) fn pickup_reward_for_entity(entity: &MapEntity) -> Option<ItemReward>
 }
 
 pub(super) fn pickup_reward_for_asset(asset_id: &str) -> Option<ItemReward> {
-    match asset_id {
-        "ow_pickup_bio_sample" => Some(ItemReward::new(semantics::ITEM_BIO_SAMPLE_VIAL, 1)),
-        "ow_pickup_crystal_sample" => {
-            Some(ItemReward::new(semantics::ITEM_ALIEN_CRYSTAL_SAMPLE, 1))
-        }
-        "ow_pickup_data_shard" => Some(ItemReward::new(semantics::ITEM_DATA_SHARD, 1)),
-        "ow_pickup_energy_cell" => Some(ItemReward::new(semantics::ITEM_ENERGY_CELL, 1)),
-        "ow_pickup_ruin_key" => Some(ItemReward::locked(semantics::ITEM_RUIN_KEY, 1)),
-        "ow_pickup_scrap_part" => Some(ItemReward::new(semantics::ITEM_SCRAP_PART, 3)),
-        "ow_pickup_signal_chip" => Some(ItemReward::new(semantics::ITEM_DATA_SHARD, 2)),
-        _ => None,
-    }
+    items::pickup_reward_for_asset(asset_id)
 }
 
 pub(super) fn scan_reward_for_codex(codex_id: &str) -> Option<ItemReward> {
-    match codex_id {
-        "codex.flora.glowfungus" => Some(ItemReward::new(semantics::ITEM_GLOW_FUNGUS_SAMPLE, 1)),
-        id if id.starts_with("codex.flora.") => {
-            Some(ItemReward::new(semantics::ITEM_BIO_SAMPLE_VIAL, 1))
-        }
-        id if id.contains("generator") || id.contains("power_node") => {
-            Some(ItemReward::new(semantics::ITEM_ENERGY_CELL, 1))
-        }
-        id if id.contains("terminal") || id.contains("data") || id.contains("signal") => {
-            Some(ItemReward::new(semantics::ITEM_DATA_SHARD, 1))
-        }
-        id if id.contains("locked_door") || id.contains("gate") => {
-            Some(ItemReward::locked(semantics::ITEM_RUIN_KEY, 1))
-        }
-        id if id.starts_with("codex.ruin.") || id.starts_with("ruin.") => {
-            Some(ItemReward::new(semantics::ITEM_DATA_SHARD, 1))
-        }
-        _ => None,
-    }
+    items::scan_reward_for_codex(codex_id)
 }
 
 pub(super) fn research_meter_for_codex(codex_id: &str) -> &'static str {
-    if codex_id.starts_with("codex.flora.") {
-        semantics::METER_BIO
-    } else if codex_id.contains("mineral") {
-        semantics::METER_MINERAL
-    } else if codex_id.starts_with("codex.ruin.") || codex_id.starts_with("ruin.") {
-        semantics::METER_RUIN
-    } else {
-        semantics::METER_DATA
-    }
+    items::research_meter_for_codex(codex_id)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::{Path, PathBuf};
+
+    use content::{AssetDatabase, AssetKind};
 
     #[test]
     fn pickup_assets_map_to_inventory_items() {
@@ -95,6 +38,51 @@ mod tests {
             pickup_reward_for_asset("ow_pickup_ruin_key"),
             Some(ItemReward::locked("ruin_key", 1))
         );
+        assert_eq!(
+            pickup_reward_for_asset("ow_pickup_gen_ls_energy_cell").map(|reward| reward.item_id),
+            Some("energy_cell")
+        );
+        assert_eq!(
+            pickup_reward_for_asset("ow_pickup_exp2_medical_injector_case")
+                .map(|reward| reward.item_id),
+            Some("med_injector")
+        );
+    }
+
+    #[test]
+    fn bundled_pickup_assets_have_real_inventory_rewards() {
+        let database =
+            AssetDatabase::load(&workspace_root().join("assets/data/assets/overworld_assets.ron"))
+                .expect("asset database should load");
+        let pickup_assets = database
+            .assets()
+            .iter()
+            .filter(|asset| {
+                asset.kind == AssetKind::Entity
+                    && (asset.category == "pickups" || asset.tags.iter().any(|tag| tag == "pickup"))
+            })
+            .collect::<Vec<_>>();
+
+        assert!(!pickup_assets.is_empty());
+        for asset in pickup_assets {
+            let reward = pickup_reward_for_asset(&asset.id)
+                .unwrap_or_else(|| panic!("pickup asset {} has no reward mapping", asset.id));
+            assert!(
+                items::item_max_stack(reward.item_id).is_some(),
+                "pickup asset {} maps to unknown item {}",
+                asset.id,
+                reward.item_id
+            );
+            assert!(reward.quantity > 0);
+        }
+    }
+
+    fn workspace_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(2)
+            .expect("game crate should live under workspace/crates/game")
+            .to_path_buf()
     }
 
     #[test]

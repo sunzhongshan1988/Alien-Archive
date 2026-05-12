@@ -1,6 +1,7 @@
 use std::{borrow::Cow, path::Path};
 
 use anyhow::Result;
+use content::semantics;
 use runtime::{Camera2d, Color, Rect, Renderer, Vec2};
 use rusttype::Font;
 
@@ -43,7 +44,12 @@ const QUICKBAR_BASE_SIZE: Vec2 = Vec2::new(
     QUICKBAR_SLOT_SIZE * QUICKBAR_SLOTS as f32 + QUICKBAR_SLOT_GAP * (QUICKBAR_SLOTS as f32 - 1.0),
     58.0,
 );
-const COMPACT_METER_IDS: [&str; 4] = ["health", "suit", "stamina", "load"];
+const COMPACT_METER_IDS: [&str; 4] = [
+    semantics::METER_HEALTH,
+    semantics::METER_SUIT,
+    semantics::METER_STAMINA,
+    semantics::METER_LOAD,
+];
 
 #[derive(Default)]
 pub(super) struct FieldHud {
@@ -351,7 +357,11 @@ impl FieldHud {
                 rect,
                 meter_ratio(ctx, meter_id),
                 meter_color(meter_id),
-                if *meter_id == "load" { 6 } else { 10 },
+                if *meter_id == semantics::METER_LOAD {
+                    6
+                } else {
+                    10
+                },
                 layout.scale,
             );
         }
@@ -596,20 +606,22 @@ fn meter_ratio(ctx: &GameContext, id: &str) -> f32 {
 
 fn meter_color(id: &str) -> Color {
     match id {
-        "health" => Color::rgba(0.90, 0.30, 0.36, 0.86),
-        "stamina" => Color::rgba(0.34, 0.86, 0.55, 0.84),
-        "suit" => Color::rgba(0.38, 0.78, 0.98, 0.86),
-        "load" => Color::rgba(0.92, 0.72, 0.40, 0.84),
+        semantics::METER_HEALTH => Color::rgba(0.90, 0.30, 0.36, 0.86),
+        semantics::METER_STAMINA => Color::rgba(0.34, 0.86, 0.55, 0.84),
+        semantics::METER_SUIT => Color::rgba(0.38, 0.78, 0.98, 0.86),
+        semantics::METER_LOAD => Color::rgba(0.92, 0.72, 0.40, 0.84),
         _ => Color::rgba(0.34, 0.88, 1.0, 0.86),
     }
 }
 
 fn meter_label(id: &str, language: Language) -> Cow<'static, str> {
     match id {
-        "health" => localization::text(language, "hud.meter.health", "HLT", "生命"),
-        "suit" => localization::text(language, "hud.meter.suit", "SUIT", "护甲"),
-        "stamina" => localization::text(language, "hud.meter.stamina", "STA", "体力"),
-        "load" => localization::text(language, "hud.meter.load", "LOAD", "负重"),
+        semantics::METER_HEALTH => localization::text(language, "hud.meter.health", "HLT", "生命"),
+        semantics::METER_SUIT => localization::text(language, "hud.meter.suit", "SUIT", "护甲"),
+        semantics::METER_STAMINA => {
+            localization::text(language, "hud.meter.stamina", "STA", "体力")
+        }
+        semantics::METER_LOAD => localization::text(language, "hud.meter.load", "LOAD", "负重"),
         _ => Cow::Borrowed(""),
     }
 }

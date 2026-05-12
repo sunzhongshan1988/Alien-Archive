@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, ops::Range, path::Path};
 
 use anyhow::Result;
-use content::CodexEntry;
+use content::{CodexEntry, items};
 use runtime::{Button, Color, InputState, Rect, Renderer, SceneCommand, Vec2};
 use rusttype::Font;
 
@@ -3191,7 +3191,7 @@ fn xp_ratio(profile: &PlayerProfileSave) -> f32 {
 }
 
 fn is_equipment_module(item_id: &str, locked: bool) -> bool {
-    locked || matches!(item_id, "scanner_tool" | "ruin_key" | "artifact_core")
+    items::is_equipment_module(item_id, locked)
 }
 
 fn upload_inventory_slot_details(

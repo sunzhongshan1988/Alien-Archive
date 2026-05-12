@@ -716,11 +716,13 @@ fn validate_scale(
 
 #[cfg(test)]
 mod tests {
+    use std::{fs, path::Path};
+
     use crate::{
         AnchorKind, AssetDatabase, AssetDefinition, AssetKind, CodexDatabase, CodexEntry,
-        CollisionCell, CollisionZoneRule, HazardEffect, HazardRule, LayerKind, MapDocument,
-        ObjectiveRule, PromptRule, SnapMode, SurfaceGateRule, UnlockRule, WalkSurfaceKind,
-        WalkSurfaceRule, ZoneInstance,
+        CollisionCell, CollisionZoneRule, DEFAULT_ASSET_DB_PATH, DEFAULT_CODEX_DB_PATH,
+        HazardEffect, HazardRule, LayerKind, MapDocument, ObjectiveRule, PromptRule, SnapMode,
+        SurfaceGateRule, UnlockRule, WalkSurfaceKind, WalkSurfaceRule, ZoneInstance,
     };
 
     use super::*;
@@ -1232,6 +1234,46 @@ mod tests {
         );
     }
 
+    #[test]
+    fn bundled_maps_have_no_validation_errors() {
+        let root = workspace_root();
+        let assets = AssetDatabase::load(&root.join(DEFAULT_ASSET_DB_PATH))
+            .expect("asset database should load");
+        let codex = CodexDatabase::load(&root.join(DEFAULT_CODEX_DB_PATH))
+            .expect("codex database should load");
+        let map_paths = fs::read_dir(root.join("assets/data/maps"))
+            .expect("map directory should be readable")
+            .map(|entry| entry.expect("map entry should be readable").path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "ron"))
+            .collect::<Vec<_>>();
+
+        assert!(!map_paths.is_empty());
+        let mut validated_count = 0;
+        for path in map_paths {
+            let source = fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("{} should be readable: {error:#}", path.display()));
+            if !source.contains("layers:") {
+                continue;
+            }
+            let document = MapDocument::load(&path)
+                .unwrap_or_else(|error| panic!("{} should load: {error:#}", path.display()));
+            validated_count += 1;
+            let issues = validate_map_with_codex(&document, &assets, Some(&codex));
+            let errors = issues
+                .iter()
+                .filter(|issue| issue.severity == MapValidationSeverity::Error)
+                .map(|issue| issue.message.as_str())
+                .collect::<Vec<_>>();
+            assert!(
+                errors.is_empty(),
+                "{} has validation errors:\n{}",
+                path.display(),
+                errors.join("\n")
+            );
+        }
+        assert!(validated_count > 0, "no editor-format maps were validated");
+    }
+
     fn test_database(assets: Vec<AssetDefinition>) -> AssetDatabase {
         let mut database = AssetDatabase {
             mode: "Overworld".to_owned(),
@@ -1240,6 +1282,14 @@ mod tests {
         };
         database.reindex();
         database
+    }
+
+    fn workspace_root() -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(2)
+            .expect("content crate should live under workspace/crates/content")
+            .to_path_buf()
     }
 
     fn test_codex(entries: Vec<CodexEntry>) -> CodexDatabase {

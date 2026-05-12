@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use content::semantics;
+use content::{items, semantics};
 use runtime::Vec2;
 use serde::{Deserialize, Serialize};
 
@@ -348,31 +348,19 @@ impl InventorySave {
 impl Default for InventorySave {
     fn default() -> Self {
         let mut slots = vec![None; DEFAULT_INVENTORY_SLOTS];
-        for (index, stack) in [
-            ItemStackSave::new(semantics::ITEM_ALIEN_CRYSTAL_SAMPLE, 3, false),
-            ItemStackSave::new(semantics::ITEM_BIO_SAMPLE_VIAL, 2, false),
-            ItemStackSave::new(semantics::ITEM_DATA_SHARD, 8, false),
-            ItemStackSave::new(semantics::ITEM_ENERGY_CELL, 4, false),
-            ItemStackSave::new(semantics::ITEM_SCRAP_PART, 17, false),
-            ItemStackSave::new(semantics::ITEM_RUIN_KEY, 1, true),
-            ItemStackSave::new(semantics::ITEM_SCANNER_TOOL, 1, true),
-            ItemStackSave::new(semantics::ITEM_MED_INJECTOR, 2, false),
-            ItemStackSave::new(semantics::ITEM_COOLANT_CANISTER, 1, false),
-            ItemStackSave::new(semantics::ITEM_METAL_FRAGMENT, 9, false),
-            ItemStackSave::new(semantics::ITEM_GLOW_FUNGUS_SAMPLE, 2, false),
-            ItemStackSave::new(semantics::ITEM_ARTIFACT_CORE, 1, true),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            slots[index] = Some(stack);
+        for (index, stack) in items::DEFAULT_INVENTORY_STACKS.iter().enumerate() {
+            slots[index] = Some(ItemStackSave::new(
+                stack.item_id,
+                stack.quantity,
+                stack.locked,
+            ));
         }
 
         Self {
             slots,
-            quickbar: vec![Some(6), Some(7), Some(3), Some(2), Some(5), Some(11)],
+            quickbar: items::DEFAULT_QUICKBAR_SLOTS.to_vec(),
             selected_slot: 0,
-            active_category: "samples".to_owned(),
+            active_category: items::ItemCategory::Samples.key().to_owned(),
         }
     }
 }
@@ -654,13 +642,20 @@ mod tests {
     #[test]
     fn inventory_add_item_stacks_then_uses_empty_slots() {
         let mut inventory = InventorySave {
-            slots: vec![Some(ItemStackSave::new("bio_sample_vial", 9, false)), None],
+            slots: vec![
+                Some(ItemStackSave::new(
+                    semantics::ITEM_BIO_SAMPLE_VIAL,
+                    9,
+                    false,
+                )),
+                None,
+            ],
             quickbar: Vec::new(),
             selected_slot: 0,
             active_category: "samples".to_owned(),
         };
 
-        let added = inventory.add_item("bio_sample_vial", 3, 10, false);
+        let added = inventory.add_item(semantics::ITEM_BIO_SAMPLE_VIAL, 3, 10, false);
 
         assert_eq!(added, 3);
         assert_eq!(
@@ -677,18 +672,25 @@ mod tests {
     fn profile_meters_clamp_runtime_changes() {
         let mut profile = PlayerProfileSave::default();
 
-        assert!(profile.add_meter_delta("stamina", -999));
-        assert_eq!(profile.meter("stamina").map(|meter| meter.value), Some(0));
-        assert!(profile.add_meter_delta("stamina", 999));
+        assert!(profile.add_meter_delta(semantics::METER_STAMINA, -999));
         assert_eq!(
             profile
-                .meter("stamina")
+                .meter(semantics::METER_STAMINA)
+                .map(|meter| meter.value),
+            Some(0)
+        );
+        assert!(profile.add_meter_delta(semantics::METER_STAMINA, 999));
+        assert_eq!(
+            profile
+                .meter(semantics::METER_STAMINA)
                 .map(|meter| (meter.value, meter.max)),
             Some((100, 100))
         );
-        assert!(profile.set_meter_value("load", 999));
+        assert!(profile.set_meter_value(semantics::METER_LOAD, 999));
         assert_eq!(
-            profile.meter("load").map(|meter| (meter.value, meter.max)),
+            profile
+                .meter(semantics::METER_LOAD)
+                .map(|meter| (meter.value, meter.max)),
             Some((60, 60))
         );
     }

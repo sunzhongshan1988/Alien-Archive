@@ -13,12 +13,15 @@ mod scan_system;
 mod zone_system;
 
 use anyhow::Result;
-use content::{CodexDatabase, semantics};
+use content::{CodexDatabase, items, semantics};
 use runtime::{Button, Camera2d, InputState, Renderer, SceneCommand, Vec2};
-use std::{collections::HashSet, path::PathBuf};
+use std::{
+    collections::{BTreeMap, HashSet},
+    path::PathBuf,
+};
 
 use crate::objectives::{ObjectiveDatabase, ObjectiveMenuRow};
-use crate::save::{CodexSave, InventorySave, MeterSave, SaveData, SaveVec2, WorldSave};
+use crate::save::{CodexSave, InventorySave, SaveData, SaveVec2, WorldSave};
 use crate::ui::localization;
 use crate::world::{MapObjectiveRule, MapPromptRule, MapTransitionTarget, MapUnlockRule};
 
@@ -160,6 +163,34 @@ impl Default for FieldStatusEffects {
             movement_speed_multiplier: 1.0,
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProfileDerivedState {
+    pub level: u32,
+    pub xp: u32,
+    pub xp_next: u32,
+    pub research: Vec<DerivedMeterValue>,
+    pub attributes: Vec<DerivedScoreValue>,
+    pub movement_speed_multiplier: f32,
+    pub scanned_codex_count: usize,
+    pub codex_entry_count: usize,
+    pub collected_entity_count: usize,
+    pub inventory_discovery_count: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DerivedMeterValue {
+    pub id: String,
+    pub value: u32,
+    pub max: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DerivedScoreValue {
+    pub id: String,
+    pub value: u32,
+    pub max: u32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -325,14 +356,14 @@ impl GameContext {
     }
 
     pub fn can_start_jump(&self) -> bool {
-        self.profile_meter_value("stamina") as i32 >= STAMINA_JUMP_COST
+        self.profile_meter_value(semantics::METER_STAMINA) as i32 >= STAMINA_JUMP_COST
     }
 
     pub fn update_field_status(&mut self, dt: f32, activity: FieldActivity) -> FieldStatusEffects {
         self.sync_inventory_load_meter();
 
         if activity.jumped {
-            self.change_profile_meter("stamina", -STAMINA_JUMP_COST);
+            self.change_profile_meter(semantics::METER_STAMINA, -STAMINA_JUMP_COST);
         }
         self.advance_field_clock(dt);
 
@@ -344,31 +375,57 @@ impl GameContext {
         if activity.scanning {
             stamina_rate -= STAMINA_SCAN_DRAIN_PER_SECOND;
         }
-        if self.profile_meter_ratio("load") >= 0.85 && activity.moving {
+        if self.profile_meter_ratio(semantics::METER_LOAD) >= 0.85 && activity.moving {
             stamina_rate -= 0.75;
         }
-        self.accumulate_profile_delta("stamina", stamina_rate * dt);
+        self.accumulate_profile_delta(semantics::METER_STAMINA, stamina_rate * dt);
 
         match activity.environment {
             FieldEnvironment::Overworld => {
-                self.accumulate_profile_delta("suit", OVERWORLD_RECOVERY_PER_SECOND * dt);
-                self.accumulate_profile_delta("oxygen", OVERWORLD_RECOVERY_PER_SECOND * dt);
-                self.accumulate_profile_delta("spores", OVERWORLD_RECOVERY_PER_SECOND * dt);
-                self.accumulate_profile_delta("radiation", OVERWORLD_RECOVERY_PER_SECOND * dt);
+                self.accumulate_profile_delta(
+                    semantics::METER_SUIT,
+                    OVERWORLD_RECOVERY_PER_SECOND * dt,
+                );
+                self.accumulate_profile_delta(
+                    semantics::METER_OXYGEN,
+                    OVERWORLD_RECOVERY_PER_SECOND * dt,
+                );
+                self.accumulate_profile_delta(
+                    semantics::METER_SPORES,
+                    OVERWORLD_RECOVERY_PER_SECOND * dt,
+                );
+                self.accumulate_profile_delta(
+                    semantics::METER_RADIATION,
+                    OVERWORLD_RECOVERY_PER_SECOND * dt,
+                );
             }
             FieldEnvironment::Facility => {
-                self.accumulate_profile_delta("suit", -FACILITY_SUIT_DRAIN_PER_SECOND * dt);
-                self.accumulate_profile_delta("oxygen", -FACILITY_OXYGEN_DRAIN_PER_SECOND * dt);
                 self.accumulate_profile_delta(
-                    "radiation",
+                    semantics::METER_SUIT,
+                    -FACILITY_SUIT_DRAIN_PER_SECOND * dt,
+                );
+                self.accumulate_profile_delta(
+                    semantics::METER_OXYGEN,
+                    -FACILITY_OXYGEN_DRAIN_PER_SECOND * dt,
+                );
+                self.accumulate_profile_delta(
+                    semantics::METER_RADIATION,
                     -FACILITY_RADIATION_DRAIN_PER_SECOND * dt,
                 );
-                self.accumulate_profile_delta("spores", -FACILITY_SPORE_DRAIN_PER_SECOND * dt);
+                self.accumulate_profile_delta(
+                    semantics::METER_SPORES,
+                    -FACILITY_SPORE_DRAIN_PER_SECOND * dt,
+                );
             }
         }
 
-        if self.profile_meter_value("suit") == 0 || self.profile_meter_value("oxygen") == 0 {
-            self.accumulate_profile_delta("health", -CRITICAL_HEALTH_DRAIN_PER_SECOND * dt);
+        if self.profile_meter_value(semantics::METER_SUIT) == 0
+            || self.profile_meter_value(semantics::METER_OXYGEN) == 0
+        {
+            self.accumulate_profile_delta(
+                semantics::METER_HEALTH,
+                -CRITICAL_HEALTH_DRAIN_PER_SECOND * dt,
+            );
         }
         self.update_activity_status_alerts();
 
@@ -378,16 +435,41 @@ impl GameContext {
     }
 
     pub fn sync_derived_profile_state(&mut self) -> bool {
-        let mut changed = false;
-
-        changed |= self.sync_scan_level_and_xp();
-        changed |= self.sync_scan_research_progress();
-        changed |= self.sync_profile_attribute_scores();
+        let mut changed = self.sync_inventory_load_meter();
+        let derived = self.profile_derived_state();
+        changed |= self.apply_profile_derived_state(&derived);
 
         if changed {
             self.mark_save_dirty();
         }
         changed
+    }
+
+    pub fn profile_derived_state(&self) -> ProfileDerivedState {
+        let (level, xp, xp_next) = scan_level_and_xp(self.scanned_codex_ids.len() as u32);
+        let research = derived_research_progress(&self.scanned_codex_ids, &self.save_data.profile);
+        let attributes = derived_profile_attributes(self, &research);
+        let load_value = inventory_load_units(&self.save_data.inventory);
+        let load_max = self.profile_meter_max(semantics::METER_LOAD);
+        let movement_speed_multiplier = movement_speed_multiplier_from_values(
+            self.profile_meter_value(semantics::METER_STAMINA),
+            self.profile_meter_max(semantics::METER_STAMINA),
+            load_value,
+            load_max,
+        );
+
+        ProfileDerivedState {
+            level,
+            xp,
+            xp_next,
+            research,
+            attributes,
+            movement_speed_multiplier,
+            scanned_codex_count: self.scanned_codex_ids.len(),
+            codex_entry_count: self.codex_database.entries().len(),
+            collected_entity_count: self.save_data.world.collected_entities.len(),
+            inventory_discovery_count: inventory_discovery_count(&self.save_data.inventory),
+        }
     }
 
     pub fn profile_meter_value(&self, id: &str) -> u32 {
@@ -439,7 +521,7 @@ impl GameContext {
         };
         let item_id = stack.item_id.clone();
 
-        let Some(effect) = consumable_effect_for_item(&item_id) else {
+        let Some(effect) = items::consumable_effect(&item_id) else {
             return QuickItemUseResult::NotUsable { item_id };
         };
         if self.profile_meter_value(effect.meter_id) >= self.profile_meter_max(effect.meter_id) {
@@ -851,93 +933,41 @@ impl GameContext {
 
     fn sync_inventory_load_meter(&mut self) -> bool {
         let load = inventory_load_units(&self.save_data.inventory);
-        self.set_profile_meter_value("load", load)
+        self.set_profile_meter_value(semantics::METER_LOAD, load)
     }
 
     fn sync_inventory_load_meter_silent(&mut self) {
         let load = inventory_load_units(&self.save_data.inventory);
-        self.save_data.profile.set_meter_value("load", load);
+        self.save_data
+            .profile
+            .set_meter_value(semantics::METER_LOAD, load);
     }
 
-    fn sync_scan_level_and_xp(&mut self) -> bool {
-        let mut total_xp = self.scanned_codex_ids.len() as u32 * SCAN_XP_REWARD;
-        let mut level = 1;
-        let mut xp_next = 1_000;
-        while xp_next > 0 && total_xp >= xp_next {
-            total_xp -= xp_next;
-            level += 1;
-            xp_next += 2_500;
-        }
-
+    fn apply_profile_derived_state(&mut self, derived: &ProfileDerivedState) -> bool {
         let profile = &mut self.save_data.profile;
-        let changed =
-            profile.level != level || profile.xp != total_xp || profile.xp_next != xp_next;
+        let mut changed = profile.level != derived.level
+            || profile.xp != derived.xp
+            || profile.xp_next != derived.xp_next;
         if changed {
-            profile.level = level;
-            profile.xp = total_xp;
-            profile.xp_next = xp_next;
-        }
-        changed
-    }
-
-    fn sync_scan_research_progress(&mut self) -> bool {
-        let mut progress = std::collections::BTreeMap::<&'static str, u32>::new();
-        for codex_id in &self.scanned_codex_ids {
-            let meter_id = rewards::research_meter_for_codex(codex_id);
-            *progress.entry(meter_id).or_default() += RESEARCH_PROGRESS_PER_SCAN;
+            profile.level = derived.level;
+            profile.xp = derived.xp;
+            profile.xp_next = derived.xp_next;
         }
 
-        let mut changed = false;
-        for meter in &mut self.save_data.profile.research {
-            let next_value = progress
-                .get(meter.id.as_str())
-                .copied()
-                .unwrap_or(0)
-                .min(meter.max);
+        for meter in &mut profile.research {
+            let Some(derived_meter) = derived.research.iter().find(|entry| entry.id == meter.id)
+            else {
+                continue;
+            };
+            let next_value = derived_meter.value.min(meter.max);
             if meter.value != next_value {
                 meter.value = next_value;
                 changed = true;
             }
         }
-        changed
-    }
 
-    fn sync_profile_attribute_scores(&mut self) -> bool {
-        let health = self.profile_meter_ratio("health");
-        let stamina = self.profile_meter_ratio("stamina");
-        let suit = self.profile_meter_ratio("suit");
-        let load = self.profile_meter_ratio("load");
-        let oxygen = self.profile_meter_ratio("oxygen");
-        let radiation = self.profile_meter_ratio("radiation");
-        let spores = self.profile_meter_ratio("spores");
-        let research = average_meter_ratio(&self.save_data.profile.research);
-        let scanned = progress_ratio(
-            self.scanned_codex_ids.len(),
-            self.codex_database.entries().len(),
-        );
-        let collected = self.save_data.world.collected_entities.len();
-        let carried_find_count = inventory_discovery_count(&self.save_data.inventory);
-        let harvesting = capped_count_ratio(collected + carried_find_count, 20);
-
-        let derived = [
-            (
-                "survival",
-                score_from_ratio(average_slice(&[health, suit, oxygen, radiation, spores])),
-            ),
-            (
-                "mobility",
-                score_from_ratio(
-                    (stamina * 0.70 + (1.0 - load).clamp(0.0, 1.0) * 0.30).clamp(0.0, 1.0),
-                ),
-            ),
-            ("scanning", score_from_ratio(scanned)),
-            ("harvesting", score_from_ratio(harvesting)),
-            ("analysis", score_from_ratio(research)),
-        ];
-
-        let mut changed = false;
-        for (id, value) in derived {
-            changed |= self.save_data.profile.set_score_value(id, value);
+        for score in &derived.attributes {
+            changed |= profile.set_score_value(&score.id, score.value);
         }
         changed
     }
@@ -964,12 +994,12 @@ impl GameContext {
 
     fn accumulate_profile_delta(&mut self, id: &str, delta: f32) -> bool {
         let accumulator = match id {
-            "health" => &mut self.profile_status_runtime.health,
-            "stamina" => &mut self.profile_status_runtime.stamina,
-            "suit" => &mut self.profile_status_runtime.suit,
-            "spores" => &mut self.profile_status_runtime.spores,
-            "radiation" => &mut self.profile_status_runtime.radiation,
-            "oxygen" => &mut self.profile_status_runtime.oxygen,
+            semantics::METER_HEALTH => &mut self.profile_status_runtime.health,
+            semantics::METER_STAMINA => &mut self.profile_status_runtime.stamina,
+            semantics::METER_SUIT => &mut self.profile_status_runtime.suit,
+            semantics::METER_SPORES => &mut self.profile_status_runtime.spores,
+            semantics::METER_RADIATION => &mut self.profile_status_runtime.radiation,
+            semantics::METER_OXYGEN => &mut self.profile_status_runtime.oxygen,
             _ => return false,
         };
         let whole_delta = accumulated_integer_delta(accumulator, delta);
@@ -987,24 +1017,7 @@ impl GameContext {
     }
 
     fn profile_movement_speed_multiplier(&self) -> f32 {
-        let stamina = self.profile_meter_ratio("stamina");
-        let load = self.profile_meter_ratio("load");
-        let stamina_factor = if self.profile_meter_value("stamina") == 0 {
-            0.55
-        } else if stamina < 0.20 {
-            0.78
-        } else {
-            1.0
-        };
-        let load_factor = if load >= 0.95 {
-            0.70
-        } else if load >= 0.80 {
-            0.86
-        } else {
-            1.0
-        };
-
-        stamina_factor * load_factor
+        self.profile_derived_state().movement_speed_multiplier
     }
 
     fn advance_field_clock(&mut self, dt: f32) -> bool {
@@ -1135,7 +1148,12 @@ impl GameContext {
     }
 
     fn update_activity_status_alerts(&mut self) {
-        if self.should_log_meter_below("stamina", 0.18, 0.35, StatusAlert::StaminaLow) {
+        if self.should_log_meter_below(
+            semantics::METER_STAMINA,
+            0.18,
+            0.35,
+            StatusAlert::StaminaLow,
+        ) {
             let title = localization::text(
                 self.language,
                 "activity.event.status.stamina_low.title",
@@ -1150,7 +1168,7 @@ impl GameContext {
             );
             self.push_activity_log(LOG_CATEGORY_STATUS, title, detail);
         }
-        if self.should_log_meter_above("load", 0.85, 0.70, StatusAlert::HeavyLoad) {
+        if self.should_log_meter_above(semantics::METER_LOAD, 0.85, 0.70, StatusAlert::HeavyLoad) {
             let title = localization::text(
                 self.language,
                 "activity.event.status.load_high.title",
@@ -1165,7 +1183,8 @@ impl GameContext {
             );
             self.push_activity_log(LOG_CATEGORY_STATUS, title, detail);
         }
-        if self.should_log_meter_below("suit", 0.25, 0.45, StatusAlert::SuitCritical) {
+        if self.should_log_meter_below(semantics::METER_SUIT, 0.25, 0.45, StatusAlert::SuitCritical)
+        {
             let title = localization::text(
                 self.language,
                 "activity.event.status.suit_low.title",
@@ -1180,7 +1199,12 @@ impl GameContext {
             );
             self.push_activity_log(LOG_CATEGORY_STATUS, title, detail);
         }
-        if self.should_log_meter_below("oxygen", 0.25, 0.45, StatusAlert::OxygenCritical) {
+        if self.should_log_meter_below(
+            semantics::METER_OXYGEN,
+            0.25,
+            0.45,
+            StatusAlert::OxygenCritical,
+        ) {
             let title = localization::text(
                 self.language,
                 "activity.event.status.oxygen_low.title",
@@ -1195,7 +1219,12 @@ impl GameContext {
             );
             self.push_activity_log(LOG_CATEGORY_STATUS, title, detail);
         }
-        if self.should_log_meter_below("health", 0.35, 0.55, StatusAlert::HealthCritical) {
+        if self.should_log_meter_below(
+            semantics::METER_HEALTH,
+            0.35,
+            0.55,
+            StatusAlert::HealthCritical,
+        ) {
             let title = localization::text(
                 self.language,
                 "activity.event.status.health_critical.title",
@@ -1589,30 +1618,6 @@ fn inventory_load_units(inventory: &InventorySave) -> u32 {
         .sum()
 }
 
-struct ConsumableEffect {
-    meter_id: &'static str,
-    amount: u32,
-}
-
-fn consumable_effect_for_item(item_id: &str) -> Option<ConsumableEffect> {
-    let effect = match item_id {
-        semantics::ITEM_MED_INJECTOR => ConsumableEffect {
-            meter_id: semantics::METER_HEALTH,
-            amount: 35,
-        },
-        semantics::ITEM_ENERGY_CELL => ConsumableEffect {
-            meter_id: semantics::METER_STAMINA,
-            amount: 35,
-        },
-        semantics::ITEM_COOLANT_CANISTER => ConsumableEffect {
-            meter_id: semantics::METER_SUIT,
-            amount: 30,
-        },
-        _ => return None,
-    };
-    Some(effect)
-}
-
 fn profile_meter_label(id: &str, language: Language) -> &'static str {
     if let Some(meter) = semantics::meter_def(id) {
         match language {
@@ -1651,20 +1656,14 @@ fn new_save_data_for_language(language: Language) -> SaveData {
     save_data
 }
 
-fn average_meter_ratio(meters: &[MeterSave]) -> f32 {
+fn average_derived_meter_ratio(meters: &[DerivedMeterValue]) -> f32 {
     if meters.is_empty() {
         return 0.0;
     }
 
     let total = meters
         .iter()
-        .map(|meter| {
-            if meter.max == 0 {
-                0.0
-            } else {
-                meter.value as f32 / meter.max as f32
-            }
-        })
+        .map(|meter| meter_ratio(meter.value, meter.max))
         .sum::<f32>();
     (total / meters.len() as f32).clamp(0.0, 1.0)
 }
@@ -1675,6 +1674,133 @@ fn average_slice(values: &[f32]) -> f32 {
     }
 
     (values.iter().copied().sum::<f32>() / values.len() as f32).clamp(0.0, 1.0)
+}
+
+fn scan_level_and_xp(scanned_count: u32) -> (u32, u32, u32) {
+    let mut total_xp = scanned_count * SCAN_XP_REWARD;
+    let mut level = 1;
+    let mut xp_next = 1_000;
+    while xp_next > 0 && total_xp >= xp_next {
+        total_xp -= xp_next;
+        level += 1;
+        xp_next += 2_500;
+    }
+
+    (level, total_xp, xp_next)
+}
+
+fn derived_research_progress(
+    scanned_codex_ids: &HashSet<String>,
+    profile: &crate::save::PlayerProfileSave,
+) -> Vec<DerivedMeterValue> {
+    let mut progress = BTreeMap::<&'static str, u32>::new();
+    for codex_id in scanned_codex_ids {
+        let meter_id = rewards::research_meter_for_codex(codex_id);
+        *progress.entry(meter_id).or_default() += RESEARCH_PROGRESS_PER_SCAN;
+    }
+
+    profile
+        .research
+        .iter()
+        .map(|meter| DerivedMeterValue {
+            id: meter.id.clone(),
+            value: progress
+                .get(meter.id.as_str())
+                .copied()
+                .unwrap_or(0)
+                .min(meter.max),
+            max: meter.max,
+        })
+        .collect()
+}
+
+fn derived_profile_attributes(
+    ctx: &GameContext,
+    research: &[DerivedMeterValue],
+) -> Vec<DerivedScoreValue> {
+    let health = ctx.profile_meter_ratio(semantics::METER_HEALTH);
+    let stamina = ctx.profile_meter_ratio(semantics::METER_STAMINA);
+    let suit = ctx.profile_meter_ratio(semantics::METER_SUIT);
+    let load = meter_ratio(
+        inventory_load_units(&ctx.save_data.inventory),
+        ctx.profile_meter_max(semantics::METER_LOAD),
+    );
+    let oxygen = ctx.profile_meter_ratio(semantics::METER_OXYGEN);
+    let radiation = ctx.profile_meter_ratio(semantics::METER_RADIATION);
+    let spores = ctx.profile_meter_ratio(semantics::METER_SPORES);
+    let research = average_derived_meter_ratio(research);
+    let scanned = progress_ratio(
+        ctx.scanned_codex_ids.len(),
+        ctx.codex_database.entries().len(),
+    );
+    let collected = ctx.save_data.world.collected_entities.len();
+    let carried_find_count = inventory_discovery_count(&ctx.save_data.inventory);
+    let harvesting = capped_count_ratio(collected + carried_find_count, 20);
+    let derived = [
+        (
+            "survival",
+            score_from_ratio(average_slice(&[health, suit, oxygen, radiation, spores])),
+        ),
+        (
+            "mobility",
+            score_from_ratio(
+                (stamina * 0.70 + (1.0 - load).clamp(0.0, 1.0) * 0.30).clamp(0.0, 1.0),
+            ),
+        ),
+        ("scanning", score_from_ratio(scanned)),
+        ("harvesting", score_from_ratio(harvesting)),
+        ("analysis", score_from_ratio(research)),
+    ];
+
+    ctx.save_data
+        .profile
+        .attributes
+        .iter()
+        .filter_map(|score| {
+            derived
+                .iter()
+                .find(|(id, _)| *id == score.id)
+                .map(|(_, value)| DerivedScoreValue {
+                    id: score.id.clone(),
+                    value: (*value).min(score.max),
+                    max: score.max,
+                })
+        })
+        .collect()
+}
+
+fn movement_speed_multiplier_from_values(
+    stamina_value: u32,
+    stamina_max: u32,
+    load_value: u32,
+    load_max: u32,
+) -> f32 {
+    let stamina = meter_ratio(stamina_value, stamina_max);
+    let load = meter_ratio(load_value, load_max);
+    let stamina_factor = if stamina_value == 0 {
+        0.55
+    } else if stamina < 0.20 {
+        0.78
+    } else {
+        1.0
+    };
+    let load_factor = if load >= 0.95 {
+        0.70
+    } else if load >= 0.80 {
+        0.86
+    } else {
+        1.0
+    };
+
+    stamina_factor * load_factor
+}
+
+fn meter_ratio(value: u32, max: u32) -> f32 {
+    if max == 0 {
+        0.0
+    } else {
+        (value as f32 / max as f32).clamp(0.0, 1.0)
+    }
 }
 
 fn progress_ratio(current: usize, total: usize) -> f32 {
@@ -1782,8 +1908,19 @@ mod tests {
             .world
             .collected_entities
             .insert("assets/data/maps/a.ron::pickup_001".to_owned());
+        let derived = ctx.profile_derived_state();
         ctx.sync_derived_profile_state();
 
+        assert_eq!(derived.level, 1);
+        assert_eq!(derived.xp, SCAN_XP_REWARD);
+        assert_eq!(
+            derived
+                .research
+                .iter()
+                .find(|meter| meter.id == "bio")
+                .map(|meter| meter.value),
+            Some(RESEARCH_PROGRESS_PER_SCAN)
+        );
         assert_eq!(ctx.save_data.profile.level, 1);
         assert_eq!(ctx.save_data.profile.xp, SCAN_XP_REWARD);
         assert_eq!(

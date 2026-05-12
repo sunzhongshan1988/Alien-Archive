@@ -1,6 +1,9 @@
 use std::{collections::HashMap, path::Path};
 
 use anyhow::{Context, Result};
+use content::items::{
+    self, ItemCategory, ItemDef as ItemDefinition, ItemRarity as Rarity, LocalizedTextDef,
+};
 use runtime::{Button, Color, InputState, Rect, Renderer, SceneCommand, Vec2};
 use rusttype::Font;
 
@@ -110,258 +113,6 @@ const UI_TEXTURES: &[(&str, &str)] = &[
     ),
 ];
 
-#[derive(Clone, Copy)]
-struct LocalizedText {
-    english: &'static str,
-    chinese: &'static str,
-}
-
-impl LocalizedText {
-    const fn new(english: &'static str, chinese: &'static str) -> Self {
-        Self { english, chinese }
-    }
-
-    fn get(self, language: Language) -> &'static str {
-        match language {
-            Language::Chinese => self.chinese,
-            Language::English => self.english,
-        }
-    }
-}
-
-const ITEM_DEFINITIONS: &[ItemDefinition] = &[
-    ItemDefinition {
-        id: "alien_crystal_sample",
-        name: LocalizedText::new("Crystal Sample", "晶体样本"),
-        category: ItemCategory::Samples,
-        texture_id: "item_alien_crystal_sample",
-        icon_path: "assets/images/ui/inventory/items/item_alien_crystal_sample.png",
-        max_stack: 10,
-        weight: 2,
-        rarity: Rarity::Rare,
-        research: 42,
-    },
-    ItemDefinition {
-        id: "bio_sample_vial",
-        name: LocalizedText::new("Bio Sample", "生物样本"),
-        category: ItemCategory::Samples,
-        texture_id: "item_bio_sample_vial",
-        icon_path: "assets/images/ui/inventory/items/item_bio_sample_vial.png",
-        max_stack: 10,
-        weight: 1,
-        rarity: Rarity::Uncommon,
-        research: 18,
-    },
-    ItemDefinition {
-        id: "data_shard",
-        name: LocalizedText::new("Data Shard", "数据碎片"),
-        category: ItemCategory::Data,
-        texture_id: "item_data_shard",
-        icon_path: "assets/images/ui/inventory/items/item_data_shard.png",
-        max_stack: 99,
-        weight: 0,
-        rarity: Rarity::Rare,
-        research: 66,
-    },
-    ItemDefinition {
-        id: "energy_cell",
-        name: LocalizedText::new("Energy Cell", "能量电池"),
-        category: ItemCategory::Consumables,
-        texture_id: "item_energy_cell",
-        icon_path: "assets/images/ui/inventory/items/item_energy_cell.png",
-        max_stack: 20,
-        weight: 1,
-        rarity: Rarity::Uncommon,
-        research: 35,
-    },
-    ItemDefinition {
-        id: "scrap_part",
-        name: LocalizedText::new("Scrap Part", "废料零件"),
-        category: ItemCategory::Components,
-        texture_id: "item_scrap_part",
-        icon_path: "assets/images/ui/inventory/items/item_scrap_part.png",
-        max_stack: 99,
-        weight: 1,
-        rarity: Rarity::Common,
-        research: 8,
-    },
-    ItemDefinition {
-        id: "ruin_key",
-        name: LocalizedText::new("Ruin Key", "遗迹钥匙"),
-        category: ItemCategory::Artifacts,
-        texture_id: "item_ruin_key",
-        icon_path: "assets/images/ui/inventory/items/item_ruin_key.png",
-        max_stack: 1,
-        weight: 1,
-        rarity: Rarity::Artifact,
-        research: 91,
-    },
-    ItemDefinition {
-        id: "scanner_tool",
-        name: LocalizedText::new("Scanner", "扫描器"),
-        category: ItemCategory::Tools,
-        texture_id: "item_scanner_tool",
-        icon_path: "assets/images/ui/inventory/items/item_scanner_tool.png",
-        max_stack: 1,
-        weight: 3,
-        rarity: Rarity::Uncommon,
-        research: 100,
-    },
-    ItemDefinition {
-        id: "med_injector",
-        name: LocalizedText::new("Med Injector", "医疗注射器"),
-        category: ItemCategory::Consumables,
-        texture_id: "item_med_injector",
-        icon_path: "assets/images/ui/inventory/items/item_med_injector.png",
-        max_stack: 5,
-        weight: 1,
-        rarity: Rarity::Common,
-        research: 0,
-    },
-    ItemDefinition {
-        id: "coolant_canister",
-        name: LocalizedText::new("Coolant Canister", "冷却罐"),
-        category: ItemCategory::Consumables,
-        texture_id: "item_coolant_canister",
-        icon_path: "assets/images/ui/inventory/items/item_coolant_canister.png",
-        max_stack: 10,
-        weight: 3,
-        rarity: Rarity::Uncommon,
-        research: 24,
-    },
-    ItemDefinition {
-        id: "metal_fragment",
-        name: LocalizedText::new("Metal Fragment", "金属碎片"),
-        category: ItemCategory::Components,
-        texture_id: "item_metal_fragment",
-        icon_path: "assets/images/ui/inventory/items/item_metal_fragment.png",
-        max_stack: 99,
-        weight: 1,
-        rarity: Rarity::Common,
-        research: 12,
-    },
-    ItemDefinition {
-        id: "glow_fungus_sample",
-        name: LocalizedText::new("Glow Fungus", "发光菌样本"),
-        category: ItemCategory::Samples,
-        texture_id: "item_glow_fungus_sample",
-        icon_path: "assets/images/ui/inventory/items/item_glow_fungus_sample.png",
-        max_stack: 10,
-        weight: 1,
-        rarity: Rarity::Uncommon,
-        research: 54,
-    },
-    ItemDefinition {
-        id: "artifact_core",
-        name: LocalizedText::new("Artifact Core", "遗物核心"),
-        category: ItemCategory::Artifacts,
-        texture_id: "item_artifact_core",
-        icon_path: "assets/images/ui/inventory/items/item_artifact_core.png",
-        max_stack: 1,
-        weight: 4,
-        rarity: Rarity::Artifact,
-        research: 73,
-    },
-];
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum ItemCategory {
-    Samples,
-    Components,
-    Artifacts,
-    Consumables,
-    Tools,
-    Data,
-}
-
-impl ItemCategory {
-    const ALL: [Self; 6] = [
-        Self::Samples,
-        Self::Components,
-        Self::Artifacts,
-        Self::Consumables,
-        Self::Tools,
-        Self::Data,
-    ];
-
-    fn key(self) -> &'static str {
-        match self {
-            Self::Samples => "samples",
-            Self::Components => "components",
-            Self::Artifacts => "artifacts",
-            Self::Consumables => "consumables",
-            Self::Tools => "tools",
-            Self::Data => "data",
-        }
-    }
-
-    fn from_key(value: &str) -> Option<Self> {
-        Self::ALL
-            .iter()
-            .copied()
-            .find(|category| category.key() == value)
-    }
-
-    fn label(self, language: Language) -> &'static str {
-        match language {
-            Language::Chinese => match self {
-                Self::Samples => "样本",
-                Self::Components => "组件",
-                Self::Artifacts => "遗物",
-                Self::Consumables => "消耗品",
-                Self::Tools => "工具",
-                Self::Data => "数据",
-            },
-            Language::English => match self {
-                Self::Samples => "Samples",
-                Self::Components => "Components",
-                Self::Artifacts => "Artifacts",
-                Self::Consumables => "Consumables",
-                Self::Tools => "Tools",
-                Self::Data => "Data",
-            },
-        }
-    }
-
-    fn icon_texture_id(self) -> &'static str {
-        match self {
-            Self::Samples => "ui_inventory_cat_samples",
-            Self::Components => "ui_inventory_cat_components",
-            Self::Artifacts => "ui_inventory_cat_artifacts",
-            Self::Consumables => "ui_inventory_cat_consumables",
-            Self::Tools => "ui_inventory_cat_tools",
-            Self::Data => "ui_inventory_cat_data",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Rarity {
-    Common,
-    Uncommon,
-    Rare,
-    Artifact,
-}
-
-impl Rarity {
-    fn label(self, language: Language) -> &'static str {
-        match language {
-            Language::Chinese => match self {
-                Self::Common => "普通",
-                Self::Uncommon => "优秀",
-                Self::Rare => "稀有",
-                Self::Artifact => "遗物",
-            },
-            Language::English => match self {
-                Self::Common => "Common",
-                Self::Uncommon => "Uncommon",
-                Self::Rare => "Rare",
-                Self::Artifact => "Artifact",
-            },
-        }
-    }
-}
-
 #[derive(Clone)]
 struct InventoryState {
     slots: Vec<Option<ItemStack>>,
@@ -375,19 +126,6 @@ struct ItemStack {
     item_id: &'static str,
     quantity: u32,
     locked: bool,
-}
-
-#[derive(Clone, Copy)]
-struct ItemDefinition {
-    id: &'static str,
-    name: LocalizedText,
-    category: ItemCategory,
-    texture_id: &'static str,
-    icon_path: &'static str,
-    max_stack: u32,
-    weight: u32,
-    rarity: Rarity,
-    research: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -1024,7 +762,7 @@ impl InventoryScene {
                     renderer,
                     font,
                     &format!("inventory_text_tab_{}", category.key()),
-                    category.label(language),
+                    category_label(category, language),
                     match language {
                         Language::Chinese => 19.0,
                         Language::English => 16.0,
@@ -1062,7 +800,7 @@ impl InventoryScene {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        for definition in ITEM_DEFINITIONS {
+        for definition in items::ITEM_DEFS {
             self.text.item_details.insert(
                 definition.id,
                 ItemDetailText {
@@ -1070,7 +808,7 @@ impl InventoryScene {
                         renderer,
                         font,
                         &format!("inventory_text_name_{}", definition.id),
-                        definition.name.get(language),
+                        localized_text(definition.name, language),
                         match language {
                             Language::Chinese => 28.0,
                             Language::English => 26.0,
@@ -1080,7 +818,7 @@ impl InventoryScene {
                         renderer,
                         font,
                         &format!("inventory_text_category_{}", definition.id),
-                        definition.category.label(language),
+                        category_label(definition.category, language),
                         18.0,
                     )?,
                     quantity: upload_text(
@@ -1094,7 +832,7 @@ impl InventoryScene {
                         renderer,
                         font,
                         &format!("inventory_text_rarity_{}", definition.id),
-                        definition.rarity.label(language),
+                        rarity_label(definition.rarity, language),
                         18.0,
                     )?,
                     stack_limit: upload_text(
@@ -1138,29 +876,13 @@ impl InventoryScene {
 impl InventoryState {
     fn new_mvp() -> Self {
         let mut slots = vec![None; BACKPACK_SLOTS];
-        for (index, stack) in [
-            ItemStack::new("alien_crystal_sample", 3, false),
-            ItemStack::new("bio_sample_vial", 2, false),
-            ItemStack::new("data_shard", 8, false),
-            ItemStack::new("energy_cell", 4, false),
-            ItemStack::new("scrap_part", 17, false),
-            ItemStack::new("ruin_key", 1, true),
-            ItemStack::new("scanner_tool", 1, true),
-            ItemStack::new("med_injector", 2, false),
-            ItemStack::new("coolant_canister", 1, false),
-            ItemStack::new("metal_fragment", 9, false),
-            ItemStack::new("glow_fungus_sample", 2, false),
-            ItemStack::new("artifact_core", 1, true),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            slots[index] = Some(stack);
+        for (index, stack) in items::DEFAULT_INVENTORY_STACKS.iter().enumerate() {
+            slots[index] = Some(ItemStack::new(stack.item_id, stack.quantity, stack.locked));
         }
 
         Self {
             slots,
-            quickbar: [Some(6), Some(7), Some(3), Some(2), Some(5), Some(11)],
+            quickbar: default_quickbar_slots(),
             selected_slot: 0,
             active_category: ItemCategory::Samples,
         }
@@ -1420,6 +1142,19 @@ impl InventoryLayout {
     }
 }
 
+fn default_quickbar_slots() -> [Option<usize>; QUICKBAR_SLOTS] {
+    let mut slots = [None; QUICKBAR_SLOTS];
+    for (index, slot) in items::DEFAULT_QUICKBAR_SLOTS
+        .iter()
+        .copied()
+        .take(QUICKBAR_SLOTS)
+        .enumerate()
+    {
+        slots[index] = slot;
+    }
+    slots
+}
+
 fn draw_panel(renderer: &mut dyn Renderer, rect: Rect, fill: Color, border: Color, scale: f32) {
     renderer.draw_rect(rect, fill);
     draw_border(renderer, rect, 1.0 * scale, border);
@@ -1511,13 +1246,11 @@ fn inset_rect(rect: Rect, inset: f32) -> Rect {
 }
 
 fn item_definition(item_id: &str) -> Option<&'static ItemDefinition> {
-    ITEM_DEFINITIONS
-        .iter()
-        .find(|definition| definition.id == item_id)
+    items::item_def(item_id)
 }
 
 pub(super) fn load_inventory_item_icons(renderer: &mut dyn Renderer) -> Result<()> {
-    for definition in ITEM_DEFINITIONS {
+    for definition in items::ITEM_DEFS {
         if renderer.texture_size(definition.texture_id).is_none() {
             renderer
                 .load_texture(definition.texture_id, Path::new(definition.icon_path))
@@ -1537,16 +1270,16 @@ pub(super) fn inventory_slots(save: &InventorySave) -> Vec<Option<InventoryItemV
 }
 
 pub(super) fn inventory_item_max_stack(item_id: &str) -> Option<u32> {
-    item_definition(item_id).map(|definition| definition.max_stack)
+    items::item_max_stack(item_id)
 }
 
 pub(super) fn inventory_item_weight(item_id: &str) -> u32 {
-    item_definition(item_id).map_or(1, |definition| definition.weight)
+    items::item_weight(item_id)
 }
 
 pub(super) fn inventory_item_name(item_id: &str, language: Language) -> String {
-    item_definition(item_id)
-        .map(|definition| definition.name.get(language).to_owned())
+    items::item_name(item_id)
+        .map(|name| localized_text(name, language).to_owned())
         .unwrap_or_else(|| item_id.to_owned())
 }
 
@@ -1560,12 +1293,12 @@ fn inventory_item_view(stack: &ItemStack) -> Option<InventoryItemView> {
         research: definition.research,
         locked: stack.locked,
         rarity_color: rarity_color(definition.rarity),
-        name_english: definition.name.get(Language::English),
-        name_chinese: definition.name.get(Language::Chinese),
-        category_english: definition.category.label(Language::English),
-        category_chinese: definition.category.label(Language::Chinese),
-        rarity_english: definition.rarity.label(Language::English),
-        rarity_chinese: definition.rarity.label(Language::Chinese),
+        name_english: localized_text(definition.name, Language::English),
+        name_chinese: localized_text(definition.name, Language::Chinese),
+        category_english: category_label(definition.category, Language::English),
+        category_chinese: category_label(definition.category, Language::Chinese),
+        rarity_english: rarity_label(definition.rarity, Language::English),
+        rarity_chinese: rarity_label(definition.rarity, Language::Chinese),
     })
 }
 
@@ -1619,6 +1352,21 @@ fn locked_item_text(language: Language) -> &'static str {
         Language::Chinese => "已锁定",
         Language::English => "Locked Item",
     }
+}
+
+fn localized_text(text: LocalizedTextDef, language: Language) -> &'static str {
+    match language {
+        Language::Chinese => text.chinese,
+        Language::English => text.english,
+    }
+}
+
+fn category_label(category: ItemCategory, language: Language) -> &'static str {
+    localized_text(category.label(), language)
+}
+
+fn rarity_label(rarity: Rarity, language: Language) -> &'static str {
+    localized_text(rarity.label(), language)
 }
 
 fn rarity_color(rarity: Rarity) -> Color {
@@ -1702,8 +1450,12 @@ mod tests {
     fn inventory_state_round_trips_save_selection_and_items() {
         let mut save = InventorySave::default();
         save.selected_slot = 3;
-        save.active_category = "components".to_owned();
-        save.slots[3] = Some(ItemStackSave::new("energy_cell", 99, false));
+        save.active_category = ItemCategory::Components.key().to_owned();
+        save.slots[3] = Some(ItemStackSave::new(
+            content::semantics::ITEM_ENERGY_CELL,
+            99,
+            false,
+        ));
 
         let state = InventoryState::from_save(&save);
         let saved_again = state.to_save();
@@ -1711,7 +1463,7 @@ mod tests {
         assert_eq!(state.selected_slot, 3);
         assert_eq!(state.active_category, ItemCategory::Components);
         assert_eq!(saved_again.selected_slot, 3);
-        assert_eq!(saved_again.active_category, "components");
+        assert_eq!(saved_again.active_category, ItemCategory::Components.key());
         assert_eq!(
             saved_again.slots[3].as_ref().map(|stack| stack.quantity),
             Some(20)
@@ -1726,7 +1478,7 @@ mod tests {
             assert!(project_root.join(path).exists(), "{path} should exist");
         }
 
-        for definition in ITEM_DEFINITIONS {
+        for definition in items::ITEM_DEFS {
             assert!(
                 project_root.join(definition.icon_path).exists(),
                 "{} should exist",
@@ -1746,20 +1498,15 @@ mod tests {
             assert!(!locked_item_text(language).is_empty());
 
             for category in ItemCategory::ALL {
-                assert!(!category.label(language).is_empty());
+                assert!(!category_label(category, language).is_empty());
             }
 
-            for rarity in [
-                Rarity::Common,
-                Rarity::Uncommon,
-                Rarity::Rare,
-                Rarity::Artifact,
-            ] {
-                assert!(!rarity.label(language).is_empty());
+            for rarity in Rarity::ALL {
+                assert!(!rarity_label(rarity, language).is_empty());
             }
 
-            for definition in ITEM_DEFINITIONS {
-                assert!(!definition.name.get(language).is_empty());
+            for definition in items::ITEM_DEFS {
+                assert!(!localized_text(definition.name, language).is_empty());
                 assert_eq!(inventory_item_weight(definition.id), definition.weight);
             }
         }
