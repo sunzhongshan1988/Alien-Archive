@@ -11,7 +11,7 @@ use crate::ui::{
     text::{TextSprite, draw_text, draw_text_centered, load_ui_font, upload_text},
 };
 
-use super::{GameContext, Language, SceneId, inventory_scene};
+use super::{GameContext, Language, SceneId, inventory_scene, quick_items};
 
 const QUICKBAR_SLOTS: usize = 6;
 
@@ -551,12 +551,7 @@ fn quickbar_counts(ctx: &GameContext) -> Vec<Option<String>> {
 }
 
 fn quickbar_slot_index(ctx: &GameContext, quick_index: usize) -> usize {
-    ctx.save_data
-        .inventory
-        .quickbar
-        .get(quick_index)
-        .and_then(|slot| *slot)
-        .unwrap_or(quick_index)
+    quick_items::quickbar_slot_index(&ctx.save_data.inventory, quick_index)
 }
 
 pub(super) fn quickbar_slot_at_position(viewport: Vec2, position: Vec2) -> Option<usize> {

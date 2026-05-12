@@ -6,7 +6,8 @@ use runtime::Rect;
 use crate::world::{MapHazardRule, MapObjectiveRule, MapPromptRule, MapZone, World};
 
 use super::{
-    GameContext, Language, notice_system::NoticeState, profile_meter_label, zone_progress_key,
+    GameContext, Language, notice_system::NoticeState, profile_meter_label,
+    world_runtime::zone_progress_key,
 };
 
 #[derive(Default)]

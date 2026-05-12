@@ -1,3 +1,4 @@
+mod activity_log;
 mod debug_overlay;
 mod facility_scene;
 mod field_hud;
@@ -7,24 +8,25 @@ mod main_menu;
 mod notice_system;
 mod overworld_scene;
 mod pause_scene;
+mod profile_derived;
 mod profile_scene;
+mod profile_status;
+mod quick_items;
 mod rewards;
 mod scan_system;
+mod world_runtime;
 mod zone_system;
 
 use anyhow::Result;
-use content::{CodexDatabase, items, semantics};
+use content::{CodexDatabase, semantics};
 use runtime::{Button, Camera2d, InputState, Renderer, SceneCommand, Vec2};
-use std::{
-    collections::{BTreeMap, HashSet},
-    path::PathBuf,
-};
+use std::{collections::HashSet, path::PathBuf};
 
 use crate::objectives::{ObjectiveDatabase, ObjectiveMenuRow};
-use crate::save::{CodexSave, InventorySave, SaveData, SaveVec2, WorldSave};
-use crate::ui::localization;
+use crate::save::{CodexSave, InventorySave, SaveData};
 use crate::world::{MapObjectiveRule, MapPromptRule, MapTransitionTarget, MapUnlockRule};
 
+use activity_log::ActivityLogEvent;
 use facility_scene::FacilityScene;
 use game_menu_scene::GameMenuScene;
 use inventory_scene::InventoryScene;
@@ -35,28 +37,15 @@ use profile_scene::ProfileScene;
 
 use debug_overlay::{DebugOverlay, SceneDebugSnapshot};
 use field_hud::{FieldHud, quickbar_slot_at_position};
+pub use profile_derived::{DerivedMeterValue, DerivedScoreValue, ProfileDerivedState};
+use profile_derived::{ProfileDerivationInput, derive_profile_state, inventory_load_units};
+pub use profile_status::{FieldActivity, FieldEnvironment, FieldStatusEffects};
+use profile_status::{ProfileStatusRuntime, STAMINA_JUMP_COST, StatusAlert, StatusSnapshot};
+pub use quick_items::QuickItemUseResult;
+use world_runtime::{entity_progress_key, zone_progress_key};
 
 const AUTOSAVE_INTERVAL: f32 = 5.0;
-const STAMINA_MOVE_DRAIN_PER_SECOND: f32 = 2.0;
-const STAMINA_SCAN_DRAIN_PER_SECOND: f32 = 1.0;
-const STAMINA_IDLE_RECOVER_PER_SECOND: f32 = 5.0;
-const STAMINA_JUMP_COST: i32 = 8;
-const FACILITY_SUIT_DRAIN_PER_SECOND: f32 = 0.06;
-const FACILITY_OXYGEN_DRAIN_PER_SECOND: f32 = 0.16;
-const FACILITY_RADIATION_DRAIN_PER_SECOND: f32 = 0.05;
-const FACILITY_SPORE_DRAIN_PER_SECOND: f32 = 0.03;
-const OVERWORLD_RECOVERY_PER_SECOND: f32 = 0.08;
 const CRITICAL_HEALTH_DRAIN_PER_SECOND: f32 = 0.35;
-const FIELD_CLOCK_MINUTES_PER_SECOND: f32 = 1.0;
-const SCAN_XP_REWARD: u32 = 120;
-const RESEARCH_PROGRESS_PER_SCAN: u32 = 6;
-const LOG_CATEGORY_PICKUP: &str = "pickup";
-const LOG_CATEGORY_SCAN: &str = "scan";
-const LOG_CATEGORY_UNLOCK: &str = "unlock";
-const LOG_CATEGORY_STATUS: &str = "status";
-const LOG_CATEGORY_ITEM: &str = "item";
-const LOG_CATEGORY_ZONE: &str = "zone";
-const LOG_CATEGORY_OBJECTIVE: &str = "objective";
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -138,94 +127,6 @@ impl Default for GameMenuTab {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum FieldEnvironment {
-    Overworld,
-    Facility,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct FieldActivity {
-    pub moving: bool,
-    pub scanning: bool,
-    pub jumped: bool,
-    pub environment: FieldEnvironment,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct FieldStatusEffects {
-    pub movement_speed_multiplier: f32,
-}
-
-impl Default for FieldStatusEffects {
-    fn default() -> Self {
-        Self {
-            movement_speed_multiplier: 1.0,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct ProfileDerivedState {
-    pub level: u32,
-    pub xp: u32,
-    pub xp_next: u32,
-    pub research: Vec<DerivedMeterValue>,
-    pub attributes: Vec<DerivedScoreValue>,
-    pub movement_speed_multiplier: f32,
-    pub scanned_codex_count: usize,
-    pub codex_entry_count: usize,
-    pub collected_entity_count: usize,
-    pub inventory_discovery_count: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DerivedMeterValue {
-    pub id: String,
-    pub value: u32,
-    pub max: u32,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DerivedScoreValue {
-    pub id: String,
-    pub value: u32,
-    pub max: u32,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum QuickItemUseResult {
-    Empty,
-    NotUsable {
-        item_id: String,
-    },
-    AlreadyFull {
-        item_id: String,
-        meter_id: String,
-    },
-    Used {
-        item_id: String,
-        meter_id: &'static str,
-        amount: u32,
-    },
-}
-
-#[derive(Default)]
-struct ProfileStatusRuntime {
-    stamina: f32,
-    health: f32,
-    suit: f32,
-    spores: f32,
-    radiation: f32,
-    oxygen: f32,
-    field_clock_minutes: f32,
-    low_stamina_logged: bool,
-    heavy_load_logged: bool,
-    suit_critical_logged: bool,
-    oxygen_critical_logged: bool,
-    health_critical_logged: bool,
-}
-
 #[derive(Default)]
 pub struct GameContext {
     pub language: Language,
@@ -291,7 +192,7 @@ impl GameContext {
     }
 
     pub fn resume_scene_id(&self) -> SceneId {
-        scene_id_from_save_key(&self.save_data.world.current_scene)
+        world_runtime::scene_id_from_save_key(&self.save_data.world.current_scene)
     }
 
     pub fn load_save_file_or_default(&mut self, save_path: PathBuf) {
@@ -365,58 +266,14 @@ impl GameContext {
         if activity.jumped {
             self.change_profile_meter(semantics::METER_STAMINA, -STAMINA_JUMP_COST);
         }
+
         self.advance_field_clock(dt);
-
-        let mut stamina_rate = if activity.moving {
-            -STAMINA_MOVE_DRAIN_PER_SECOND
-        } else {
-            STAMINA_IDLE_RECOVER_PER_SECOND
-        };
-        if activity.scanning {
-            stamina_rate -= STAMINA_SCAN_DRAIN_PER_SECOND;
-        }
-        if self.profile_meter_ratio(semantics::METER_LOAD) >= 0.85 && activity.moving {
-            stamina_rate -= 0.75;
-        }
-        self.accumulate_profile_delta(semantics::METER_STAMINA, stamina_rate * dt);
-
-        match activity.environment {
-            FieldEnvironment::Overworld => {
-                self.accumulate_profile_delta(
-                    semantics::METER_SUIT,
-                    OVERWORLD_RECOVERY_PER_SECOND * dt,
-                );
-                self.accumulate_profile_delta(
-                    semantics::METER_OXYGEN,
-                    OVERWORLD_RECOVERY_PER_SECOND * dt,
-                );
-                self.accumulate_profile_delta(
-                    semantics::METER_SPORES,
-                    OVERWORLD_RECOVERY_PER_SECOND * dt,
-                );
-                self.accumulate_profile_delta(
-                    semantics::METER_RADIATION,
-                    OVERWORLD_RECOVERY_PER_SECOND * dt,
-                );
-            }
-            FieldEnvironment::Facility => {
-                self.accumulate_profile_delta(
-                    semantics::METER_SUIT,
-                    -FACILITY_SUIT_DRAIN_PER_SECOND * dt,
-                );
-                self.accumulate_profile_delta(
-                    semantics::METER_OXYGEN,
-                    -FACILITY_OXYGEN_DRAIN_PER_SECOND * dt,
-                );
-                self.accumulate_profile_delta(
-                    semantics::METER_RADIATION,
-                    -FACILITY_RADIATION_DRAIN_PER_SECOND * dt,
-                );
-                self.accumulate_profile_delta(
-                    semantics::METER_SPORES,
-                    -FACILITY_SPORE_DRAIN_PER_SECOND * dt,
-                );
-            }
+        let load_ratio = self.profile_meter_ratio(semantics::METER_LOAD);
+        for delta in self
+            .profile_status_runtime
+            .field_meter_deltas(dt, activity, load_ratio)
+        {
+            self.change_profile_meter(delta.meter_id, delta.delta);
         }
 
         if self.profile_meter_value(semantics::METER_SUIT) == 0
@@ -446,30 +303,13 @@ impl GameContext {
     }
 
     pub fn profile_derived_state(&self) -> ProfileDerivedState {
-        let (level, xp, xp_next) = scan_level_and_xp(self.scanned_codex_ids.len() as u32);
-        let research = derived_research_progress(&self.scanned_codex_ids, &self.save_data.profile);
-        let attributes = derived_profile_attributes(self, &research);
-        let load_value = inventory_load_units(&self.save_data.inventory);
-        let load_max = self.profile_meter_max(semantics::METER_LOAD);
-        let movement_speed_multiplier = movement_speed_multiplier_from_values(
-            self.profile_meter_value(semantics::METER_STAMINA),
-            self.profile_meter_max(semantics::METER_STAMINA),
-            load_value,
-            load_max,
-        );
-
-        ProfileDerivedState {
-            level,
-            xp,
-            xp_next,
-            research,
-            attributes,
-            movement_speed_multiplier,
-            scanned_codex_count: self.scanned_codex_ids.len(),
+        derive_profile_state(ProfileDerivationInput {
+            profile: &self.save_data.profile,
+            inventory: &self.save_data.inventory,
+            scanned_codex_ids: &self.scanned_codex_ids,
             codex_entry_count: self.codex_database.entries().len(),
             collected_entity_count: self.save_data.world.collected_entities.len(),
-            inventory_discovery_count: inventory_discovery_count(&self.save_data.inventory),
-        }
+        })
     }
 
     pub fn profile_meter_value(&self, id: &str) -> u32 {
@@ -479,69 +319,31 @@ impl GameContext {
             .map_or(0, |meter| meter.value)
     }
 
-    pub fn profile_meter_max(&self, id: &str) -> u32 {
-        self.save_data
-            .profile
-            .meter(id)
-            .map_or(0, |meter| meter.max)
-    }
-
     pub fn select_quickbar_slot(&mut self, quick_index: usize) -> bool {
-        let Some(slot_count) = (!self.save_data.inventory.slots.is_empty())
-            .then_some(self.save_data.inventory.slots.len())
-        else {
-            return false;
-        };
-        let slot_index = self
-            .save_data
-            .inventory
-            .quickbar
-            .get(quick_index)
-            .and_then(|slot| *slot)
-            .unwrap_or(quick_index);
-        if slot_index >= slot_count || self.save_data.inventory.selected_slot == slot_index {
+        if !quick_items::select_quickbar_slot(&mut self.save_data.inventory, quick_index) {
             return false;
         }
 
-        self.save_data.inventory.selected_slot = slot_index;
         self.request_save();
         true
     }
 
     pub fn use_selected_quickbar_item(&mut self) -> QuickItemUseResult {
-        let slot_index = self.save_data.inventory.selected_slot;
-        let Some(stack) = self
-            .save_data
-            .inventory
-            .slots
-            .get(slot_index)
-            .and_then(|slot| slot.as_ref())
-        else {
-            return QuickItemUseResult::Empty;
-        };
-        let item_id = stack.item_id.clone();
-
-        let Some(effect) = items::consumable_effect(&item_id) else {
-            return QuickItemUseResult::NotUsable { item_id };
-        };
-        let meter_id = effect.meter_id.as_str();
-        if self.profile_meter_value(meter_id) >= self.profile_meter_max(meter_id) {
-            return QuickItemUseResult::AlreadyFull {
-                item_id,
-                meter_id: meter_id.to_owned(),
-            };
-        }
-
-        self.change_profile_meter(meter_id, effect.amount as i32);
-        self.save_data.inventory.consume_slot(slot_index, 1);
-        self.sync_inventory_load_meter();
-        self.log_item_used(&item_id, meter_id, effect.amount);
-        self.request_save();
-        QuickItemUseResult::Used {
+        let result = quick_items::use_selected_quickbar_item(
+            &mut self.save_data.inventory,
+            &mut self.save_data.profile,
+        );
+        if let QuickItemUseResult::Used {
             item_id,
             meter_id,
-            amount: effect.amount,
+            amount,
+        } = &result
+        {
+            self.sync_inventory_load_meter();
+            self.log_item_used(item_id, meter_id, *amount);
+            self.request_save();
         }
+        result
     }
 
     pub fn is_unlock_rule_satisfied(&self, unlock: Option<&MapUnlockRule>) -> bool {
@@ -616,80 +418,24 @@ impl GameContext {
     }
 
     pub fn log_inventory_full(&mut self) {
-        let title = localization::text(
-            self.language,
-            "activity.event.inventory_full.title",
-            "Inventory full",
-            "背包已满",
-        );
-        let detail = localization::text(
-            self.language,
-            "activity.event.inventory_full.detail",
-            "No empty slot was available for the pickup",
-            "没有空槽位，物品未收入背包",
-        );
-        self.push_activity_log(LOG_CATEGORY_STATUS, title, detail);
+        self.push_activity_event(activity_log::inventory_full(self.language));
     }
 
     pub fn log_stamina_low(&mut self) {
-        let title = localization::text(
-            self.language,
-            "activity.event.stamina_blocked.title",
-            "Stamina too low",
-            "体力不足",
-        );
-        let detail = localization::text(
-            self.language,
-            "activity.event.stamina_blocked.detail",
-            "The action was cancelled; pause to recover stamina",
-            "本次动作被取消，先停止移动恢复体力",
-        );
-        self.push_activity_log(LOG_CATEGORY_STATUS, title, detail);
+        self.push_activity_event(activity_log::stamina_low(self.language));
     }
 
     pub fn log_locked_unlock_rule(&mut self, unlock: Option<&MapUnlockRule>) {
         let detail = self.locked_rule_log_detail(unlock);
-        let title = localization::text(
-            self.language,
-            "activity.event.access_blocked.title",
-            "Access blocked",
-            "入口受限",
-        );
-        self.push_activity_log(LOG_CATEGORY_UNLOCK, title, detail);
+        self.push_activity_event(activity_log::access_blocked(self.language, detail));
     }
 
     pub fn log_zone_prompt(&mut self, prompt: &MapPromptRule, fallback: &str) {
-        let title = prompt.log_title.clone().unwrap_or_else(|| {
-            localization::text(
-                self.language,
-                "activity.event.zone_prompt.title",
-                "Area note",
-                "区域提示",
-            )
-            .into_owned()
-        });
-        let detail = prompt
-            .log_detail
-            .clone()
-            .unwrap_or_else(|| fallback.to_owned());
-        self.push_activity_log(LOG_CATEGORY_ZONE, title, detail);
+        self.push_activity_event(activity_log::zone_prompt(self.language, prompt, fallback));
     }
 
     pub fn log_zone_hazard(&mut self, zone_id: &str, detail: String) {
-        let title = localization::text(
-            self.language,
-            "activity.event.zone_hazard.title",
-            "Hazard zone",
-            "危险区域",
-        );
-        let detail = localization::format_text(
-            self.language,
-            "activity.event.zone_hazard.detail",
-            "{zone}: {detail}",
-            "{zone}：{detail}",
-            &[("zone", zone_id.to_owned()), ("detail", detail)],
-        );
-        self.push_activity_log(LOG_CATEGORY_ZONE, title, detail);
+        self.push_activity_event(activity_log::zone_hazard(self.language, zone_id, detail));
     }
 
     pub fn apply_objective_zone(
@@ -703,8 +449,7 @@ impl GameContext {
             objective.checkpoint_id.as_deref(),
             objective.complete_objective,
         )?;
-        self.push_activity_log(
-            LOG_CATEGORY_OBJECTIVE,
+        self.push_activity_event(activity_log::objective(
             objective
                 .log_title
                 .clone()
@@ -713,33 +458,16 @@ impl GameContext {
                 .log_detail
                 .clone()
                 .unwrap_or_else(|| event.log_detail.clone()),
-        );
+        ));
         Some(event)
     }
 
     pub fn log_scene_transition(&mut self, scene_id: SceneId, map_path: &str) {
-        let title = match scene_id {
-            SceneId::Facility => localization::text(
-                self.language,
-                "activity.event.transition.facility.title",
-                "Entered facility",
-                "进入设施",
-            ),
-            _ => localization::text(
-                self.language,
-                "activity.event.transition.overworld.title",
-                "Returned to overworld",
-                "返回外部区域",
-            ),
-        };
-        let detail = localization::format_text(
+        self.push_activity_event(activity_log::scene_transition(
             self.language,
-            "activity.event.transition.detail",
-            "Destination: {map}",
-            "目的地：{map}",
-            &[("map", map_path.to_owned())],
-        );
-        self.push_activity_log(LOG_CATEGORY_UNLOCK, title, detail);
+            scene_id,
+            map_path,
+        ));
     }
 
     pub fn apply_map_transition(
@@ -749,68 +477,47 @@ impl GameContext {
         default_map: &str,
         default_spawn: &str,
     ) -> SceneId {
-        let scene_id = transition
-            .and_then(|transition| transition.scene.as_deref())
-            .map(scene_id_from_transition_key)
-            .unwrap_or(default_scene);
-        let map_path = transition
-            .and_then(|transition| transition.map_path.clone())
-            .unwrap_or_else(|| default_map.to_owned());
-        let spawn_id = transition
-            .and_then(|transition| transition.spawn_id.clone())
-            .unwrap_or_else(|| default_spawn.to_owned());
+        let destination = world_runtime::resolve_map_transition(
+            transition,
+            default_scene,
+            default_map,
+            default_spawn,
+        );
 
-        match scene_id {
+        match destination.scene_id {
             SceneId::Facility => {
-                self.facility_map_path = Some(map_path.clone());
-                self.facility_spawn_id = Some(spawn_id);
+                self.facility_map_path = Some(destination.map_path.clone());
+                self.facility_spawn_id = Some(destination.spawn_id.clone());
                 self.facility_player_position = None;
             }
             _ => {
-                self.overworld_map_path = Some(map_path.clone());
-                self.overworld_spawn_id = Some(spawn_id);
+                self.overworld_map_path = Some(destination.map_path.clone());
+                self.overworld_spawn_id = Some(destination.spawn_id.clone());
                 self.overworld_player_position = None;
             }
         }
 
-        self.log_scene_transition(scene_id, &map_path);
+        self.log_scene_transition(destination.scene_id, &destination.map_path);
         self.request_save();
-        scene_id
+        destination.scene_id
     }
 
     fn log_item_used(&mut self, item_id: &str, meter_id: &str, amount: u32) {
         let item_name = inventory_scene::inventory_item_name(item_id, self.language);
         let meter_name = profile_meter_label(meter_id, self.language);
-        let title = localization::format_text(
+        self.push_activity_event(activity_log::item_used(
             self.language,
-            "activity.event.item_used.title",
-            "Used {item}",
-            "使用 {item}",
-            &[("item", item_name.to_owned())],
-        );
-        let detail = localization::format_text(
-            self.language,
-            "activity.event.item_used.detail",
-            "Restored {meter} by {amount}",
-            "{meter} 恢复 {amount}",
-            &[
-                ("meter", meter_name.to_owned()),
-                ("amount", amount.to_string()),
-            ],
-        );
-        self.push_activity_log(LOG_CATEGORY_ITEM, title, detail);
+            &item_name,
+            meter_name,
+            amount,
+        ));
     }
 
-    fn push_activity_log(
-        &mut self,
-        category: &str,
-        title: impl Into<String>,
-        detail: impl Into<String>,
-    ) {
+    fn push_activity_event(&mut self, event: ActivityLogEvent) {
         self.save_data.activity_log.push(
-            category,
-            title,
-            detail,
+            event.category,
+            event.title,
+            event.detail,
             self.save_data.world.current_scene.clone(),
             self.save_data.world.map_path.clone(),
         );
@@ -821,13 +528,10 @@ impl GameContext {
         &self,
         map_path: &str,
     ) -> std::collections::BTreeSet<String> {
-        let prefix = format!("{map_path}::");
-        self.save_data
-            .world
-            .collected_entities
-            .iter()
-            .filter_map(|key| key.strip_prefix(&prefix).map(str::to_owned))
-            .collect()
+        world_runtime::collected_entity_ids_for_map(
+            &self.save_data.world.collected_entities,
+            map_path,
+        )
     }
 
     pub fn mark_save_dirty(&mut self) {
@@ -835,24 +539,18 @@ impl GameContext {
     }
 
     pub fn record_world_location(&mut self, scene_id: SceneId, map_path: &str, position: Vec2) {
-        let scene_key = scene_id.save_key();
-        let changed = self.save_data.world.current_scene != scene_key
-            || self.save_data.world.map_path != map_path
-            || position_changed(self.save_data.world.player_position, position);
-
-        self.save_data.world = WorldSave {
-            current_scene: scene_key.to_owned(),
-            map_path: map_path.to_owned(),
-            spawn_id: match scene_id {
-                SceneId::Facility => self.facility_spawn_id.clone(),
-                _ => self.overworld_spawn_id.clone(),
-            },
-            player_position: Some(position.into()),
-            collected_entities: self.save_data.world.collected_entities.clone(),
-            triggered_zones: self.save_data.world.triggered_zones.clone(),
-            field_time_minutes: self.save_data.world.field_time_minutes,
-            weather: self.save_data.world.weather.clone(),
+        let spawn_id = match scene_id {
+            SceneId::Facility => self.facility_spawn_id.clone(),
+            _ => self.overworld_spawn_id.clone(),
         };
+        let update = world_runtime::make_world_location_update(
+            &self.save_data.world,
+            scene_id,
+            map_path,
+            spawn_id,
+            position,
+        );
+        self.save_data.world = update.world;
 
         match scene_id {
             SceneId::Facility => {
@@ -865,7 +563,7 @@ impl GameContext {
             }
         }
 
-        if changed {
+        if update.changed {
             self.mark_save_dirty();
         }
     }
@@ -895,7 +593,7 @@ impl GameContext {
     fn apply_world_save(&mut self) {
         let world = &self.save_data.world;
         let position = world.player_position.map(Into::into);
-        match scene_id_from_save_key(&world.current_scene) {
+        match world_runtime::scene_id_from_save_key(&world.current_scene) {
             SceneId::Facility => {
                 self.facility_map_path = Some(world.map_path.clone());
                 self.facility_spawn_id = world.spawn_id.clone();
@@ -994,16 +692,9 @@ impl GameContext {
     }
 
     fn accumulate_profile_delta(&mut self, id: &str, delta: f32) -> bool {
-        let accumulator = match id {
-            semantics::METER_HEALTH => &mut self.profile_status_runtime.health,
-            semantics::METER_STAMINA => &mut self.profile_status_runtime.stamina,
-            semantics::METER_SUIT => &mut self.profile_status_runtime.suit,
-            semantics::METER_SPORES => &mut self.profile_status_runtime.spores,
-            semantics::METER_RADIATION => &mut self.profile_status_runtime.radiation,
-            semantics::METER_OXYGEN => &mut self.profile_status_runtime.oxygen,
-            _ => return false,
+        let Some(whole_delta) = self.profile_status_runtime.accumulated_delta(id, delta) else {
+            return false;
         };
-        let whole_delta = accumulated_integer_delta(accumulator, delta);
         self.change_profile_meter(id, whole_delta)
     }
 
@@ -1022,17 +713,11 @@ impl GameContext {
     }
 
     fn advance_field_clock(&mut self, dt: f32) -> bool {
-        if dt <= 0.0 {
-            return false;
-        }
-
-        self.profile_status_runtime.field_clock_minutes += dt * FIELD_CLOCK_MINUTES_PER_SECOND;
-        let whole_minutes = self.profile_status_runtime.field_clock_minutes.floor() as u32;
+        let whole_minutes = self.profile_status_runtime.advance_field_clock(dt);
         if whole_minutes == 0 {
             return false;
         }
 
-        self.profile_status_runtime.field_clock_minutes -= whole_minutes as f32;
         let minutes_per_day = 24 * 60;
         self.save_data.world.field_time_minutes =
             (self.save_data.world.field_time_minutes + whole_minutes) % minutes_per_day;
@@ -1046,23 +731,11 @@ impl GameContext {
 
     fn log_item_added(&mut self, item_id: &str, quantity: u32) {
         let item_name = inventory_scene::inventory_item_name(item_id, self.language);
-        let title = localization::text(
+        self.push_activity_event(activity_log::item_added(
             self.language,
-            "activity.event.item_added.title",
-            "Item acquired",
-            "获得物品",
-        );
-        let detail = localization::format_text(
-            self.language,
-            "activity.event.item_added.detail",
-            "{item} x{quantity} added to inventory",
-            "{item} x{quantity} 已写入背包",
-            &[
-                ("item", item_name.to_owned()),
-                ("quantity", quantity.to_string()),
-            ],
-        );
-        self.push_activity_log(LOG_CATEGORY_PICKUP, title, detail);
+            &item_name,
+            quantity,
+        ));
     }
 
     fn log_codex_scan(&mut self, codex_id: &str) {
@@ -1073,34 +746,16 @@ impl GameContext {
             .filter(|title| !title.is_empty())
             .unwrap_or(codex_id);
         let research_meter = rewards::research_meter_for_codex(codex_id);
-        let title = localization::text(
+        self.push_activity_event(activity_log::codex_scan(
             self.language,
-            "activity.event.scan_recorded.title",
-            "Scan recorded",
-            "扫描完成",
-        );
-        let detail = localization::format_text(
-            self.language,
-            "activity.event.scan_recorded.detail",
-            "{title} · {meter} research +6 · XP +120",
-            "{title} · {meter} 研究 +6 · XP +120",
-            &[
-                ("title", entry_title.to_owned()),
-                ("meter", research_meter.to_owned()),
-            ],
-        );
-        self.push_activity_log(LOG_CATEGORY_SCAN, title, detail);
+            entry_title,
+            research_meter,
+        ));
     }
 
     fn locked_rule_log_detail(&self, unlock: Option<&MapUnlockRule>) -> String {
         let Some(unlock) = unlock else {
-            return localization::text(
-                self.language,
-                "activity.event.access_blocked.unavailable",
-                "The entrance is currently unavailable",
-                "入口当前不可用",
-            )
-            .into_owned();
+            return activity_log::access_unavailable(self.language);
         };
 
         if let Some(message) = unlock.locked_message.as_deref() {
@@ -1116,186 +771,29 @@ impl GameContext {
             .requires_item_id
             .as_deref()
             .map(|id| inventory_scene::inventory_item_name(id, self.language));
-        match (codex_title, item_name.as_deref()) {
-            (Some(codex), Some(item)) => localization::format_text(
-                self.language,
-                "activity.event.access_blocked.scan_and_item",
-                "Requires scan: {codex}; item: {item}",
-                "需要先扫描 {codex}，并携带 {item}",
-                &[("codex", codex.to_owned()), ("item", item.to_owned())],
-            ),
-            (Some(codex), None) => localization::format_text(
-                self.language,
-                "activity.event.access_blocked.scan",
-                "Requires scan: {codex}",
-                "需要先扫描 {codex}",
-                &[("codex", codex.to_owned())],
-            ),
-            (None, Some(item)) => localization::format_text(
-                self.language,
-                "activity.event.access_blocked.item",
-                "Requires item: {item}",
-                "需要携带 {item}",
-                &[("item", item.to_owned())],
-            ),
-            (None, None) => localization::text(
-                self.language,
-                "activity.event.access_blocked.missing_requirement",
-                "Missing access requirement",
-                "缺少进入条件",
-            )
-            .into_owned(),
-        }
+        activity_log::access_blocked_detail(self.language, None, codex_title, item_name.as_deref())
     }
 
     fn update_activity_status_alerts(&mut self) {
-        if self.should_log_meter_below(
-            semantics::METER_STAMINA,
-            0.18,
-            0.35,
-            StatusAlert::StaminaLow,
-        ) {
-            let title = localization::text(
-                self.language,
-                "activity.event.status.stamina_low.title",
-                "Stamina low",
-                "体力偏低",
-            );
-            let detail = localization::text(
-                self.language,
-                "activity.event.status.stamina_low.detail",
-                "Movement, scans, and jumps are limited",
-                "移动、扫描和跳跃会受到限制",
-            );
-            self.push_activity_log(LOG_CATEGORY_STATUS, title, detail);
-        }
-        if self.should_log_meter_above(semantics::METER_LOAD, 0.85, 0.70, StatusAlert::HeavyLoad) {
-            let title = localization::text(
-                self.language,
-                "activity.event.status.load_high.title",
-                "Load high",
-                "负重过高",
-            );
-            let detail = localization::text(
-                self.language,
-                "activity.event.status.load_high.detail",
-                "Inventory weight is slowing movement",
-                "背包重量已经开始拖慢移动速度",
-            );
-            self.push_activity_log(LOG_CATEGORY_STATUS, title, detail);
-        }
-        if self.should_log_meter_below(semantics::METER_SUIT, 0.25, 0.45, StatusAlert::SuitCritical)
-        {
-            let title = localization::text(
-                self.language,
-                "activity.event.status.suit_low.title",
-                "Suit integrity low",
-                "外骨骼受损",
-            );
-            let detail = localization::text(
-                self.language,
-                "activity.event.status.suit_low.detail",
-                "Continued exposure increases health risk",
-                "继续暴露会提高生命风险",
-            );
-            self.push_activity_log(LOG_CATEGORY_STATUS, title, detail);
-        }
-        if self.should_log_meter_below(
-            semantics::METER_OXYGEN,
-            0.25,
-            0.45,
-            StatusAlert::OxygenCritical,
-        ) {
-            let title = localization::text(
-                self.language,
-                "activity.event.status.oxygen_low.title",
-                "Oxygen low",
-                "氧气偏低",
-            );
-            let detail = localization::text(
-                self.language,
-                "activity.event.status.oxygen_low.detail",
-                "Health will fall once oxygen is depleted",
-                "氧气耗尽后生命值会下降",
-            );
-            self.push_activity_log(LOG_CATEGORY_STATUS, title, detail);
-        }
-        if self.should_log_meter_below(
-            semantics::METER_HEALTH,
-            0.35,
-            0.55,
-            StatusAlert::HealthCritical,
-        ) {
-            let title = localization::text(
-                self.language,
-                "activity.event.status.health_critical.title",
-                "Health critical",
-                "生命值危险",
-            );
-            let detail = localization::text(
-                self.language,
-                "activity.event.status.health_critical.detail",
-                "Extract or use recovery supplies soon",
-                "建议尽快撤离或使用恢复道具",
-            );
-            self.push_activity_log(LOG_CATEGORY_STATUS, title, detail);
+        let snapshot = StatusSnapshot {
+            stamina_ratio: self.profile_meter_ratio(semantics::METER_STAMINA),
+            load_ratio: self.profile_meter_ratio(semantics::METER_LOAD),
+            suit_ratio: self.profile_meter_ratio(semantics::METER_SUIT),
+            oxygen_ratio: self.profile_meter_ratio(semantics::METER_OXYGEN),
+            health_ratio: self.profile_meter_ratio(semantics::METER_HEALTH),
+        };
+        let alerts = self.profile_status_runtime.status_alerts(snapshot);
+        for alert in alerts {
+            let event = match alert {
+                StatusAlert::StaminaLow => activity_log::status_stamina_low(self.language),
+                StatusAlert::HeavyLoad => activity_log::status_load_high(self.language),
+                StatusAlert::SuitCritical => activity_log::status_suit_low(self.language),
+                StatusAlert::OxygenCritical => activity_log::status_oxygen_low(self.language),
+                StatusAlert::HealthCritical => activity_log::status_health_critical(self.language),
+            };
+            self.push_activity_event(event);
         }
     }
-
-    fn should_log_meter_below(
-        &mut self,
-        id: &str,
-        trigger: f32,
-        reset: f32,
-        alert: StatusAlert,
-    ) -> bool {
-        let ratio = self.profile_meter_ratio(id);
-        let active = self.status_alert_flag(alert);
-        let should_log = !*active && ratio <= trigger;
-        if ratio >= reset {
-            *active = false;
-        } else if should_log {
-            *active = true;
-        }
-        should_log
-    }
-
-    fn should_log_meter_above(
-        &mut self,
-        id: &str,
-        trigger: f32,
-        reset: f32,
-        alert: StatusAlert,
-    ) -> bool {
-        let ratio = self.profile_meter_ratio(id);
-        let active = self.status_alert_flag(alert);
-        let should_log = !*active && ratio >= trigger;
-        if ratio <= reset {
-            *active = false;
-        } else if should_log {
-            *active = true;
-        }
-        should_log
-    }
-
-    fn status_alert_flag(&mut self, alert: StatusAlert) -> &mut bool {
-        match alert {
-            StatusAlert::StaminaLow => &mut self.profile_status_runtime.low_stamina_logged,
-            StatusAlert::HeavyLoad => &mut self.profile_status_runtime.heavy_load_logged,
-            StatusAlert::SuitCritical => &mut self.profile_status_runtime.suit_critical_logged,
-            StatusAlert::OxygenCritical => &mut self.profile_status_runtime.oxygen_critical_logged,
-            StatusAlert::HealthCritical => &mut self.profile_status_runtime.health_critical_logged,
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-enum StatusAlert {
-    StaminaLow,
-    HeavyLoad,
-    SuitCritical,
-    OxygenCritical,
-    HealthCritical,
 }
 
 pub struct RenderContext<'a> {
@@ -1577,48 +1075,6 @@ impl Language {
     }
 }
 
-impl SceneId {
-    fn save_key(self) -> &'static str {
-        match self {
-            SceneId::Facility => "Facility",
-            _ => "Overworld",
-        }
-    }
-}
-
-fn scene_id_from_save_key(value: &str) -> SceneId {
-    match value {
-        "Facility" | "facility" => SceneId::Facility,
-        _ => SceneId::Overworld,
-    }
-}
-
-fn scene_id_from_transition_key(value: &str) -> SceneId {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "facility" => SceneId::Facility,
-        _ => SceneId::Overworld,
-    }
-}
-
-fn position_changed(previous: Option<SaveVec2>, current: Vec2) -> bool {
-    let Some(previous) = previous else {
-        return true;
-    };
-
-    let dx = previous.x - current.x;
-    let dy = previous.y - current.y;
-    dx * dx + dy * dy > 16.0
-}
-
-fn inventory_load_units(inventory: &InventorySave) -> u32 {
-    inventory
-        .slots
-        .iter()
-        .flatten()
-        .map(|stack| inventory_scene::inventory_item_weight(&stack.item_id) * stack.quantity)
-        .sum()
-}
-
 fn profile_meter_label(id: &str, language: Language) -> &'static str {
     if let Some(meter) = semantics::meter_def(id) {
         match language {
@@ -1630,212 +1086,10 @@ fn profile_meter_label(id: &str, language: Language) -> &'static str {
     }
 }
 
-fn accumulated_integer_delta(accumulator: &mut f32, delta: f32) -> i32 {
-    *accumulator += delta;
-    let whole = if *accumulator >= 1.0 {
-        (*accumulator).floor()
-    } else if *accumulator <= -1.0 {
-        (*accumulator).ceil()
-    } else {
-        0.0
-    };
-    *accumulator -= whole;
-    whole as i32
-}
-
-fn entity_progress_key(map_path: &str, entity_id: &str) -> String {
-    format!("{map_path}::{entity_id}")
-}
-
-fn zone_progress_key(map_path: &str, zone_id: &str) -> String {
-    format!("{map_path}::{zone_id}")
-}
-
 fn new_save_data_for_language(language: Language) -> SaveData {
     let mut save_data = SaveData::default();
     save_data.settings.language = language.save_key().to_owned();
     save_data
-}
-
-fn average_derived_meter_ratio(meters: &[DerivedMeterValue]) -> f32 {
-    if meters.is_empty() {
-        return 0.0;
-    }
-
-    let total = meters
-        .iter()
-        .map(|meter| meter_ratio(meter.value, meter.max))
-        .sum::<f32>();
-    (total / meters.len() as f32).clamp(0.0, 1.0)
-}
-
-fn average_slice(values: &[f32]) -> f32 {
-    if values.is_empty() {
-        return 0.0;
-    }
-
-    (values.iter().copied().sum::<f32>() / values.len() as f32).clamp(0.0, 1.0)
-}
-
-fn scan_level_and_xp(scanned_count: u32) -> (u32, u32, u32) {
-    let mut total_xp = scanned_count * SCAN_XP_REWARD;
-    let mut level = 1;
-    let mut xp_next = 1_000;
-    while xp_next > 0 && total_xp >= xp_next {
-        total_xp -= xp_next;
-        level += 1;
-        xp_next += 2_500;
-    }
-
-    (level, total_xp, xp_next)
-}
-
-fn derived_research_progress(
-    scanned_codex_ids: &HashSet<String>,
-    profile: &crate::save::PlayerProfileSave,
-) -> Vec<DerivedMeterValue> {
-    let mut progress = BTreeMap::<&'static str, u32>::new();
-    for codex_id in scanned_codex_ids {
-        let meter_id = rewards::research_meter_for_codex(codex_id);
-        *progress.entry(meter_id).or_default() += RESEARCH_PROGRESS_PER_SCAN;
-    }
-
-    profile
-        .research
-        .iter()
-        .map(|meter| DerivedMeterValue {
-            id: meter.id.clone(),
-            value: progress
-                .get(meter.id.as_str())
-                .copied()
-                .unwrap_or(0)
-                .min(meter.max),
-            max: meter.max,
-        })
-        .collect()
-}
-
-fn derived_profile_attributes(
-    ctx: &GameContext,
-    research: &[DerivedMeterValue],
-) -> Vec<DerivedScoreValue> {
-    let health = ctx.profile_meter_ratio(semantics::METER_HEALTH);
-    let stamina = ctx.profile_meter_ratio(semantics::METER_STAMINA);
-    let suit = ctx.profile_meter_ratio(semantics::METER_SUIT);
-    let load = meter_ratio(
-        inventory_load_units(&ctx.save_data.inventory),
-        ctx.profile_meter_max(semantics::METER_LOAD),
-    );
-    let oxygen = ctx.profile_meter_ratio(semantics::METER_OXYGEN);
-    let radiation = ctx.profile_meter_ratio(semantics::METER_RADIATION);
-    let spores = ctx.profile_meter_ratio(semantics::METER_SPORES);
-    let research = average_derived_meter_ratio(research);
-    let scanned = progress_ratio(
-        ctx.scanned_codex_ids.len(),
-        ctx.codex_database.entries().len(),
-    );
-    let collected = ctx.save_data.world.collected_entities.len();
-    let carried_find_count = inventory_discovery_count(&ctx.save_data.inventory);
-    let harvesting = capped_count_ratio(collected + carried_find_count, 20);
-    let derived = [
-        (
-            "survival",
-            score_from_ratio(average_slice(&[health, suit, oxygen, radiation, spores])),
-        ),
-        (
-            "mobility",
-            score_from_ratio(
-                (stamina * 0.70 + (1.0 - load).clamp(0.0, 1.0) * 0.30).clamp(0.0, 1.0),
-            ),
-        ),
-        ("scanning", score_from_ratio(scanned)),
-        ("harvesting", score_from_ratio(harvesting)),
-        ("analysis", score_from_ratio(research)),
-    ];
-
-    ctx.save_data
-        .profile
-        .attributes
-        .iter()
-        .filter_map(|score| {
-            derived
-                .iter()
-                .find(|(id, _)| *id == score.id)
-                .map(|(_, value)| DerivedScoreValue {
-                    id: score.id.clone(),
-                    value: (*value).min(score.max),
-                    max: score.max,
-                })
-        })
-        .collect()
-}
-
-fn movement_speed_multiplier_from_values(
-    stamina_value: u32,
-    stamina_max: u32,
-    load_value: u32,
-    load_max: u32,
-) -> f32 {
-    let stamina = meter_ratio(stamina_value, stamina_max);
-    let load = meter_ratio(load_value, load_max);
-    let stamina_factor = if stamina_value == 0 {
-        0.55
-    } else if stamina < 0.20 {
-        0.78
-    } else {
-        1.0
-    };
-    let load_factor = if load >= 0.95 {
-        0.70
-    } else if load >= 0.80 {
-        0.86
-    } else {
-        1.0
-    };
-
-    stamina_factor * load_factor
-}
-
-fn meter_ratio(value: u32, max: u32) -> f32 {
-    if max == 0 {
-        0.0
-    } else {
-        (value as f32 / max as f32).clamp(0.0, 1.0)
-    }
-}
-
-fn progress_ratio(current: usize, total: usize) -> f32 {
-    if total == 0 {
-        return 0.0;
-    }
-
-    (current as f32 / total as f32).clamp(0.0, 1.0)
-}
-
-fn capped_count_ratio(current: usize, cap: usize) -> f32 {
-    if cap == 0 {
-        return 0.0;
-    }
-
-    (current as f32 / cap as f32).clamp(0.0, 1.0)
-}
-
-fn score_from_ratio(ratio: f32) -> u32 {
-    let ratio = ratio.clamp(0.0, 1.0);
-    if ratio <= f32::EPSILON {
-        0
-    } else {
-        ((ratio * 10.0).round() as u32).max(1)
-    }
-}
-
-fn inventory_discovery_count(inventory: &InventorySave) -> usize {
-    inventory
-        .slots
-        .iter()
-        .flatten()
-        .filter(|stack| !stack.locked && stack.quantity > 0)
-        .count()
 }
 
 fn weather_key_for_time(field_time_minutes: u32) -> &'static str {
@@ -1913,20 +1167,20 @@ mod tests {
         ctx.sync_derived_profile_state();
 
         assert_eq!(derived.level, 1);
-        assert_eq!(derived.xp, SCAN_XP_REWARD);
+        assert_eq!(derived.xp, 120);
         assert_eq!(
             derived
                 .research
                 .iter()
                 .find(|meter| meter.id == "bio")
                 .map(|meter| meter.value),
-            Some(RESEARCH_PROGRESS_PER_SCAN)
+            Some(6)
         );
         assert_eq!(ctx.save_data.profile.level, 1);
-        assert_eq!(ctx.save_data.profile.xp, SCAN_XP_REWARD);
+        assert_eq!(ctx.save_data.profile.xp, 120);
         assert_eq!(
             ctx.save_data.profile.meter("bio").map(|meter| meter.value),
-            Some(RESEARCH_PROGRESS_PER_SCAN)
+            Some(6)
         );
         assert_eq!(
             ctx.save_data
@@ -2118,7 +1372,7 @@ mod tests {
                 .activity_log
                 .entries
                 .iter()
-                .any(|entry| entry.category == LOG_CATEGORY_ITEM)
+                .any(|entry| entry.category == activity_log::LOG_CATEGORY_ITEM)
         );
     }
 
@@ -2188,9 +1442,9 @@ mod tests {
             .iter()
             .map(|entry| entry.category.as_str())
             .collect::<Vec<_>>();
-        assert!(categories.contains(&LOG_CATEGORY_SCAN));
-        assert!(categories.contains(&LOG_CATEGORY_PICKUP));
-        assert!(categories.contains(&LOG_CATEGORY_STATUS));
+        assert!(categories.contains(&activity_log::LOG_CATEGORY_SCAN));
+        assert!(categories.contains(&activity_log::LOG_CATEGORY_PICKUP));
+        assert!(categories.contains(&activity_log::LOG_CATEGORY_STATUS));
     }
 
     #[test]
@@ -2224,7 +1478,7 @@ mod tests {
                 .activity_log
                 .entries
                 .iter()
-                .any(|entry| entry.category == LOG_CATEGORY_OBJECTIVE)
+                .any(|entry| entry.category == activity_log::LOG_CATEGORY_OBJECTIVE)
         );
         assert!(
             ctx.objective_menu_rows()
