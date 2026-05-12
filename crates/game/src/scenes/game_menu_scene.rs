@@ -10,7 +10,9 @@ use crate::save::{ActivityLogEntrySave, InventorySave, PlayerProfileSave};
 use crate::ui::game_menu_content::{
     BOTTOM_ACTIONS, activity_category_label, activity_log_empty, activity_log_header,
     category_label, close_hint, codex_discoveries_title, compact_vital_label, empty_slot_body,
-    empty_slot_title, inventory_hint, language_option_label, language_setting_label, locked_label,
+    empty_slot_title, equipment_empty_slot, equipment_hint, equipment_modules_header,
+    equipment_no_modules, equipment_quickbar_header, equipment_status_header, equipment_subtitle,
+    equipment_title, inventory_hint, language_option_label, language_setting_label, locked_label,
     map_labels, menu_status, placeholder_text, profile_core_header, profile_level_label,
     profile_research_header, quantity_label, rarity_label, research_label, return_label,
     return_sublabel, settings_hint, stack_limit_label, stat_header, tab_index, tab_label,
@@ -23,9 +25,10 @@ use crate::ui::menu_style::{
     skin, space,
 };
 use crate::ui::menu_widgets::{
-    contain_rect, draw_bar, draw_border, draw_corner_brackets, draw_header_cell, draw_inner_panel,
-    draw_panel_title, draw_score_pips, draw_screen_rect, draw_text_strong, draw_texture_nine_slice,
-    draw_texture_rect, screen_point_in_rect, screen_rect,
+    ToggleOption, contain_rect, draw_bar, draw_border, draw_corner_brackets, draw_header_cell,
+    draw_inner_panel, draw_panel_title, draw_score_pips, draw_screen_rect, draw_text_strong,
+    draw_text_toggle, draw_texture_nine_slice, draw_texture_rect, screen_point_in_rect,
+    screen_rect,
 };
 use crate::ui::text::{TextSprite, draw_text, draw_text_centered, load_ui_font, upload_text};
 
@@ -79,6 +82,15 @@ struct GameMenuText {
     inventory_hint: Option<TextSprite>,
     inventory_empty_title: Option<TextSprite>,
     inventory_empty_body: Option<TextSprite>,
+    equipment_title: Option<TextSprite>,
+    equipment_subtitle: Option<TextSprite>,
+    equipment_quickbar_header: Option<TextSprite>,
+    equipment_modules_header: Option<TextSprite>,
+    equipment_status_header: Option<TextSprite>,
+    equipment_empty_slot: Option<TextSprite>,
+    equipment_no_modules: Option<TextSprite>,
+    equipment_hint: Option<TextSprite>,
+    equipment_quickbar_numbers: Vec<TextSprite>,
     codex_discoveries_title: Option<TextSprite>,
     codex_capacity: Option<TextSprite>,
     codex_cards: Vec<CodexSummaryText>,
@@ -144,6 +156,11 @@ enum GameMenuToastTone {
     Error,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GameMenuBottomPage {
+    Equipment,
+}
+
 #[derive(Clone, Debug)]
 struct GameMenuToast {
     message: String,
@@ -199,6 +216,7 @@ impl CodexEntryView {
 pub struct GameMenuScene {
     language: Language,
     active_tab: GameMenuTab,
+    bottom_page: Option<GameMenuBottomPage>,
     selected_inventory_slot: usize,
     selected_codex_entry: usize,
     activity_log_scroll: usize,
@@ -217,6 +235,7 @@ impl GameMenuScene {
         Self {
             language: ctx.language,
             active_tab: ctx.game_menu_tab,
+            bottom_page: None,
             selected_inventory_slot: 0,
             selected_codex_entry: 0,
             activity_log_scroll: 0,
@@ -232,6 +251,7 @@ impl GameMenuScene {
     }
 
     fn set_tab(&mut self, ctx: &mut GameContext, tab: GameMenuTab) {
+        self.bottom_page = None;
         self.active_tab = tab;
         ctx.game_menu_tab = tab;
     }
@@ -369,11 +389,7 @@ impl GameMenuScene {
     fn handle_bottom_action(&mut self, ctx: &mut GameContext, index: usize) {
         match index {
             0 => {
-                self.set_tab(ctx, GameMenuTab::Inventory);
-                self.show_toast(
-                    game_menu_tab_jump_message(self.language),
-                    GameMenuToastTone::Info,
-                );
+                self.bottom_page = Some(GameMenuBottomPage::Equipment);
             }
             2 => {
                 self.set_tab(ctx, GameMenuTab::Quests);
@@ -606,7 +622,7 @@ impl GameMenuScene {
     fn draw_nav(&self, renderer: &mut dyn Renderer, viewport: Vec2, layout: &MenuLayout) {
         for (index, tab) in GameMenuTab::ALL.iter().copied().enumerate() {
             let rect = layout.nav_item(index);
-            let active = tab == self.active_tab;
+            let active = self.bottom_page.is_none() && tab == self.active_tab;
             let button_skin = if active {
                 skin::NAV_ACTIVE
             } else {
@@ -815,16 +831,15 @@ impl GameMenuScene {
                 color::RETURN_ACCENT,
             );
         }
-        draw_return_icon(renderer, viewport, return_button, layout.scale);
         if let (Some(label), Some(sublabel)) = (&self.text.return_label, &self.text.return_sublabel)
         {
             let text_rect = Rect::new(
                 Vec2::new(
-                    return_button.origin.x + 92.0 * layout.scale,
+                    return_button.origin.x + 28.0 * layout.scale,
                     return_button.origin.y,
                 ),
                 Vec2::new(
-                    return_button.size.x - 104.0 * layout.scale,
+                    return_button.size.x - 56.0 * layout.scale,
                     return_button.size.y,
                 ),
             );
@@ -867,6 +882,11 @@ impl GameMenuScene {
     }
 
     fn draw_content(&self, renderer: &mut dyn Renderer, viewport: Vec2, layout: &MenuLayout) {
+        if self.bottom_page == Some(GameMenuBottomPage::Equipment) {
+            self.draw_equipment_page(renderer, viewport, layout);
+            return;
+        }
+
         if self.active_tab == GameMenuTab::Profile {
             self.draw_profile_page(renderer, viewport, layout);
             return;
@@ -1290,6 +1310,402 @@ impl GameMenuScene {
                 layout.scale,
             );
         }
+    }
+
+    fn draw_equipment_page(
+        &self,
+        renderer: &mut dyn Renderer,
+        viewport: Vec2,
+        layout: &MenuLayout,
+    ) {
+        let title_x = layout.content.origin.x + space::CONTENT_PADDING * layout.scale;
+        let title_y = layout.content.origin.y + 18.0 * layout.scale;
+        if let Some(title) = &self.text.equipment_title {
+            draw_text_strong(
+                renderer,
+                title,
+                viewport,
+                title_x,
+                title_y,
+                Color::rgba(0.88, 1.0, 0.98, 1.0),
+                layout.scale,
+            );
+        }
+        if let Some(subtitle) = &self.text.equipment_subtitle {
+            draw_text(
+                renderer,
+                subtitle,
+                viewport,
+                title_x,
+                layout.content.origin.y + 54.0 * layout.scale,
+                Color::rgba(0.55, 0.77, 0.84, 0.96),
+            );
+        }
+        draw_screen_rect(
+            renderer,
+            viewport,
+            Rect::new(
+                Vec2::new(title_x, layout.content.origin.y + 88.0 * layout.scale),
+                Vec2::new(
+                    layout.content.size.x - space::CONTENT_PADDING * 2.0 * layout.scale,
+                    1.0,
+                ),
+            ),
+            Color::rgba(0.29, 0.86, 1.0, 0.34),
+        );
+
+        let content = layout.content_body();
+        let gap = 16.0 * layout.scale;
+        let left_width = (content.size.x * 0.58).min(700.0 * layout.scale);
+        let quickbar_panel = Rect::new(content.origin, Vec2::new(left_width, content.size.y));
+        let right_panel = Rect::new(
+            Vec2::new(quickbar_panel.right() + gap, content.origin.y),
+            Vec2::new(
+                content.right() - quickbar_panel.right() - gap,
+                content.size.y,
+            ),
+        );
+        let module_height = (right_panel.size.y * 0.54).max(190.0 * layout.scale);
+        let modules_panel = Rect::new(
+            right_panel.origin,
+            Vec2::new(right_panel.size.x, module_height),
+        );
+        let status_panel = Rect::new(
+            Vec2::new(right_panel.origin.x, modules_panel.bottom() + gap),
+            Vec2::new(
+                right_panel.size.x,
+                right_panel.bottom() - modules_panel.bottom() - gap,
+            ),
+        );
+
+        draw_inner_panel(renderer, viewport, quickbar_panel, layout.scale);
+        draw_inner_panel(renderer, viewport, modules_panel, layout.scale);
+        draw_inner_panel(renderer, viewport, status_panel, layout.scale);
+        draw_panel_title(
+            renderer,
+            viewport,
+            quickbar_panel,
+            self.text.equipment_quickbar_header.as_ref(),
+            layout.scale,
+            Color::rgba(0.46, 0.95, 1.0, 1.0),
+        );
+        draw_panel_title(
+            renderer,
+            viewport,
+            modules_panel,
+            self.text.equipment_modules_header.as_ref(),
+            layout.scale,
+            Color::rgba(0.68, 0.98, 0.72, 1.0),
+        );
+        draw_panel_title(
+            renderer,
+            viewport,
+            status_panel,
+            self.text.equipment_status_header.as_ref(),
+            layout.scale,
+            Color::rgba(1.0, 0.78, 0.42, 1.0),
+        );
+
+        self.draw_equipment_quickbar(renderer, viewport, layout, quickbar_panel);
+        self.draw_equipment_modules(renderer, viewport, layout, modules_panel);
+        self.draw_equipment_status(renderer, viewport, layout, status_panel);
+
+        if let Some(hint) = &self.text.equipment_hint {
+            draw_text(
+                renderer,
+                hint,
+                viewport,
+                quickbar_panel.origin.x + 24.0 * layout.scale,
+                quickbar_panel.bottom() - 38.0 * layout.scale,
+                Color::rgba(0.56, 0.76, 0.82, 0.94),
+            );
+        }
+    }
+
+    fn draw_equipment_quickbar(
+        &self,
+        renderer: &mut dyn Renderer,
+        viewport: Vec2,
+        layout: &MenuLayout,
+        panel: Rect,
+    ) {
+        let slots = inventory_scene::inventory_slots(&self.inventory_snapshot);
+        let row_top = panel.origin.y + 66.0 * layout.scale;
+        let row_area_height = (panel.size.y - 124.0 * layout.scale).max(0.0);
+        let row_height = row_area_height / 6.0;
+        for quick_index in 0..6 {
+            let row = Rect::new(
+                Vec2::new(
+                    panel.origin.x + 18.0 * layout.scale,
+                    row_top + quick_index as f32 * row_height,
+                ),
+                Vec2::new(
+                    panel.size.x - 36.0 * layout.scale,
+                    (row_height - 6.0 * layout.scale).max(0.0),
+                ),
+            );
+            draw_screen_rect(
+                renderer,
+                viewport,
+                row,
+                Color::rgba(0.016, 0.048, 0.060, 0.54),
+            );
+            let slot_size =
+                (row.size.y - 8.0 * layout.scale).clamp(24.0 * layout.scale, 48.0 * layout.scale);
+            let slot = Rect::new(
+                Vec2::new(
+                    row.origin.x + 42.0 * layout.scale,
+                    row.origin.y + (row.size.y - slot_size) * 0.5,
+                ),
+                Vec2::new(slot_size, slot_size),
+            );
+            let slot_index = self
+                .inventory_snapshot
+                .quickbar
+                .get(quick_index)
+                .and_then(|slot| *slot);
+            let item = slot_index.and_then(|index| slots.get(index).and_then(|slot| *slot));
+            let count = slot_index.and_then(|index| {
+                self.text
+                    .inventory_slot_counts
+                    .get(index)
+                    .and_then(|count| count.as_ref())
+            });
+            let selected = slot_index == Some(self.inventory_snapshot.selected_slot);
+
+            if let Some(number) = self.text.equipment_quickbar_numbers.get(quick_index) {
+                draw_text_centered(
+                    renderer,
+                    number,
+                    viewport,
+                    row.origin.x + 20.0 * layout.scale,
+                    centered_text_y(row, number, 0.0),
+                    Color::rgba(0.72, 0.94, 1.0, 0.92),
+                );
+            }
+            draw_inventory_slot(
+                renderer,
+                viewport,
+                slot,
+                item,
+                count,
+                selected,
+                layout.scale,
+            );
+            self.draw_equipment_item_summary(
+                renderer,
+                viewport,
+                layout,
+                row,
+                slot.right() + 16.0 * layout.scale,
+                slot_index,
+            );
+        }
+    }
+
+    fn draw_equipment_modules(
+        &self,
+        renderer: &mut dyn Renderer,
+        viewport: Vec2,
+        layout: &MenuLayout,
+        panel: Rect,
+    ) {
+        let slots = inventory_scene::inventory_slots(&self.inventory_snapshot);
+        let module_slots = self.equipment_module_slots();
+        if module_slots.is_empty() {
+            if let Some(empty) = &self.text.equipment_no_modules {
+                draw_text(
+                    renderer,
+                    empty,
+                    viewport,
+                    panel.origin.x + 24.0 * layout.scale,
+                    panel.origin.y + 82.0 * layout.scale,
+                    color::TEXT_MUTED,
+                );
+            }
+            return;
+        }
+
+        let row_top = panel.origin.y + 66.0 * layout.scale;
+        let row_height =
+            ((panel.size.y - 84.0 * layout.scale) / module_slots.len().max(1) as f32).max(0.0);
+        for (row_index, slot_index) in module_slots.iter().copied().enumerate() {
+            let row = Rect::new(
+                Vec2::new(
+                    panel.origin.x + 18.0 * layout.scale,
+                    row_top + row_index as f32 * row_height,
+                ),
+                Vec2::new(
+                    panel.size.x - 36.0 * layout.scale,
+                    (row_height - 8.0 * layout.scale).max(0.0),
+                ),
+            );
+            draw_screen_rect(
+                renderer,
+                viewport,
+                row,
+                Color::rgba(0.020, 0.060, 0.050, 0.50),
+            );
+            let item = slots.get(slot_index).and_then(|slot| *slot);
+            let count = self
+                .text
+                .inventory_slot_counts
+                .get(slot_index)
+                .and_then(|count| count.as_ref());
+            let slot_size =
+                (row.size.y - 8.0 * layout.scale).clamp(22.0 * layout.scale, 44.0 * layout.scale);
+            let slot = Rect::new(
+                Vec2::new(
+                    row.origin.x + 8.0 * layout.scale,
+                    row.origin.y + (row.size.y - slot_size) * 0.5,
+                ),
+                Vec2::new(slot_size, slot_size),
+            );
+            draw_inventory_slot(renderer, viewport, slot, item, count, false, layout.scale);
+            self.draw_equipment_item_summary(
+                renderer,
+                viewport,
+                layout,
+                row,
+                slot.right() + 14.0 * layout.scale,
+                Some(slot_index),
+            );
+        }
+    }
+
+    fn draw_equipment_item_summary(
+        &self,
+        renderer: &mut dyn Renderer,
+        viewport: Vec2,
+        layout: &MenuLayout,
+        row: Rect,
+        text_x: f32,
+        slot_index: Option<usize>,
+    ) {
+        let Some(slot_index) = slot_index else {
+            if let Some(empty) = &self.text.equipment_empty_slot {
+                draw_text(
+                    renderer,
+                    empty,
+                    viewport,
+                    text_x,
+                    centered_text_y(row, empty, 0.0),
+                    color::TEXT_DIM,
+                );
+            }
+            return;
+        };
+
+        let Some(detail) = self
+            .text
+            .inventory_slot_details
+            .get(slot_index)
+            .and_then(|detail| detail.as_ref())
+        else {
+            if let Some(empty) = &self.text.equipment_empty_slot {
+                draw_text(
+                    renderer,
+                    empty,
+                    viewport,
+                    text_x,
+                    centered_text_y(row, empty, 0.0),
+                    color::TEXT_DIM,
+                );
+            }
+            return;
+        };
+
+        if row.size.y < 42.0 * layout.scale {
+            draw_text(
+                renderer,
+                &detail.name,
+                viewport,
+                text_x,
+                centered_text_y(row, &detail.name, 0.0),
+                color::TEXT_PRIMARY,
+            );
+        } else {
+            draw_text_strong(
+                renderer,
+                &detail.name,
+                viewport,
+                text_x,
+                row.origin.y + 5.0 * layout.scale,
+                color::TEXT_PRIMARY,
+                layout.scale,
+            );
+            draw_text(
+                renderer,
+                &detail.rarity,
+                viewport,
+                text_x,
+                row.origin.y + 31.0 * layout.scale,
+                Color::rgba(0.62, 0.86, 0.92, 0.96),
+            );
+        }
+    }
+
+    fn draw_equipment_status(
+        &self,
+        renderer: &mut dyn Renderer,
+        viewport: Vec2,
+        layout: &MenuLayout,
+        panel: Rect,
+    ) {
+        let profile = profile_scene::profile_overview(self.language, &self.profile_snapshot);
+        let stat_count = self.text.profile_stats.len().min(profile.vital_stats.len());
+        if stat_count == 0 {
+            return;
+        }
+
+        let area = Rect::new(
+            Vec2::new(
+                panel.origin.x + 16.0 * layout.scale,
+                panel.origin.y + 66.0 * layout.scale,
+            ),
+            Vec2::new(
+                panel.size.x - 32.0 * layout.scale,
+                panel.size.y - 82.0 * layout.scale,
+            ),
+        );
+        let gap = 6.0 * layout.scale;
+        let row_height = ((area.size.y - gap * stat_count.saturating_sub(1) as f32)
+            / stat_count as f32)
+            .max(0.0);
+        for index in 0..stat_count {
+            let row = Rect::new(
+                Vec2::new(
+                    area.origin.x,
+                    area.origin.y + index as f32 * (row_height + gap),
+                ),
+                Vec2::new(area.size.x, row_height),
+            );
+            let (label, value) = &self.text.profile_stats[index];
+            let stat = profile.vital_stats[index];
+            draw_equipment_status_row(
+                renderer,
+                viewport,
+                row,
+                label,
+                value,
+                stat.value as f32 / stat.max as f32,
+                index,
+                layout.scale,
+            );
+        }
+    }
+
+    fn equipment_module_slots(&self) -> Vec<usize> {
+        self.inventory_snapshot
+            .slots
+            .iter()
+            .enumerate()
+            .filter_map(|(index, stack)| {
+                let stack = stack.as_ref()?;
+                is_equipment_module(&stack.item_id, stack.locked).then_some(index)
+            })
+            .take(4)
+            .collect()
     }
 
     fn draw_inventory_page(
@@ -1857,7 +2273,6 @@ impl GameMenuScene {
             content.origin,
             Vec2::new(content.size.x, 92.0 * layout.scale),
         );
-        draw_inner_panel(renderer, viewport, language_row, layout.scale);
         if let Some(label) = &self.text.settings_language {
             let label_y = centered_text_y(language_row, label, 0.0);
             draw_text_strong(
@@ -1870,61 +2285,22 @@ impl GameMenuScene {
                 layout.scale,
             );
         }
-        for (index, language) in Language::SUPPORTED.iter().copied().enumerate() {
-            let choice = layout.language_choice(index);
-            let active = language == self.language;
-            let choice_skin = if active {
-                "menu.skin_nav_active"
-            } else {
-                "menu.skin_language_toggle"
-            };
-            let choice_textured = draw_texture_nine_slice(
-                renderer,
-                viewport,
-                choice_skin,
-                choice,
-                46.0,
-                18.0 * layout.scale,
-                Color::rgba(1.0, 1.0, 1.0, if active { 0.96 } else { 0.82 }),
-            );
-            if !choice_textured {
-                draw_screen_rect(
-                    renderer,
-                    viewport,
-                    choice,
-                    if active {
-                        Color::rgba(0.08, 0.44, 0.60, 0.88)
-                    } else {
-                        Color::rgba(0.025, 0.070, 0.086, 0.82)
-                    },
-                );
-                draw_border(
-                    renderer,
-                    viewport,
-                    choice,
-                    1.0 * layout.scale,
-                    if active {
-                        Color::rgba(0.52, 0.96, 1.0, 0.92)
-                    } else {
-                        Color::rgba(0.12, 0.27, 0.35, 0.86)
-                    },
-                );
-            }
-            if let Some(value) = self.text.language_values.get(index) {
-                draw_text_centered(
-                    renderer,
-                    value,
-                    viewport,
-                    choice.origin.x + choice.size.x * 0.5,
-                    centered_text_y(choice, value, 0.0),
-                    if active {
-                        Color::rgba(0.94, 1.0, 0.98, 1.0)
-                    } else {
-                        color::TEXT_SECONDARY
-                    },
-                );
-            }
-        }
+        let language_options: Vec<_> = Language::SUPPORTED
+            .iter()
+            .copied()
+            .enumerate()
+            .filter_map(|(index, language)| {
+                self.text
+                    .language_values
+                    .get(index)
+                    .map(|text| ToggleOption {
+                        rect: layout.language_choice(index),
+                        text,
+                        active: language == self.language,
+                    })
+            })
+            .collect();
+        draw_text_toggle(renderer, viewport, &language_options, layout.scale);
 
         if let Some(hint) = &self.text.settings_hint {
             draw_text(
@@ -2268,6 +2644,73 @@ impl GameMenuScene {
             inventory_hint(language).as_ref(),
             17.0,
         )?);
+        self.text.equipment_title = Some(upload_text(
+            renderer,
+            font,
+            "game_menu_equipment_title",
+            equipment_title(language).as_ref(),
+            34.0,
+        )?);
+        self.text.equipment_subtitle = Some(upload_text(
+            renderer,
+            font,
+            "game_menu_equipment_subtitle",
+            equipment_subtitle(language).as_ref(),
+            18.0,
+        )?);
+        self.text.equipment_quickbar_header = Some(upload_text(
+            renderer,
+            font,
+            "game_menu_equipment_quickbar_header",
+            equipment_quickbar_header(language).as_ref(),
+            20.0,
+        )?);
+        self.text.equipment_modules_header = Some(upload_text(
+            renderer,
+            font,
+            "game_menu_equipment_modules_header",
+            equipment_modules_header(language).as_ref(),
+            20.0,
+        )?);
+        self.text.equipment_status_header = Some(upload_text(
+            renderer,
+            font,
+            "game_menu_equipment_status_header",
+            equipment_status_header(language).as_ref(),
+            20.0,
+        )?);
+        self.text.equipment_empty_slot = Some(upload_text(
+            renderer,
+            font,
+            "game_menu_equipment_empty_slot",
+            equipment_empty_slot(language).as_ref(),
+            16.0,
+        )?);
+        self.text.equipment_no_modules = Some(upload_text(
+            renderer,
+            font,
+            "game_menu_equipment_no_modules",
+            equipment_no_modules(language).as_ref(),
+            16.0,
+        )?);
+        self.text.equipment_hint = Some(upload_text(
+            renderer,
+            font,
+            "game_menu_equipment_hint",
+            equipment_hint(language).as_ref(),
+            16.0,
+        )?);
+        self.text.equipment_quickbar_numbers = (1..=6)
+            .map(|number| {
+                upload_text(
+                    renderer,
+                    font,
+                    &format!("game_menu_equipment_quickbar_{number}"),
+                    &number.to_string(),
+                    16.0,
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
 
         self.text.codex_discoveries_title = Some(upload_text(
             renderer,
@@ -2537,7 +2980,7 @@ impl Scene for GameMenuScene {
 
         let viewport = input.screen_size();
         let layout = MenuLayout::new(viewport);
-        if self.active_tab == GameMenuTab::Quests {
+        if self.bottom_page.is_none() && self.active_tab == GameMenuTab::Quests {
             let hovered_log = input
                 .cursor_position()
                 .is_some_and(|point| screen_point_in_rect(point, activity_log_panel_rect(&layout)));
@@ -2573,7 +3016,8 @@ impl Scene for GameMenuScene {
                     }
                 }
 
-                if self.active_tab == GameMenuTab::Quests
+                if self.bottom_page.is_none()
+                    && self.active_tab == GameMenuTab::Quests
                     && screen_point_in_rect(
                         cursor_position,
                         activity_log_scrollbar_track_rect(
@@ -2586,7 +3030,7 @@ impl Scene for GameMenuScene {
                     return Ok(SceneCommand::None);
                 }
 
-                if self.active_tab == GameMenuTab::Settings {
+                if self.bottom_page.is_none() && self.active_tab == GameMenuTab::Settings {
                     for (index, language) in Language::SUPPORTED.iter().copied().enumerate() {
                         if screen_point_in_rect(cursor_position, layout.language_choice(index)) {
                             self.set_language(ctx, language);
@@ -2594,7 +3038,7 @@ impl Scene for GameMenuScene {
                     }
                 }
 
-                if self.active_tab == GameMenuTab::Inventory {
+                if self.bottom_page.is_none() && self.active_tab == GameMenuTab::Inventory {
                     self.handle_inventory_click(cursor_position, &layout);
                 }
             }
@@ -2609,7 +3053,15 @@ impl Scene for GameMenuScene {
         if input.just_pressed(Button::Profile) {
             self.set_tab(ctx, GameMenuTab::Profile);
         }
-        if self.active_tab == GameMenuTab::Inventory {
+        if self.bottom_page.is_some() {
+            if input.just_pressed(Button::Left)
+                || input.just_pressed(Button::Right)
+                || input.just_pressed(Button::Up)
+                || input.just_pressed(Button::Down)
+            {
+                self.bottom_page = None;
+            }
+        } else if self.active_tab == GameMenuTab::Inventory {
             if input.just_pressed(Button::Left) {
                 self.move_inventory_selection(-1, 0);
             }
@@ -2649,7 +3101,8 @@ impl Scene for GameMenuScene {
                 self.set_tab(ctx, self.active_tab.next());
             }
         }
-        if self.active_tab == GameMenuTab::Settings
+        if self.bottom_page.is_none()
+            && self.active_tab == GameMenuTab::Settings
             && (input.just_pressed(Button::Confirm) || input.just_pressed(Button::Interact))
         {
             self.set_language(ctx, ctx.language.next());
@@ -2735,6 +3188,10 @@ fn xp_ratio(profile: &PlayerProfileSave) -> f32 {
     }
 
     profile.xp as f32 / profile.xp_next as f32
+}
+
+fn is_equipment_module(item_id: &str, locked: bool) -> bool {
+    locked || matches!(item_id, "scanner_tool" | "ruin_key" | "artifact_core")
 }
 
 fn upload_inventory_slot_details(
@@ -3310,13 +3767,6 @@ fn game_menu_toast_text(tone: GameMenuToastTone) -> Color {
     }
 }
 
-fn game_menu_tab_jump_message(language: Language) -> &'static str {
-    match language {
-        Language::Chinese => "已切到背包页",
-        Language::English => "Inventory page opened",
-    }
-}
-
 fn game_menu_log_jump_message(language: Language) -> &'static str {
     match language {
         Language::Chinese => "已切到外勤日志",
@@ -3632,6 +4082,61 @@ fn draw_status_card(
         Rect::new(
             Vec2::new(content.origin.x + 10.0 * scale, group_top + 129.0 * scale),
             Vec2::new(content.size.x - 20.0 * scale, 7.0 * scale),
+        ),
+        ratio,
+        scale,
+    );
+}
+
+fn draw_equipment_status_row(
+    renderer: &mut dyn Renderer,
+    viewport: Vec2,
+    row: Rect,
+    label: &TextSprite,
+    value: &TextSprite,
+    ratio: f32,
+    index: usize,
+    scale: f32,
+) {
+    let accent = vital_status_accent(index);
+    draw_screen_rect(
+        renderer,
+        viewport,
+        row,
+        Color::rgba(accent.r, accent.g, accent.b, 0.060),
+    );
+    draw_screen_rect(
+        renderer,
+        viewport,
+        Rect::new(row.origin, Vec2::new(3.0_f32.max(2.0 * scale), row.size.y)),
+        Color::rgba(accent.r, accent.g, accent.b, 0.58),
+    );
+
+    let label_y = row.origin.y + 6.0 * scale;
+    draw_text(
+        renderer,
+        label,
+        viewport,
+        row.origin.x + 14.0 * scale,
+        label_y,
+        color::TEXT_PRIMARY,
+    );
+    draw_text(
+        renderer,
+        value,
+        viewport,
+        row.right() - value.size.x - 14.0 * scale,
+        label_y,
+        Color::rgba(0.62, 0.86, 0.92, 0.96),
+    );
+
+    let bar_y = row.bottom() - 10.0 * scale;
+    draw_bar(
+        renderer,
+        viewport,
+        Rect::new(
+            Vec2::new(row.origin.x + 14.0 * scale, bar_y),
+            Vec2::new(row.size.x - 28.0 * scale, 5.0_f32.max(4.0 * scale)),
         ),
         ratio,
         scale,
@@ -4110,58 +4615,6 @@ fn draw_bottom_icon(
             );
         }
     }
-}
-
-fn draw_return_icon(renderer: &mut dyn Renderer, viewport: Vec2, rect: Rect, scale: f32) {
-    if let Some(image_size) = renderer.texture_size("menu.action_return") {
-        let frame = Rect::new(
-            Vec2::new(rect.origin.x + 32.0 * scale, rect.origin.y + 15.0 * scale),
-            Vec2::new(42.0 * scale, 42.0 * scale),
-        );
-        renderer.draw_image(
-            "menu.action_return",
-            screen_rect(viewport, contain_rect(frame, image_size)),
-            Color::rgba(1.0, 1.0, 1.0, 1.0),
-        );
-        return;
-    }
-
-    let color = Color::rgba(1.0, 0.72, 0.30, 0.96);
-    let origin = Vec2::new(rect.origin.x + 36.0 * scale, rect.origin.y + 18.0 * scale);
-    draw_border(
-        renderer,
-        viewport,
-        Rect::new(origin, Vec2::new(30.0 * scale, 30.0 * scale)),
-        3.0 * scale,
-        color,
-    );
-    draw_screen_rect(
-        renderer,
-        viewport,
-        Rect::new(
-            Vec2::new(origin.x - 8.0 * scale, origin.y + 13.0 * scale),
-            Vec2::new(26.0 * scale, 5.0 * scale),
-        ),
-        color,
-    );
-    draw_screen_rect(
-        renderer,
-        viewport,
-        Rect::new(
-            Vec2::new(origin.x - 8.0 * scale, origin.y + 8.0 * scale),
-            Vec2::new(9.0 * scale, 5.0 * scale),
-        ),
-        color,
-    );
-    draw_screen_rect(
-        renderer,
-        viewport,
-        Rect::new(
-            Vec2::new(origin.x - 8.0 * scale, origin.y + 18.0 * scale),
-            Vec2::new(9.0 * scale, 5.0 * scale),
-        ),
-        color,
-    );
 }
 
 fn draw_compact_stat_bar(

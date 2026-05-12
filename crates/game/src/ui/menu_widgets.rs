@@ -1,7 +1,13 @@
 use runtime::{Color, Rect, Renderer, Vec2};
 
 use crate::ui::menu_style::{color, skin};
-use crate::ui::text::{TextSprite, draw_text};
+use crate::ui::text::{TextSprite, draw_text, draw_text_centered};
+
+pub struct ToggleOption<'a> {
+    pub rect: Rect,
+    pub text: &'a TextSprite,
+    pub active: bool,
+}
 
 pub fn draw_texture_rect(
     renderer: &mut dyn Renderer,
@@ -82,6 +88,76 @@ pub fn draw_texture_nine_slice(
     }
 
     true
+}
+
+pub fn draw_text_toggle(
+    renderer: &mut dyn Renderer,
+    viewport: Vec2,
+    options: &[ToggleOption<'_>],
+    scale: f32,
+) {
+    if options.is_empty() {
+        return;
+    }
+
+    let left = options
+        .iter()
+        .map(|option| option.rect.origin.x)
+        .fold(f32::INFINITY, f32::min);
+    let right = options
+        .iter()
+        .map(|option| option.rect.right())
+        .fold(f32::NEG_INFINITY, f32::max);
+    let bottom = options
+        .iter()
+        .map(|option| option.rect.bottom())
+        .fold(f32::NEG_INFINITY, f32::max);
+    let rail_y = bottom - 4.0 * scale;
+    draw_screen_rect(
+        renderer,
+        viewport,
+        Rect::new(
+            Vec2::new(left + 8.0 * scale, rail_y),
+            Vec2::new((right - left - 16.0 * scale).max(0.0), 1.0_f32.max(scale)),
+        ),
+        Color::rgba(0.24, 0.48, 0.55, 0.42),
+    );
+
+    for option in options {
+        if option.active {
+            draw_screen_rect(
+                renderer,
+                viewport,
+                Rect::new(
+                    Vec2::new(option.rect.origin.x + 18.0 * scale, rail_y - 1.0 * scale),
+                    Vec2::new(
+                        (option.rect.size.x - 36.0 * scale).max(0.0),
+                        3.0_f32.max(2.0 * scale),
+                    ),
+                ),
+                Color::rgba(0.48, 1.0, 0.92, 0.95),
+            );
+        }
+
+        draw_text_centered(
+            renderer,
+            option.text,
+            viewport,
+            option.rect.origin.x + option.rect.size.x * 0.5,
+            centered_toggle_text_y(option.rect, option.text),
+            if option.active {
+                color::TEXT_PRIMARY
+            } else {
+                Color::rgba(0.58, 0.72, 0.78, 0.95)
+            },
+        );
+    }
+}
+
+fn centered_toggle_text_y(rect: Rect, text: &TextSprite) -> f32 {
+    let text_padding = 8.0;
+    let visual_height = (text.size.y - text_padding * 2.0).max(0.0);
+    rect.origin.y + (rect.size.y - visual_height) * 0.5 - text_padding
 }
 
 pub fn draw_screen_rect(renderer: &mut dyn Renderer, viewport: Vec2, rect: Rect, color: Color) {

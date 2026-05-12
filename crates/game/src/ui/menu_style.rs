@@ -54,14 +54,12 @@ pub mod skin {
     pub const NAV_IDLE: &str = "menu.skin_nav_idle";
     pub const BOTTOM_BUTTON: &str = "menu.skin_bottom_button";
     pub const RETURN_BUTTON: &str = "menu.skin_return_button";
-    pub const LANGUAGE_TOGGLE: &str = "menu.skin_language_toggle";
 }
 
 pub mod icon {
     pub const BRAND_CRYSTAL: &str = "menu.brand_crystal";
     pub const RESOURCE_CRYSTAL: &str = "menu.resource_crystal";
     pub const RESOURCE_COIN: &str = "menu.resource_coin";
-    pub const RETURN: &str = "menu.action_return";
 }
 
 #[derive(Clone, Copy)]
@@ -102,10 +100,6 @@ pub const TEXTURES: &[TextureAsset] = &[
     TextureAsset {
         texture_id: skin::RETURN_BUTTON,
         path: "assets/images/ui/menu/skin_return_button_ai.png",
-    },
-    TextureAsset {
-        texture_id: skin::LANGUAGE_TOGGLE,
-        path: "assets/images/ui/menu/skin_language_toggle_ai.png",
     },
     TextureAsset {
         texture_id: icon::BRAND_CRYSTAL,
@@ -166,10 +160,6 @@ pub const TEXTURES: &[TextureAsset] = &[
     TextureAsset {
         texture_id: "menu.action_save",
         path: "assets/images/ui/menu/action_save_ai.png",
-    },
-    TextureAsset {
-        texture_id: icon::RETURN,
-        path: "assets/images/ui/menu/action_return_ai.png",
     },
     TextureAsset {
         texture_id: "menu.attr_survival",

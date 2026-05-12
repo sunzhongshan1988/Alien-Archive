@@ -364,6 +364,73 @@ pub fn inventory_hint(language: Language) -> Cow<'static, str> {
     )
 }
 
+pub fn equipment_title(language: Language) -> Cow<'static, str> {
+    localization::text(language, "game.equipment.title", "Loadout", "装备管理")
+}
+
+pub fn equipment_subtitle(language: Language) -> Cow<'static, str> {
+    localization::text(
+        language,
+        "game.equipment.subtitle",
+        "Field gear, quickbar, and active suit status",
+        "外勤装备、快捷栏与当前服役状态",
+    )
+}
+
+pub fn equipment_quickbar_header(language: Language) -> Cow<'static, str> {
+    localization::text(
+        language,
+        "game.equipment.quickbar_header",
+        "Quickbar",
+        "快捷栏",
+    )
+}
+
+pub fn equipment_modules_header(language: Language) -> Cow<'static, str> {
+    localization::text(
+        language,
+        "game.equipment.modules_header",
+        "Field Modules",
+        "外勤模块",
+    )
+}
+
+pub fn equipment_status_header(language: Language) -> Cow<'static, str> {
+    localization::text(
+        language,
+        "game.equipment.status_header",
+        "Suit Status",
+        "服役状态",
+    )
+}
+
+pub fn equipment_empty_slot(language: Language) -> Cow<'static, str> {
+    localization::text(
+        language,
+        "game.equipment.empty_slot",
+        "Empty slot",
+        "空槽位",
+    )
+}
+
+pub fn equipment_no_modules(language: Language) -> Cow<'static, str> {
+    localization::text(
+        language,
+        "game.equipment.no_modules",
+        "No tool or artifact module is installed.",
+        "当前没有可显示的工具或遗物模块。",
+    )
+}
+
+pub fn equipment_hint(language: Language) -> Cow<'static, str> {
+    localization::text(
+        language,
+        "game.equipment.hint",
+        "Number keys switch quickbar slots in the field. Q uses the selected consumable.",
+        "外勤中数字键切换快捷栏，Q 使用当前选中的消耗品。",
+    )
+}
+
 pub fn map_labels(language: Language) -> [Cow<'static, str>; 3] {
     [
         localization::text(

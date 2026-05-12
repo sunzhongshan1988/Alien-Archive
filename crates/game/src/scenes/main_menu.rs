@@ -10,7 +10,8 @@ use crate::save::{SAVE_SLOT_COUNT, SaveData, delete_save_file, save_slot_path};
 use crate::ui::localization;
 use crate::ui::menu_style::{self, icon, skin};
 use crate::ui::menu_widgets::{
-    contain_rect, draw_border, draw_screen_rect, draw_texture_nine_slice, screen_rect as ui_rect,
+    ToggleOption, contain_rect, draw_border, draw_screen_rect, draw_text_toggle,
+    draw_texture_nine_slice, screen_rect as ui_rect,
 };
 use crate::ui::text::{TextSprite, draw_text, draw_text_centered, load_ui_font, upload_text};
 
@@ -500,26 +501,22 @@ impl MainMenuScene {
             );
         }
 
-        for (index, language) in Language::SUPPORTED.iter().copied().enumerate() {
-            let choice_rect = self.language_choice_rect(viewport, index);
-            let active = self.language == language;
-            draw_language_button(ctx.renderer, viewport, choice_rect, active);
-
-            if let Some(text) = self.text.language_values.get(index) {
-                draw_text_centered(
-                    ctx.renderer,
-                    text,
-                    viewport,
-                    choice_rect.origin.x + choice_rect.size.x * 0.5,
-                    centered_text_y(choice_rect, text, 0.0),
-                    if active {
-                        Color::rgba(0.94, 1.0, 0.98, 1.0)
-                    } else {
-                        Color::rgba(0.58, 0.72, 0.78, 0.95)
-                    },
-                );
-            }
-        }
+        let language_options: Vec<_> = Language::SUPPORTED
+            .iter()
+            .copied()
+            .enumerate()
+            .filter_map(|(index, language)| {
+                self.text
+                    .language_values
+                    .get(index)
+                    .map(|text| ToggleOption {
+                        rect: self.language_choice_rect(viewport, index),
+                        text,
+                        active: self.language == language,
+                    })
+            })
+            .collect();
+        draw_text_toggle(ctx.renderer, viewport, &language_options, 1.0);
 
         let back_rect = self.settings_item_rect(viewport, 1);
         let back_selected = self.page == MenuPage::Settings
@@ -1052,35 +1049,6 @@ fn draw_menu_button(renderer: &mut dyn Renderer, viewport: Vec2, rect: Rect, sel
                 Color::rgba(0.52, 0.96, 1.0, 0.92)
             } else {
                 Color::rgba(0.12, 0.27, 0.35, 0.86)
-            },
-        );
-    }
-}
-
-fn draw_language_button(renderer: &mut dyn Renderer, viewport: Vec2, rect: Rect, active: bool) {
-    let texture_id = if active {
-        skin::NAV_ACTIVE
-    } else {
-        skin::LANGUAGE_TOGGLE
-    };
-    let textured = draw_texture_nine_slice(
-        renderer,
-        viewport,
-        texture_id,
-        rect,
-        46.0,
-        16.0,
-        Color::rgba(1.0, 1.0, 1.0, if active { 0.96 } else { 0.82 }),
-    );
-    if !textured {
-        draw_screen_rect(
-            renderer,
-            viewport,
-            rect,
-            if active {
-                Color::rgba(0.08, 0.44, 0.60, 0.88)
-            } else {
-                Color::rgba(0.025, 0.07, 0.10, 0.76)
             },
         );
     }
