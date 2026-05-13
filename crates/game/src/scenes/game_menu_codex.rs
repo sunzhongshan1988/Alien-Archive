@@ -2,10 +2,15 @@ use std::collections::{BTreeMap, HashSet};
 
 use anyhow::Result;
 use content::{CodexDatabase, CodexEntry};
-use runtime::Renderer;
+use runtime::{Color, Rect, Renderer, Vec2};
 use rusttype::Font;
 
-use crate::ui::text::{TextSprite, upload_text};
+use crate::ui::menu_style::{color, inset_rect};
+use crate::ui::menu_widgets::{
+    contain_rect, draw_bar, draw_border, draw_inner_panel, draw_screen_rect, draw_text_strong,
+    screen_rect,
+};
+use crate::ui::text::{TextSprite, draw_text, draw_text_centered, upload_text};
 
 use super::Language;
 
@@ -174,6 +179,335 @@ pub(super) fn upload_codex_entry_cards(
         .collect()
 }
 
+pub(super) fn draw_codex_entry_card(
+    renderer: &mut dyn Renderer,
+    viewport: Vec2,
+    card: Rect,
+    entry: &CodexEntryCardText,
+    selected: bool,
+    index: usize,
+    scale: f32,
+) {
+    draw_inner_panel(renderer, viewport, card, scale);
+    if selected {
+        draw_border(
+            renderer,
+            viewport,
+            card,
+            2.0 * scale,
+            Color::rgba(0.58, 0.98, 1.0, 0.96),
+        );
+    }
+
+    let image_size = 58.0 * scale;
+    let image_rect = Rect::new(
+        Vec2::new(
+            card.right() - image_size - 16.0 * scale,
+            card.origin.y + 14.0 * scale,
+        ),
+        Vec2::new(image_size, image_size),
+    );
+    draw_codex_glyph(renderer, viewport, image_rect, index, scale);
+    if !entry.unlocked {
+        draw_screen_rect(
+            renderer,
+            viewport,
+            image_rect,
+            Color::rgba(0.0, 0.0, 0.0, 0.46),
+        );
+    }
+
+    let text_x = card.origin.x + 18.0 * scale;
+    let title_color = if entry.unlocked {
+        color::TEXT_PRIMARY
+    } else {
+        color::TEXT_MUTED
+    };
+    draw_text_strong(
+        renderer,
+        &entry.title,
+        viewport,
+        text_x,
+        card.origin.y + 10.0 * scale,
+        title_color,
+        scale,
+    );
+    draw_text(
+        renderer,
+        &entry.category,
+        viewport,
+        text_x,
+        card.origin.y + 34.0 * scale,
+        Color::rgba(0.46, 0.88, 0.96, 0.96),
+    );
+    draw_text(
+        renderer,
+        &entry.status,
+        viewport,
+        card.right() - image_size - 16.0 * scale,
+        image_rect.bottom() + 4.0 * scale,
+        if entry.unlocked {
+            color::TEXT_GREEN
+        } else {
+            color::TEXT_DIM
+        },
+    );
+
+    for (line_index, line) in entry.description_lines.iter().enumerate() {
+        draw_text(
+            renderer,
+            line,
+            viewport,
+            text_x,
+            card.origin.y + (56.0 + line_index as f32 * 17.0) * scale,
+            if entry.unlocked {
+                color::TEXT_SECONDARY
+            } else {
+                color::TEXT_DIM
+            },
+        );
+    }
+}
+
+pub(super) fn draw_codex_discovery_card(
+    renderer: &mut dyn Renderer,
+    viewport: Vec2,
+    card: Rect,
+    index: usize,
+    label: &TextSprite,
+    value: &TextSprite,
+    ratio: f32,
+    scale: f32,
+) {
+    let content = inset_rect(card, 4.0 * scale);
+    let image = Rect::new(
+        content.origin,
+        Vec2::new(content.size.x, content.size.y - 84.0 * scale),
+    );
+    let info_top = image.bottom() + 2.0 * scale;
+    draw_codex_glyph(renderer, viewport, image, index, scale);
+    draw_text_centered(
+        renderer,
+        label,
+        viewport,
+        content.origin.x + content.size.x * 0.5,
+        info_top,
+        color::TEXT_PRIMARY,
+    );
+    draw_text_centered(
+        renderer,
+        value,
+        viewport,
+        content.origin.x + content.size.x * 0.5,
+        info_top + 25.0 * scale,
+        color::TEXT_SECONDARY,
+    );
+    draw_bar(
+        renderer,
+        viewport,
+        Rect::new(
+            Vec2::new(content.origin.x + 10.0 * scale, info_top + 49.0 * scale),
+            Vec2::new(content.size.x - 20.0 * scale, 6.0 * scale),
+        ),
+        ratio,
+        scale,
+    );
+}
+
+fn draw_codex_glyph(
+    renderer: &mut dyn Renderer,
+    viewport: Vec2,
+    card: Rect,
+    index: usize,
+    scale: f32,
+) {
+    let texture_id = codex_thumbnail_texture_id(index);
+    if let Some(image_size) = renderer.texture_size(texture_id) {
+        let frame = inset_rect(card, 2.0 * scale);
+        renderer.draw_image(
+            texture_id,
+            screen_rect(viewport, contain_rect(frame, image_size)),
+            Color::rgba(1.0, 1.0, 1.0, 1.0),
+        );
+        return;
+    }
+
+    let color = match index {
+        0 => Color::rgba(0.56, 0.42, 0.95, 0.92),
+        1 => Color::rgba(0.34, 0.88, 1.0, 0.92),
+        2 => Color::rgba(0.58, 0.64, 1.0, 0.92),
+        _ => Color::rgba(0.36, 0.92, 1.0, 0.92),
+    };
+
+    if card.size.y < 160.0 * scale && card.size.x > 240.0 * scale {
+        let glyph = Rect::new(
+            Vec2::new(card.origin.x + 28.0 * scale, card.origin.y + 34.0 * scale),
+            Vec2::new(44.0 * scale, 44.0 * scale),
+        );
+        draw_screen_rect(
+            renderer,
+            viewport,
+            glyph,
+            Color::rgba(0.030, 0.070, 0.086, 0.90),
+        );
+        draw_border(renderer, viewport, glyph, 2.0 * scale, color);
+        draw_screen_rect(renderer, viewport, inset_rect(glyph, 14.0 * scale), color);
+        return;
+    }
+
+    let center = Vec2::new(
+        card.origin.x + card.size.x * 0.5,
+        card.origin.y + card.size.y * 0.5,
+    );
+    match index {
+        0 => {
+            let body = Rect::new(
+                Vec2::new(center.x - 26.0 * scale, center.y - 20.0 * scale),
+                Vec2::new(52.0 * scale, 34.0 * scale),
+            );
+            draw_screen_rect(
+                renderer,
+                viewport,
+                body,
+                Color::rgba(0.28, 0.19, 0.42, 0.95),
+            );
+            draw_border(renderer, viewport, body, 2.0 * scale, color);
+            for eye in [-1.0, 1.0] {
+                draw_screen_rect(
+                    renderer,
+                    viewport,
+                    Rect::new(
+                        Vec2::new(center.x + eye * 11.0 * scale, center.y - 8.0 * scale),
+                        Vec2::new(6.0 * scale, 6.0 * scale),
+                    ),
+                    Color::rgba(0.70, 0.98, 1.0, 0.96),
+                );
+            }
+            for leg in 0..4 {
+                draw_screen_rect(
+                    renderer,
+                    viewport,
+                    Rect::new(
+                        Vec2::new(
+                            center.x - 28.0 * scale + leg as f32 * 18.0 * scale,
+                            center.y + 16.0 * scale,
+                        ),
+                        Vec2::new(7.0 * scale, 20.0 * scale),
+                    ),
+                    color,
+                );
+            }
+        }
+        1 => {
+            for tier in 0..4 {
+                let width = (64.0 - tier as f32 * 12.0) * scale;
+                let height = (18.0 + tier as f32 * 8.0) * scale;
+                draw_screen_rect(
+                    renderer,
+                    viewport,
+                    Rect::new(
+                        Vec2::new(
+                            center.x - width * 0.5,
+                            center.y + 38.0 * scale - tier as f32 * 25.0 * scale,
+                        ),
+                        Vec2::new(width, height),
+                    ),
+                    Color::rgba(0.10, 0.32, 0.42, 0.92),
+                );
+                draw_border(
+                    renderer,
+                    viewport,
+                    Rect::new(
+                        Vec2::new(
+                            center.x - width * 0.5,
+                            center.y + 38.0 * scale - tier as f32 * 25.0 * scale,
+                        ),
+                        Vec2::new(width, height),
+                    ),
+                    1.0 * scale,
+                    color,
+                );
+            }
+            draw_screen_rect(
+                renderer,
+                viewport,
+                Rect::new(
+                    Vec2::new(center.x - 5.0 * scale, center.y - 62.0 * scale),
+                    Vec2::new(10.0 * scale, 28.0 * scale),
+                ),
+                color,
+            );
+        }
+        2 => {
+            for band in 0..5 {
+                let width = (78.0 - (band as f32 - 2.0).abs() * 13.0) * scale;
+                draw_screen_rect(
+                    renderer,
+                    viewport,
+                    Rect::new(
+                        Vec2::new(
+                            center.x - width * 0.5,
+                            center.y - 34.0 * scale + band as f32 * 14.0 * scale,
+                        ),
+                        Vec2::new(width, 10.0 * scale),
+                    ),
+                    if band == 2 {
+                        Color::rgba(0.34, 0.88, 1.0, 0.92)
+                    } else {
+                        Color::rgba(0.24, 0.22, 0.48, 0.86)
+                    },
+                );
+            }
+            draw_border(
+                renderer,
+                viewport,
+                Rect::new(
+                    Vec2::new(center.x - 48.0 * scale, center.y - 42.0 * scale),
+                    Vec2::new(96.0 * scale, 84.0 * scale),
+                ),
+                1.0 * scale,
+                color,
+            );
+        }
+        _ => {
+            let tablet = Rect::new(
+                Vec2::new(center.x - 34.0 * scale, center.y - 48.0 * scale),
+                Vec2::new(68.0 * scale, 96.0 * scale),
+            );
+            draw_screen_rect(
+                renderer,
+                viewport,
+                tablet,
+                Color::rgba(0.06, 0.20, 0.28, 0.94),
+            );
+            draw_border(renderer, viewport, tablet, 2.0 * scale, color);
+            for row in 0..4 {
+                draw_screen_rect(
+                    renderer,
+                    viewport,
+                    Rect::new(
+                        Vec2::new(
+                            tablet.origin.x + 14.0 * scale,
+                            tablet.origin.y + (18.0 + row as f32 * 16.0) * scale,
+                        ),
+                        Vec2::new(40.0 * scale, 3.0 * scale),
+                    ),
+                    Color::rgba(0.55, 0.95, 1.0, 0.78),
+                );
+            }
+        }
+    }
+}
+
+fn codex_thumbnail_texture_id(index: usize) -> &'static str {
+    match index {
+        0 => "menu.codex_alien_life",
+        1 => "menu.codex_relic_tech",
+        2 => "menu.codex_star_geography",
+        _ => "menu.codex_civilization",
+    }
+}
+
 fn locked_codex_title(language: Language) -> &'static str {
     match language {
         Language::Chinese => "未识别条目",
@@ -324,5 +658,11 @@ mod tests {
 
         assert_eq!(lines.len(), 2);
         assert!(lines.iter().all(|line| line.len() <= 18));
+    }
+
+    #[test]
+    fn thumbnail_texture_ids_keep_stable_fallback() {
+        assert_eq!(codex_thumbnail_texture_id(0), "menu.codex_alien_life");
+        assert_eq!(codex_thumbnail_texture_id(99), "menu.codex_civilization");
     }
 }

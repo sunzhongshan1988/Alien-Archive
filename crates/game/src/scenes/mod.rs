@@ -7,6 +7,8 @@ mod game_menu_art;
 mod game_menu_codex;
 mod game_menu_feedback;
 mod game_menu_inventory;
+mod game_menu_map;
+mod game_menu_profile;
 mod game_menu_scene;
 mod inventory_scene;
 mod main_menu;
