@@ -55,6 +55,8 @@
 - 菜单文字使用中文/英文两套文本，不再把两种语言同时堆在界面里。
 - 主菜单、游戏内菜单、外勤 HUD、notice 提示和外勤日志事件文案已接入 `assets/data/ui/localization.ron`；运行时通过 `ui::localization` 读取资产字典，缺键或缺文件时回退到代码内 fallback 文案，避免本地资产问题导致界面不可用。
 - 菜单 UI 拆出了 `game_menu_content`、`layout`、`menu_style`、`menu_widgets`、`text` 等模块，方便继续迭代。
+- 游戏内菜单 scene 继续按页面/组件拆出 `game_menu_activity`、`game_menu_art`、`game_menu_codex`、`game_menu_feedback`、`game_menu_inventory`、`game_menu_map`、`game_menu_profile`；模块边界和后续拆分原则见 `docs/GAME_MENU_ARCHITECTURE.md`。
+- 面向 AI code agent 的整体架构索引见 `docs/AGENT_ARCHITECTURE.md`；它按 crate 依赖、数据流、模块归属、修改路由和验证命令组织，优先用于后续自动化开发定位。
 - 菜单皮肤、导航图标、底部动作图标、属性图标、图鉴缩略图集中登记在 `menu_style::TEXTURES`。
 - `tools/generate_menu_assets.py` 可以生成当前菜单需要的 AI 风格图标和缩略图。
 - 底部动作条里的 `存档` 现在会执行手动保存，并在菜单内显示成功/失败 toast；`装备` 会打开装备管理页，`日志` 会跳到外勤日志页，未接入动作会显示轻量提示。
@@ -386,6 +388,13 @@ Alien-Archive/
           overworld_scene.rs
           facility_scene.rs
           field_hud.rs
+          game_menu_activity.rs
+          game_menu_art.rs
+          game_menu_codex.rs
+          game_menu_feedback.rs
+          game_menu_inventory.rs
+          game_menu_map.rs
+          game_menu_profile.rs
           game_menu_scene.rs
           debug_overlay.rs
           inventory_scene.rs
