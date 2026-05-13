@@ -35,6 +35,7 @@ const SETTINGS_CHOICE_GAP: f32 = 14.0;
 const TOAST_VISIBLE_TIME: f32 = 3.0;
 const TOAST_WIDTH: f32 = 520.0;
 const TOAST_HEIGHT: f32 = 44.0;
+const NEW_GAME_INTRO_CUTSCENE_ID: &str = "intro.new_game";
 
 const MENU_ITEMS: [MenuAction; 6] = [
     MenuAction::Continue,
@@ -206,12 +207,15 @@ impl MainMenuScene {
                     .is_some_and(|slot| matches!(&slot.state, SaveSlotState::Ready(_)));
                 if has_readable_save {
                     ctx.load_save_file_or_default(slot_path);
+                    self.language = ctx.language;
+                    self.refresh_save_slots();
+                    Ok(SceneCommand::Switch(ctx.resume_scene_id()))
                 } else {
-                    ctx.start_new_save(slot_path);
+                    let command = self.start_new_game(ctx, slot_path);
+                    self.language = ctx.language;
+                    self.refresh_save_slots();
+                    Ok(command)
                 }
-                self.language = ctx.language;
-                self.refresh_save_slots();
-                Ok(SceneCommand::Switch(ctx.resume_scene_id()))
             }
             SaveSlotMode::New => {
                 let requires_confirmation = self
@@ -229,10 +233,10 @@ impl MainMenuScene {
                 }
 
                 self.clear_pending_slot_actions();
-                ctx.start_new_save(slot_path);
+                let command = self.start_new_game(ctx, slot_path);
                 self.language = ctx.language;
                 self.refresh_save_slots();
-                Ok(SceneCommand::Switch(ctx.resume_scene_id()))
+                Ok(command)
             }
             SaveSlotMode::Delete => {
                 self.pending_new_slot = None;
@@ -280,6 +284,19 @@ impl MainMenuScene {
                 }
                 Ok(SceneCommand::None)
             }
+        }
+    }
+
+    fn start_new_game(
+        &mut self,
+        ctx: &mut GameContext,
+        slot_path: PathBuf,
+    ) -> SceneCommand<SceneId> {
+        ctx.start_new_save(slot_path);
+        if ctx.request_cutscene_once(NEW_GAME_INTRO_CUTSCENE_ID) {
+            SceneCommand::Push(SceneId::Cutscene)
+        } else {
+            SceneCommand::Switch(ctx.resume_scene_id())
         }
     }
 
@@ -1494,6 +1511,21 @@ mod tests {
                 false,
             )
             .contains("再次确认覆盖")
+        );
+    }
+
+    #[test]
+    fn new_game_queues_intro_cutscene() {
+        let mut menu = MainMenuScene::new();
+        let mut ctx = GameContext::default();
+
+        let command = menu.start_new_game(&mut ctx, PathBuf::from("saves/test_cutscene.ron"));
+
+        assert_eq!(command, SceneCommand::Push(SceneId::Cutscene));
+        assert_eq!(
+            ctx.pending_cutscene_definition()
+                .map(|cutscene| cutscene.id),
+            Some(NEW_GAME_INTRO_CUTSCENE_ID.to_owned())
         );
     }
 }

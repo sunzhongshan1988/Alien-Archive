@@ -4821,6 +4821,30 @@ impl EditorApp {
 
     pub(crate) fn draw_status_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
+            if self.active_workspace == EditorWorkspace::Cutscenes {
+                let dirty_marker = if self.cutscene_db_dirty { "*" } else { "" };
+                let current_file = format!(
+                    "{}{}",
+                    display_project_path(&self.project_root, &self.cutscene_db_path()),
+                    dirty_marker
+                );
+                let selected = self
+                    .selected_cutscene_index
+                    .and_then(|index| self.cutscene_database.cutscenes().get(index))
+                    .map(|cutscene| cutscene.id.as_str())
+                    .unwrap_or("none");
+                ui.label(format!("File: {current_file}"));
+                ui.separator();
+                ui.label(format!(
+                    "Cutscenes: {}",
+                    self.cutscene_database.cutscenes().len()
+                ));
+                ui.separator();
+                ui.label(format!("Selected: {selected}"));
+                ui.separator();
+                ui.label(&self.status);
+                return;
+            }
             let mouse = self
                 .mouse_tile
                 .map(|tile| format!("{}, {}", tile[0], tile[1]))

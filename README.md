@@ -69,7 +69,7 @@ assets/
       overworld.ron
       facility_ruin_01.ron
 
-tools/        # future local web map editor
+tools/        # asset and content maintenance helpers
 ```
 
 Player sprite sheet convention:

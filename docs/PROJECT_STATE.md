@@ -76,10 +76,19 @@
 - 首次完成扫描会推进人物档案里的研究进度和 XP，并按 Codex 类型给少量背包奖励。
 - 入口/门现在优先读取地图实体上的显式 `unlock` 规则；旧地图里带 `codex_id` 的入口/门仍会兼容为“需要先扫描”。
 
-3. 本地存档
+3. 过场动画 / 流程衔接
+
+- 新增 `content::CutsceneDatabase`、`CutsceneDefinition` 和 `CutsceneStep`，默认数据位于 `crates/content/data/cutscenes.ron`。
+- 新增 `SceneId::Cutscene` 和 `crates/game/src/scenes/cutscene_scene.rs`，支持 `FadeIn` / `FadeOut` / `Wait` / `TextPanel` / `SetFlag` 这些轻量 sequence step。
+- Cutscene 作为 overlay/fullscreen scene 播放，`Esc` 跳过，`Enter` / `Space` / 鼠标点击推进文本面板。
+- `SaveData.cutscenes` 记录已播放 cutscene id 和流程 flag；触发入口通过 `GameContext::request_cutscene_once`，播放完成后由 `mark_cutscene_seen` / `mark_cutscene_flag` 请求保存。
+- 新建存档会先播放 `intro.new_game`，结束后切入 Overworld；读取已有存档仍按当前保存场景恢复。
+- Game Editor 已新增 `Cutscenes` 工作区，可直接编辑 `crates/content/data/cutscenes.ron`：新增/复制/删除 cutscene，编辑 `FadeIn` / `FadeOut` / `Wait` / `TextPanel` / `SetFlag` 步骤，切换 `Pop` 或 `SwitchScene` 完成行为，并在保存前检查空 id、重复 id、非法时长和空 flag。Cutscenes 工作区只编辑剧情源文本；多语言翻译和校对应进入独立 Language 工作区统一处理。
+
+4. 本地存档
 
 - 新增 `crates/game/src/save.rs`，默认存档路径是 `saves/profile_01.ron`。
-- 存档使用 RON，包含 schema version、人物档案、背包槽位、快捷栏、当前地图/场景/出生点/玩家位置、已扫描 Codex ID、已收集实体、交互历史日志、语言设置。
+- 存档使用 RON，包含 schema version、人物档案、背包槽位、快捷栏、当前地图/场景/出生点/玩家位置、已扫描 Codex ID、已收集实体、已播放过场/流程 flag、交互历史日志、语言设置。
 - `GameContext` 启动时读取存档；不存在或读取失败时使用默认存档。
 - 主菜单“继续游戏”会从当前存档里的场景继续，而不是固定进 Overworld。
 - 主菜单支持 3 个固定存档槽：`saves/profile_01.ron`、`saves/profile_02.ron`、`saves/profile_03.ron`。
@@ -91,14 +100,14 @@
 - Profile 页和游戏内 Profile 面板读取 `SaveData.profile`；背包页和游戏内 Inventory 面板读取 `SaveData.inventory`。
 - `SaveData.profile` 里的生命、体力、外骨骼、负重、氧气/辐射/孢子抗性现在会被运行时系统更新，并随自动保存写回。
 
-4. 拾取和奖励
+5. 拾取和奖励
 
 - 新增 `scenes::rewards`，集中把 pickup asset / codex id 映射到背包奖励和研究分类。
 - 地图实体现在保留运行时 `asset_id`，用于判断 `ow_pickup_*` 是否可采集。
 - 玩家靠近 pickup 实体按 `E` 会把物品写进 `SaveData.inventory`，并把该地图实体写进 `SaveData.world.collected_entities`。
 - 已收集实体在重新进入地图时会从运行时 World 移除，避免重复领取。
 
-5. 交互反馈
+6. 交互反馈
 
 - 新增 `scenes::notice_system`，用于在游戏画面上方显示轻量提示。
 - 拾取成功会显示“获得物品 x 数量”。
@@ -108,7 +117,7 @@
 - 首次扫描完成会显示扫描完成提示，提示研究和奖励已经记录。
 - 上述运行时 notice 文案现在从 `assets/data/ui/localization.ron` 读取，便于后续直接在资产层维护中英文文本。
 
-6. 人物状态运行时
+7. 人物状态运行时
 
 - 新增 `FieldActivity` / `FieldEnvironment` 驱动的状态更新逻辑。
 - Overworld / Facility 每帧会把移动、扫描、跳跃和环境暴露转换成 `SaveData.profile` 的 meter 变化。
@@ -119,7 +128,7 @@
 - 低体力和高负重会降低移动速度；背包变化会同步刷新负重并请求保存。
 - 如果外骨骼或氧气耗尽，生命值会开始下降。
 
-7. 显式解锁规则
+8. 显式解锁规则
 
 - `content::MapDocument` 的 `EntityInstance` 和 `ZoneInstance` 增加 `unlock` 字段。
 - `unlock` 当前支持 `requires_codex_id`、`requires_item_id`、`locked_message`。
@@ -128,7 +137,7 @@
 - Outliner 会给带解锁规则的实体/区域显示 `unlock` badge，并可通过解锁字段搜索对象。
 - `validate_map_with_codex` 会检查显式 unlock 的 Codex 引用、空条件和可疑 item id；旧的“入口/门素材 codex_id 隐式锁门”会提示改成显式字段。
 
-8. Debug Overlay
+9. Debug Overlay
 
 - 新增全局 `F3` 调试面板，不依赖具体场景 UI。
 - 面板从 `SceneStack` 统一渲染，在 Overworld、Facility 和覆盖层菜单打开时都能显示。
@@ -136,7 +145,7 @@
 - 面板同时显示存档路径、dirty/requested/timer、存档世界状态、已收集实体数量、人物等级/XP、生命/体力/外骨骼/负重/氧气/辐射/孢子 meter 和已扫描 Codex 数量。
 - 打开游戏内菜单时，Debug Overlay 会显示底层场景并追加当前覆盖层名称，方便排查 overlay 是否吃掉了底层运行时状态。
 
-9. 交互历史/日志页
+10. 交互历史/日志页
 
 - `SaveData` 增加 `activity_log` 和 `objectives`，分别保存最近外勤事件和任务目标推进状态。
 - 日志事件会随本地 RON 存档保存，退出重进后仍能在菜单里看到。
@@ -147,7 +156,7 @@
 - `最近外勤记录` 已是滚动列表：存档仍保留最近 32 条，菜单窗口只显示能完整放入背景框的条目，可用鼠标滚轮或滚动条查看更早记录。
 - Debug Overlay 现在也会显示当前日志条目数量，方便确认事件是否写入存档。
 
-10. 外勤 HUD / 快捷栏 / 时间天气
+11. 外勤 HUD / 快捷栏 / 时间天气
 
 - 新增 `scenes::field_hud`，在 Overworld 和 Facility 游戏画面上常驻渲染外勤 HUD。
 - 左上状态面板显示当前场景、外勤时间、天气、生命、体力、外骨骼和负重。
@@ -160,7 +169,7 @@
 - 外勤时间按运行时推进，当前先用简化规则按时间段切换 `clear` / `ion_wind` / `spore_drift` / `cold_mist`。
 - `SaveData::normalize()` 会修正旧存档缺失的时间和天气字段，避免旧存档读入后状态面板显示异常。
 
-11. 地图转场目标和区域触发
+12. 地图转场目标和区域触发
 
 - `content::MapDocument` 的 `EntityInstance` 和 `ZoneInstance` 增加 `transition` 字段。
 - `transition` 当前支持 `scene`、`map_path`、`spawn_id`，用于显式指定目标场景、目标地图和出生点。
@@ -171,7 +180,7 @@
 - `validate_map_with_codex` 会检查空转场目标、未知 scene、非 RON map path 和带空白的 spawn id。
 - 旧版 legacy RON 实体可选写入 `transition`，不写仍按旧逻辑运行。
 
-12. 运行时 Debug 几何层
+13. 运行时 Debug 几何层
 
 - `F3` Debug Overlay 打开时，Overworld / Facility 会在世界坐标中叠加调试几何。
 - 红色显示实际参与移动阻挡的 solid collision rect。
@@ -181,7 +190,7 @@
 - 该层在游戏内菜单覆盖层打开时仍会绘制在底层场景上，便于排查 overlay 是否影响底层运行时状态。
 - Overworld 的深度排序现在优先按 `z_index` 层级，再按脚底 Y 排序；站上 `WalkSurface` 台面时，人物会稳定绘制在底层斜坡/圆台整图之上，同时仍可被更高 `z_index` 的台面道具遮挡。`WalkSurface` 还会约束地面/高层切换：地面态不能从圆台背面或侧边直接踩进 Platform 顶面，只能从 Ramp 坡脚方向进入；高层态不能从圆台或斜坡侧边直接掉到地面，只能沿 Ramp 朝地面方向离开同一 `surface_id`。
 
-13. 区域脚本第一版
+14. 区域脚本第一版
 
 - `ZoneInstance` 新增可选 `hazard`、`prompt` 和 `objective` 规则，保持和现有 `surface` / `unlock` / `transition` 同层级。
 - `HazardZone` 会在玩家重叠时按 `effects` 持续修改人物 meter，当前支持 `health`、`stamina`、`suit`、`oxygen`、`radiation`、`spores`。
@@ -235,7 +244,7 @@
 - `SaveData` 已支持固定存档槽路径，主菜单可以读取、新建、删除并刷新槽位摘要。
 - `WorldSave` 已记录一次性区域触发状态，用于 `PromptZone` 这类跨会话不重复事件。
 - 运行时已接入人物状态更新：体力、负重、外骨骼、生命和环境抗性会受移动、跳跃、背包和场景环境影响并保存。
-- `crates/editor` 已作为专用 Overworld 地图编辑器入口存在，读写 `assets/data/maps/*.ron`。
+- `crates/editor` 已作为 Alien Archive Game Editor 入口存在，当前落地工作区是 Overworld Map 和 Cutscenes，分别读写 `assets/data/maps/*.ron` 与 `crates/content/data/cutscenes.ron`。
 - 编辑器菜单和工具栏支持“保存并运行当前地图”，用于快速验证当前 RON 和出生点。
 - `SceneStack` 已接入全局 Debug Overlay，可在运行时检查场景、地图、扫描目标、存档、人物状态和世界调试几何。
 - 游戏内菜单 `日志` 页会读取 `SaveData.objectives` 和 `SaveData.activity_log`，展示真实目标进度以及最近扫描、拾取、解锁和状态变化；新写入的日志事件文案已从本地化资产生成。
@@ -291,8 +300,8 @@
 原因：
 
 - 项目是长期作品，核心数据结构应该掌握在自己手里。
-- 运行时不应该依赖第三方地图编辑器的 schema。
-- 编辑器可以围绕 Alien Archive 的真实工作流做窄，而不是做成通用地图编辑器。
+- 运行时不应该依赖第三方地图/关卡工具的 schema。
+- 编辑器可以围绕 Alien Archive 的真实工作流做窄，而不是做成通用地图编辑器或通用游戏引擎编辑器。
 - 编码成本相比长期架构锁定风险更低。
 
 当前策略：
@@ -514,7 +523,7 @@ $env:ALIEN_ARCHIVE_EXIT_AFTER_FRAMES='3'; cargo run -p alien_archive
 3. 给 Debug Overlay 的世界几何层继续补开关/图例，按需要拆分 collision、interaction、zone、player 显示。
 4. 扩展目标资产结构，支持奖励、前置条件和多目标链路。
 
-地图编辑器的长期改进清单单独记录在：
+Game Editor 的长期改进清单单独记录在：
 
 ```txt
 docs/EDITOR_ROADMAP.md

@@ -2,6 +2,7 @@ mod app;
 mod asset_registry;
 mod assets;
 mod canvas;
+mod cutscenes;
 mod dialogs;
 mod inspector;
 mod native_menu;
@@ -33,10 +34,10 @@ use app::{
     },
     state::{
         AssetCatalogEntry, AssetDependencyReport, AssetReferenceIssue, AutosaveRecovery,
-        BatchAlignMode, BatchDistributeMode, ClipboardItem, EditorApp, LayerUiState,
-        LeftSidebarTab, MoveOrigin, MultiMoveDrag, NewMapDraft, OutlinerBadge, OutlinerEntry,
-        ResizeDrag, SelectedItem, SelectionMarquee, StampCaptureDrag, StampItem, StampPattern,
-        ZoneVertexDrag, default_layer_states,
+        BatchAlignMode, BatchDistributeMode, ClipboardItem, EditorApp, EditorWorkspace,
+        LayerUiState, LeftSidebarTab, MoveOrigin, MultiMoveDrag, NewMapDraft, OutlinerBadge,
+        OutlinerEntry, ResizeDrag, SelectedItem, SelectionMarquee, StampCaptureDrag, StampItem,
+        StampPattern, ZoneVertexDrag, default_layer_states,
     },
 };
 use asset_registry::{AssetEntry, AssetRegistry};
@@ -47,9 +48,10 @@ use assets::{
 };
 use canvas::rendering::{draw_grid, paint_transformed_image, zone_colors};
 use content::{
-    AnchorKind, AssetDatabase, AssetKind, CodexDatabase, DEFAULT_ASSET_DB_PATH,
-    DEFAULT_CODEX_DB_PATH, DEFAULT_MAP_PATH, InstanceRect, LayerKind, MapDocument,
-    MapValidationIssue, MapValidationSeverity, SnapMode, UnlockRule, validate_map_with_codex,
+    AnchorKind, AssetDatabase, AssetKind, CodexDatabase, CutsceneDatabase, DEFAULT_ASSET_DB_PATH,
+    DEFAULT_CODEX_DB_PATH, DEFAULT_CUTSCENE_DB_PATH, DEFAULT_MAP_PATH, InstanceRect, LayerKind,
+    MapDocument, MapValidationIssue, MapValidationSeverity, SnapMode, UnlockRule,
+    validate_map_with_codex,
 };
 use eframe::egui::{
     self, Color32, Context as EguiContext, Key, Modifiers, Pos2, Rect, Sense, Shape, Stroke,
@@ -100,7 +102,7 @@ fn main() -> eframe::Result<()> {
     };
 
     eframe::run_native(
-        "Alien Archive Overworld Map Editor",
+        "Alien Archive Game Editor",
         options,
         Box::new(|cc| Ok(Box::new(EditorApp::new(cc)))),
     )
@@ -122,12 +124,20 @@ impl EditorApp {
             });
         let registry = AssetRegistry::from_database(&project_root, asset_database.clone());
         let (codex_database, codex_db_status) = load_codex_database(&project_root);
+        let cutscene_database = CutsceneDatabase::load(
+            &project_root.join(DEFAULT_CUTSCENE_DB_PATH),
+        )
+        .unwrap_or_else(|error| {
+            eprintln!("cutscene database load failed: {error:?}");
+            CutsceneDatabase::default()
+        });
         let document =
             MapDocument::load(&map_path).unwrap_or_else(|_| MapDocument::new_landing_site());
         let save_as_id = document.id.clone();
         let mut app = Self {
             native_menu: native_menu::NativeMenu::install(),
             project_root: project_root.clone(),
+            active_workspace: EditorWorkspace::OverworldMap,
             selected_map_path: map_path.clone(),
             map_path,
             map_entries,
@@ -143,6 +153,10 @@ impl EditorApp {
             asset_db_dirty: false,
             codex_database,
             codex_db_status,
+            cutscene_database,
+            cutscene_db_dirty: false,
+            cutscene_search: String::new(),
+            selected_cutscene_index: Some(0),
             show_asset_dialog: false,
             show_unregistered_assets: false,
             show_asset_dependency_report: false,
@@ -310,7 +324,7 @@ impl EditorApp {
                 self.open_map_dialog();
             }
             if input.consume_key(Modifiers::COMMAND, Key::S) {
-                self.save_map();
+                self.save_active_document();
             }
 
             if wants_keyboard_input {
@@ -439,7 +453,7 @@ impl EditorApp {
             MenuCommand::OpenSelectedMap => self.open_selected_map(),
             MenuCommand::RefreshMaps => self.refresh_map_entries(),
             MenuCommand::Save => {
-                self.save_map();
+                self.save_active_document();
             }
             MenuCommand::SaveAs => self.save_map_as(),
             MenuCommand::SaveAndRun => self.save_and_run_current_map(),
@@ -472,6 +486,10 @@ impl EditorApp {
                 self.pan = vec2(48.0, 48.0);
                 self.zoom = 1.0;
             }
+            MenuCommand::SetWorkspace(workspace) => {
+                self.active_workspace = workspace;
+                self.status = format!("工作区：{}", workspace.label());
+            }
             MenuCommand::ValidateMap => {
                 self.validation_issues = self.validate_current_map();
                 self.show_validation_panel = true;
@@ -492,6 +510,13 @@ impl EditorApp {
             MenuCommand::ShowUnregisteredAssets => self.show_unregistered_assets = true,
             MenuCommand::ShowAssetDependencyReport => self.open_asset_dependency_report(),
             MenuCommand::ReloadAssetDatabase => self.reload_asset_database(ctx),
+        }
+    }
+
+    fn save_active_document(&mut self) -> bool {
+        match self.active_workspace {
+            EditorWorkspace::OverworldMap => self.save_map(),
+            EditorWorkspace::Cutscenes => self.save_cutscene_database(),
         }
     }
 
@@ -2117,6 +2142,31 @@ impl EditorApp {
                     }
                 });
 
+                menu_bar_button(ui, "工作区", |ui| {
+                    for workspace in EditorWorkspace::ALL {
+                        if ui
+                            .selectable_label(self.active_workspace == workspace, workspace.label())
+                            .clicked()
+                        {
+                            self.active_workspace = workspace;
+                            self.status = format!("工作区：{}", workspace.label());
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    if ui
+                        .add_enabled(self.cutscene_db_dirty, egui::Button::new("保存 Cutscenes"))
+                        .clicked()
+                    {
+                        self.save_cutscene_database();
+                        ui.close();
+                    }
+                    if ui.button("重新加载 Cutscenes").clicked() {
+                        self.reload_cutscene_database();
+                        ui.close();
+                    }
+                });
+
                 menu_bar_button(ui, "地图", |ui| {
                     if ui.button("校验地图").clicked() {
                         self.validation_issues = self.validate_current_map();
@@ -2250,6 +2300,46 @@ impl EditorApp {
                 ui.spacing_mut().button_padding = vec2(8.0, 0.0);
                 ui.spacing_mut().interact_size.y = 26.0;
                 ui.set_height(TOOLBAR_HEIGHT);
+                toolbar_label(ui, "工作区");
+                for workspace in EditorWorkspace::ALL {
+                    if ui
+                        .selectable_label(self.active_workspace == workspace, workspace.label())
+                        .clicked()
+                    {
+                        self.active_workspace = workspace;
+                        self.status = format!("工作区：{}", workspace.label());
+                    }
+                }
+
+                ui.separator();
+                if self.active_workspace == EditorWorkspace::Cutscenes {
+                    toolbar_label(ui, "过场");
+                    if toolbar_command_button(ui, "新增", 48.0).clicked() {
+                        self.add_cutscene();
+                    }
+                    if toolbar_command_button(ui, "保存", 48.0)
+                        .on_hover_text("保存 cutscenes.ron")
+                        .clicked()
+                    {
+                        self.save_cutscene_database();
+                    }
+                    if toolbar_command_button(ui, "重载", 48.0)
+                        .on_hover_text("从 cutscenes.ron 重新加载")
+                        .clicked()
+                    {
+                        self.reload_cutscene_database();
+                    }
+                    toolbar_centered(ui, vec2(260.0, 26.0), |ui| {
+                        let selected = self
+                            .selected_cutscene_index
+                            .and_then(|index| self.cutscene_database.cutscenes().get(index))
+                            .map(|cutscene| cutscene.id.as_str())
+                            .unwrap_or("none");
+                        ui.label(egui::RichText::new(selected).color(THEME_MUTED_TEXT));
+                    });
+                    return;
+                }
+
                 toolbar_label(ui, "工具");
                 for tool in ToolKind::ALL {
                     if toolbar_tool_button(ui, self.tool == tool, tool).clicked() {
@@ -2478,6 +2568,11 @@ impl eframe::App for EditorApp {
 
         egui::Panel::top("top_bar").show_inside(ui, |ui| self.draw_top_bar(ui));
         egui::Panel::bottom("status_bar").show_inside(ui, |ui| self.draw_status_bar(ui));
+        if self.active_workspace == EditorWorkspace::Cutscenes {
+            egui::CentralPanel::default().show_inside(ui, |ui| self.draw_cutscene_workspace(ui));
+            self.draw_dialogs(&ctx);
+            return;
+        }
         if self.show_left_sidebar {
             egui::Panel::left("left_sidebar")
                 .resizable(true)

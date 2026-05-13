@@ -3,7 +3,7 @@ use content::LayerKind;
 
 use crate::app::commands::MenuCommand;
 #[cfg(target_os = "macos")]
-use crate::app::state::{BatchAlignMode, BatchDistributeMode};
+use crate::app::state::{BatchAlignMode, BatchDistributeMode, EditorWorkspace};
 #[cfg(target_os = "macos")]
 use crate::tools::ToolKind;
 
@@ -66,13 +66,13 @@ fn build_menu() -> muda::Result<muda::Menu> {
         true,
         &[
             &PredefinedMenuItem::about(
-                Some("关于 Alien Archive Editor"),
+                Some("关于 Alien Archive Game Editor"),
                 Some(AboutMetadata {
-                    name: Some("Alien Archive Editor".to_owned()),
+                    name: Some("Alien Archive Game Editor".to_owned()),
                     version: Some(env!("CARGO_PKG_VERSION").to_owned()),
                     short_version: None,
                     authors: None,
-                    comments: Some("Overworld map editor".to_owned()),
+                    comments: Some("Alien Archive game content editor".to_owned()),
                     copyright: None,
                     license: None,
                     website: None,
@@ -82,11 +82,11 @@ fn build_menu() -> muda::Result<muda::Menu> {
                 }),
             ),
             &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::hide(Some("隐藏 Alien Archive Editor")),
+            &PredefinedMenuItem::hide(Some("隐藏 Alien Archive Game Editor")),
             &PredefinedMenuItem::hide_others(Some("隐藏其他")),
             &PredefinedMenuItem::show_all(Some("全部显示")),
             &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::quit(Some("退出 Alien Archive Editor")),
+            &PredefinedMenuItem::quit(Some("退出 Alien Archive Game Editor")),
         ],
     )?;
 
@@ -157,6 +157,15 @@ fn build_menu() -> muda::Result<muda::Menu> {
         )],
     )?;
 
+    let workspace_menu = Submenu::with_items(
+        "工作区",
+        true,
+        &[
+            &menu_item("workspace.map", "Overworld Map", None),
+            &menu_item("workspace.cutscenes", "Cutscenes", None),
+        ],
+    )?;
+
     let layer_menu = Submenu::with_items(
         "图层",
         true,
@@ -214,6 +223,7 @@ fn build_menu() -> muda::Result<muda::Menu> {
         &file_menu,
         &edit_menu,
         &view_menu,
+        &workspace_menu,
         &map_menu,
         &layer_menu,
         &tool_menu,
@@ -266,6 +276,8 @@ fn command_for_id(id: &str) -> Option<MenuCommand> {
         "view.zones" => MenuCommand::ToggleZones,
         "view.zone_labels" => MenuCommand::ToggleZoneLabels,
         "view.reset" => MenuCommand::ResetView,
+        "workspace.map" => MenuCommand::SetWorkspace(EditorWorkspace::OverworldMap),
+        "workspace.cutscenes" => MenuCommand::SetWorkspace(EditorWorkspace::Cutscenes),
         "map.validate" => MenuCommand::ValidateMap,
         "layer.ground" => MenuCommand::SetLayer(LayerKind::Ground),
         "layer.decals" => MenuCommand::SetLayer(LayerKind::Decals),

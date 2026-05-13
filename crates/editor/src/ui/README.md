@@ -1,4 +1,4 @@
-# Alien Archive Editor UI
+# Alien Archive Game Editor UI
 
 `crates/editor/src/ui` is the editor's small design-system layer on top of `egui`.
 
@@ -7,7 +7,7 @@
 ## Rules
 
 - Put reusable editor controls here first: tabs, panel headers, property rows, search fields, tree rows, inspector sections, and icon buttons.
-- Keep components specific to Alien Archive Editor. This is not meant to become a general Rust UI library.
+- Keep components specific to Alien Archive Game Editor. This is not meant to become a general Rust UI library.
 - Use colors and spacing from `ui/theme.rs`; avoid scattering ad hoc colors in business UI code.
 - Prefer stable dimensions for controls so labels, hover states, and dynamic counts do not shift layouts.
 - Keep rendering details inside the component. Call sites should read like editor intent, not painter plumbing.

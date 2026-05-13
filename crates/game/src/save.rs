@@ -24,6 +24,7 @@ pub struct SaveData {
     pub world: WorldSave,
     pub codex: CodexSave,
     pub objectives: ObjectivesSave,
+    pub cutscenes: CutsceneSave,
     pub activity_log: ActivityLogSave,
     pub settings: SettingsSave,
 }
@@ -37,6 +38,7 @@ impl Default for SaveData {
             world: WorldSave::default(),
             codex: CodexSave::default(),
             objectives: ObjectivesSave::default(),
+            cutscenes: CutsceneSave::default(),
             activity_log: ActivityLogSave::default(),
             settings: SettingsSave::default(),
         }
@@ -101,6 +103,7 @@ impl SaveData {
         }
         self.activity_log.normalize();
         self.objectives.normalize();
+        self.cutscenes.normalize();
     }
 }
 
@@ -451,6 +454,20 @@ impl ObjectivesSave {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CutsceneSave {
+    pub seen_ids: BTreeSet<String>,
+    pub flags: BTreeSet<String>,
+}
+
+impl CutsceneSave {
+    pub fn normalize(&mut self) {
+        self.seen_ids.retain(|id| !id.trim().is_empty());
+        self.flags.retain(|flag| !flag.trim().is_empty());
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ObjectiveStateSave {
@@ -619,6 +636,8 @@ mod tests {
         assert_eq!(save.world.weather, "clear");
         assert!(save.world.triggered_zones.is_empty());
         assert!(save.objectives.states.is_empty());
+        assert!(save.cutscenes.seen_ids.is_empty());
+        assert!(save.cutscenes.flags.is_empty());
         assert!(save.activity_log.entries.is_empty());
     }
 

@@ -1,4 +1,5 @@
 mod activity_log;
+mod cutscene_scene;
 mod debug_overlay;
 mod facility_scene;
 mod field_hud;
@@ -25,7 +26,7 @@ mod world_runtime;
 mod zone_system;
 
 use anyhow::Result;
-use content::{CodexDatabase, semantics};
+use content::{CodexDatabase, CutsceneDatabase, CutsceneDefinition, semantics};
 use runtime::{Button, Camera2d, InputState, Renderer, SceneCommand, Vec2};
 use std::{collections::HashSet, path::PathBuf};
 
@@ -34,6 +35,7 @@ use crate::save::{CodexSave, InventorySave, SaveData};
 use crate::world::{MapObjectiveRule, MapPromptRule, MapTransitionTarget, MapUnlockRule};
 
 use activity_log::ActivityLogEvent;
+use cutscene_scene::CutsceneScene;
 use facility_scene::FacilityScene;
 use game_menu_scene::GameMenuScene;
 use inventory_scene::InventoryScene;
@@ -62,6 +64,7 @@ pub enum SceneId {
     Overworld,
     Facility,
     GameMenu,
+    Cutscene,
     Inventory,
     Profile,
     Codex,
@@ -146,6 +149,7 @@ pub struct GameContext {
     pub facility_spawn_id: Option<String>,
     pub facility_player_position: Option<Vec2>,
     pub codex_database: CodexDatabase,
+    pub cutscene_database: CutsceneDatabase,
     pub objective_database: ObjectiveDatabase,
     pub scanned_codex_ids: HashSet<String>,
     pub save_path: PathBuf,
@@ -153,6 +157,7 @@ pub struct GameContext {
     save_dirty: bool,
     save_requested: bool,
     save_timer: f32,
+    pending_cutscene_id: Option<String>,
     profile_status_runtime: ProfileStatusRuntime,
 }
 
@@ -223,6 +228,60 @@ impl GameContext {
     pub fn request_save(&mut self) {
         self.save_dirty = true;
         self.save_requested = true;
+    }
+
+    pub fn request_cutscene_once(&mut self, cutscene_id: &str) -> bool {
+        let Some(definition) = self.cutscene_database.get(cutscene_id) else {
+            return false;
+        };
+        if definition.play_once && self.save_data.cutscenes.seen_ids.contains(cutscene_id) {
+            return false;
+        }
+
+        self.pending_cutscene_id = Some(cutscene_id.to_owned());
+        true
+    }
+
+    pub fn pending_cutscene_definition(&self) -> Option<CutsceneDefinition> {
+        self.pending_cutscene_id
+            .as_deref()
+            .and_then(|id| self.cutscene_database.get(id))
+            .cloned()
+    }
+
+    pub fn clear_pending_cutscene(&mut self, cutscene_id: &str) {
+        if self.pending_cutscene_id.as_deref() == Some(cutscene_id) {
+            self.pending_cutscene_id = None;
+        }
+    }
+
+    pub fn mark_cutscene_seen(&mut self, cutscene_id: &str) -> bool {
+        if cutscene_id.trim().is_empty() {
+            return false;
+        }
+
+        let changed = self
+            .save_data
+            .cutscenes
+            .seen_ids
+            .insert(cutscene_id.to_owned());
+        if changed {
+            self.request_save();
+        }
+        changed
+    }
+
+    pub fn mark_cutscene_flag(&mut self, flag: &str) -> bool {
+        let flag = flag.trim();
+        if flag.is_empty() {
+            return false;
+        }
+
+        let changed = self.save_data.cutscenes.flags.insert(flag.to_owned());
+        if changed {
+            self.request_save();
+        }
+        changed
     }
 
     pub fn complete_codex_scan(&mut self, codex_id: &str) -> bool {
@@ -623,6 +682,7 @@ impl GameContext {
 
     fn replace_save_data(&mut self, save_path: PathBuf, save_data: SaveData) {
         let codex_database = self.codex_database.clone();
+        let cutscene_database = self.cutscene_database.clone();
         let objective_database = self.objective_database.clone();
         *self = Self::from_save_with_objectives(
             save_path,
@@ -630,6 +690,7 @@ impl GameContext {
             codex_database,
             objective_database,
         );
+        self.cutscene_database = cutscene_database;
     }
 
     fn apply_scan_profile_progress(&mut self, codex_id: &str) {
@@ -1020,7 +1081,10 @@ impl SceneStack {
 }
 
 fn is_overlay_scene(scene_id: SceneId) -> bool {
-    matches!(scene_id, SceneId::GameMenu | SceneId::Pause)
+    matches!(
+        scene_id,
+        SceneId::GameMenu | SceneId::Pause | SceneId::Cutscene
+    )
 }
 
 fn is_field_scene(scene_id: SceneId) -> bool {
@@ -1060,6 +1124,7 @@ fn create_scene(scene_id: SceneId, ctx: &GameContext) -> Result<Box<dyn Scene>> 
         SceneId::Overworld => Ok(Box::new(OverworldScene::new(ctx)?)),
         SceneId::Facility => Ok(Box::new(FacilityScene::new(ctx)?)),
         SceneId::GameMenu => Ok(Box::new(GameMenuScene::new(ctx))),
+        SceneId::Cutscene => Ok(Box::new(CutsceneScene::new(ctx)?)),
         SceneId::Inventory => Ok(Box::new(InventoryScene::new(ctx))),
         SceneId::Profile => Ok(Box::new(ProfileScene::new(ctx))),
         SceneId::Pause | SceneId::Codex => Ok(Box::new(PauseScene::new())),
@@ -1156,6 +1221,36 @@ mod tests {
             starting_bio + 6
         );
         assert!(ctx.scanned_codex_ids.contains("codex.flora.glowfungus"));
+    }
+
+    #[test]
+    fn cutscene_requests_use_database_and_seen_flags() {
+        let mut ctx = GameContext::default();
+
+        assert!(ctx.request_cutscene_once("intro.new_game"));
+        assert_eq!(
+            ctx.pending_cutscene_definition()
+                .map(|cutscene| cutscene.id),
+            Some("intro.new_game".to_owned())
+        );
+
+        ctx.clear_pending_cutscene("different.cutscene");
+        assert!(ctx.pending_cutscene_definition().is_some());
+        ctx.clear_pending_cutscene("intro.new_game");
+        assert!(ctx.pending_cutscene_definition().is_none());
+
+        assert!(ctx.mark_cutscene_seen("intro.new_game"));
+        assert!(!ctx.request_cutscene_once("intro.new_game"));
+    }
+
+    #[test]
+    fn cutscene_flags_ignore_empty_values() {
+        let mut ctx = GameContext::default();
+
+        assert!(!ctx.mark_cutscene_flag("  "));
+        assert!(ctx.mark_cutscene_flag("intro.played"));
+        assert!(!ctx.mark_cutscene_flag("intro.played"));
+        assert!(ctx.save_data.cutscenes.flags.contains("intro.played"));
     }
 
     #[test]

@@ -6,7 +6,9 @@ mod ui;
 mod world;
 
 use anyhow::{Result, anyhow, bail};
-use content::{CodexDatabase, DEFAULT_CODEX_DB_PATH, semantics};
+use content::{
+    CodexDatabase, CutsceneDatabase, DEFAULT_CODEX_DB_PATH, DEFAULT_CUTSCENE_DB_PATH, semantics,
+};
 use runtime::{Camera2d, Game, InputState, Renderer, run};
 use save::{DEFAULT_SAVE_PATH, SaveData};
 use scenes::{GameContext, SceneId, SceneStack};
@@ -119,6 +121,7 @@ impl AlienArchiveApp {
         let save_path = save_path();
         let save_data = SaveData::load_or_default(&save_path);
         let mut context = GameContext::from_save(save_path, save_data, load_codex_database());
+        context.cutscene_database = load_cutscene_database();
 
         let scenes = if let Some(scene_id) = options.scene {
             apply_launch_options_to_context(&mut context, scene_id, options);
@@ -165,6 +168,16 @@ fn load_codex_database() -> CodexDatabase {
         Err(error) => {
             eprintln!("codex database load failed: {error:?}");
             CodexDatabase::new("Overworld")
+        }
+    }
+}
+
+fn load_cutscene_database() -> CutsceneDatabase {
+    match CutsceneDatabase::load(std::path::Path::new(DEFAULT_CUTSCENE_DB_PATH)) {
+        Ok(database) => database,
+        Err(error) => {
+            eprintln!("cutscene database load failed: {error:?}");
+            CutsceneDatabase::default()
         }
     }
 }

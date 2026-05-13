@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use content::{self, AssetDatabase, CodexDatabase, LayerKind, MapDocument};
+use content::{self, AssetDatabase, CodexDatabase, CutsceneDatabase, LayerKind, MapDocument};
 use eframe::egui::{Color32, Pos2, Rect, TextureHandle, Vec2};
 
 use super::{config::EditorConfig, maps::MapListEntry};
@@ -311,9 +311,27 @@ impl LeftSidebarTab {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum EditorWorkspace {
+    OverworldMap,
+    Cutscenes,
+}
+
+impl EditorWorkspace {
+    pub(crate) const ALL: [Self; 2] = [Self::OverworldMap, Self::Cutscenes];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::OverworldMap => "Overworld Map",
+            Self::Cutscenes => "Cutscenes",
+        }
+    }
+}
+
 pub(crate) struct EditorApp {
     pub(crate) native_menu: native_menu::NativeMenu,
     pub(crate) project_root: PathBuf,
+    pub(crate) active_workspace: EditorWorkspace,
     pub(crate) map_path: PathBuf,
     pub(crate) map_entries: Vec<MapListEntry>,
     pub(crate) selected_map_path: PathBuf,
@@ -329,6 +347,10 @@ pub(crate) struct EditorApp {
     pub(crate) asset_db_dirty: bool,
     pub(crate) codex_database: Option<CodexDatabase>,
     pub(crate) codex_db_status: String,
+    pub(crate) cutscene_database: CutsceneDatabase,
+    pub(crate) cutscene_db_dirty: bool,
+    pub(crate) cutscene_search: String,
+    pub(crate) selected_cutscene_index: Option<usize>,
     pub(crate) show_asset_dialog: bool,
     pub(crate) show_unregistered_assets: bool,
     pub(crate) show_asset_dependency_report: bool,

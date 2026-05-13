@@ -1,14 +1,15 @@
-# Alien Archive 地图编辑器改进路线
+# Alien Archive Game Editor 改进路线
 
 最后更新：2026-05-10
 
-本文只讨论 `Alien Archive` 专用 Overworld 地图编辑器。当前方向仍然是：
+本文记录 `Alien Archive Game Editor` 的编辑器路线。当前已经落地的是 `Overworld Map` 和 `Cutscenes` 工作区；后续 Dialogues、Events、Actors、Assets 等内容编辑也应该进入同一个 Game Editor 壳层。当前方向仍然是：
 
 - 编辑器代码放在 `crates/editor`
 - 资源索引放在 `assets/data/assets/overworld_assets.ron`
 - 地图保存为 `assets/data/maps/*.ron`
+- 过场保存为 `crates/content/data/cutscenes.ron`
 - 运行时代码直接读取编辑器产出的 RON
-- 不把它扩成通用地图编辑器、通用引擎或 JSON 管线
+- 不把它扩成通用地图编辑器、通用引擎编辑器或 JSON 管线
 
 ## 对照对象
 
@@ -44,6 +45,7 @@
 
 - 文件工作流：新建、打开、保存、另存、删除、还原、最近地图、自动保存、autosave 启动恢复/丢弃。
 - 地图格式：`MapDocument` 包含 `Ground` / `Decals` / `Objects` / `Entities` / `Zones` / `Collision` 六类层。
+- 过场格式：`CutsceneDatabase` 已有 Game Editor 内置工作区，可编辑 `FadeIn` / `FadeOut` / `Wait` / `TextPanel` / `SetFlag` 步骤，保存到 `crates/content/data/cutscenes.ron`。Cutscenes 工作区只负责源文本，不在同一界面同时维护多语言翻译。
 - 资产格式：`AssetDefinition` 已有 `kind`、`default_layer`、`default_size`、`footprint`、`anchor`、`snap`、`tags`、`entity_type`、`codex_id`。
 - 画布工具：选择、画笔、油漆桶、矩形、橡皮、吸管、碰撞、区域、平移、缩放。
 - 编辑能力：撤销/重做、复制/粘贴、duplicate、拖拽移动、框选、多选、翻转、旋转、重置、z-index。
@@ -51,7 +53,7 @@
 - 层面板：按层显示/隐藏、锁定、选择当前层。
 - Inspector：地图属性、资产属性、单选实例属性、多选属性、碰撞/实体/区域相关属性。
 - 验证：能检查空地图 id、无效尺寸、越界、重复 id、未知资产、资产类型/默认层不匹配、实体类型为空、scale 非法、区域点数过少等。
-- UI 组件层：`crates/editor/src/ui` 是 Alien Archive Editor 自己的组件层。`egui` 只作为底层 immediate-mode GUI，长期不要在业务面板里反复手写 tabs、toolbar button、property row 等常见控件。
+- UI 组件层：`crates/editor/src/ui` 是 Alien Archive Game Editor 自己的组件层。`egui` 只作为底层 immediate-mode GUI，长期不要在业务面板里反复手写 tabs、toolbar button、property row 等常见控件。
 - 面板拆分：左侧 `资源库 / 图层 / 对象` 面板已经从 `main.rs` 移到 `crates/editor/src/panels.rs`，右侧 Inspector 已移到 `crates/editor/src/inspector.rs`，弹窗和素材草稿编辑已移到 `crates/editor/src/dialogs.rs`。
 - Canvas 拆分：画布绘制、输入处理、hit test、工具操作和坐标转换已经从 `main.rs` 移到 `crates/editor/src/canvas/editor.rs`，纯绘制 helper 保留在 `crates/editor/src/canvas/rendering.rs`。Canvas 绘制已引入可见区域裁剪：Ground/Collision 按当前 tile bounds 跳过视口外单元，Decals/Objects/Entities/Zones/Entity Bounds 按 screen rect 跳过视口外实例，对象和实体会先裁剪再排序。下一步在 canvas 内继续拆 `viewport / input / hit_test / tools / overlays`。
 
@@ -63,7 +65,7 @@
 
 编辑器会长期迭代，不能每个面板都直接拼裸 `egui` 控件。约定如下：
 
-- `crates/editor/src/ui` 是专用设计系统层，不追求通用 GUI 框架，只服务 Alien Archive Editor。
+- `crates/editor/src/ui` 是专用设计系统层，不追求通用 GUI 框架，只服务 Alien Archive Game Editor。
 - 业务代码优先调用 `ui/*` 组件；只有临时验证或一次性布局才直接写裸 `egui::Button` / `selectable_value` / 自绘 painter。
 - 已有 `ui/tabs.rs`，用于 editor 风格 tab bar。左侧栏的 `资源库 / 图层 / 对象` 已使用它。
 - 已有 `ui/buttons.rs`、`ui/header.rs`、`ui/fields.rs`、`ui/search.rs`、`ui/tree.rs`、`ui/sections.rs`，分别承担紧凑按钮、面板标题、属性行、搜索框、对象列表行和 Inspector 分段。
@@ -400,11 +402,11 @@ Godot 的 TileSet property painting 对我们很有参考价值：
 
 短期不要做：
 
-- 通用地图编辑器。
+- 通用地图编辑器或通用游戏引擎编辑器。
 - 兼容 TMX / LDtk / Unity / Godot 导入导出。
 - 完整脚本系统。
 - 复杂 node graph。
 - 程序化世界生成。
 - 不被运行时代码读取的漂亮字段。
 
-编辑器的价值应该始终回到一个问题：它能不能更快、更不容易出错地生产 `Alien Archive` 运行时真实使用的 Overworld RON 地图。
+编辑器的价值应该始终回到一个问题：它能不能更快、更不容易出错地生产 `Alien Archive` 运行时真实使用的内容；当前重点是 Overworld RON 地图，接下来会逐步包含过场、事件、对话和资产配置。

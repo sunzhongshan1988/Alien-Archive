@@ -34,7 +34,7 @@ game -> runtime + content
   owns executable game, save model, player, world runtime adapter, scene stack, gameplay systems, UI
 
 editor -> content
-  owns eframe overworld map editor, asset registry, canvas tools, inspector, validation UI
+  owns eframe game editor, current Overworld workspace, asset registry, canvas tools, inspector, validation UI
 
 tools
   owns asset generation/maintenance helpers; not runtime gameplay code
@@ -49,6 +49,7 @@ assets/data/maps/*.ron                         map documents loaded by game/edit
 assets/data/assets/overworld_assets.ron        asset database used by game/editor
 assets/data/codex/overworld_codex.ron          codex database loaded by game/editor
 assets/data/ui/localization.ron                runtime UI localization dictionary
+crates/content/data/cutscenes.ron              bundled cutscene/sequence database
 crates/content/data/items.ron                  item database fallback/source
 crates/content/data/objectives.ron             objective database fallback/source
 saves/profile_01.ron                           default save file
@@ -63,6 +64,7 @@ crates/game/src/main.rs
   GameLaunchOptions::from_env_and_args
   SaveData::load_or_default
   CodexDatabase::load
+  CutsceneDatabase::load
   GameContext::from_save
   SceneStack::new_main_menu OR SceneStack::new_scene
   runtime::run
@@ -103,6 +105,7 @@ Overlay scenes:
 ```text
 SceneId::GameMenu
 SceneId::Pause
+SceneId::Cutscene
 ```
 
 Overlay render order:
@@ -169,6 +172,9 @@ rewards.rs
 scan_system.rs
   nearby codex target detection, scan progress, scan UI, completion handoff to GameContext
 
+cutscene_scene.rs
+  fullscreen/overlay cutscene playback; consumes pending cutscenes from GameContext and marks seen/flags
+
 zone_system.rs
   hazard/prompt/objective zone execution and once-per-map scoped progress
 
@@ -196,6 +202,9 @@ facility_scene.rs
 
 game_menu_scene.rs
   game menu overlay orchestrator only; see docs/GAME_MENU_ARCHITECTURE.md for component split
+
+cutscene_scene.rs
+  blocking sequence scene for fades, text panels, waits, flags, and completion scene switches
 
 inventory_scene.rs
   standalone inventory scene; older/larger than game menu inventory helpers
@@ -236,6 +245,9 @@ map.rs
 codex.rs
   CodexDatabase and CodexEntry
 
+cutscenes.rs
+  CutsceneDatabase, CutsceneDefinition, CutsceneStep, localized text, completion action
+
 items.rs
   ItemDatabase, item definitions, consumable effects, equipment module checks
 
@@ -255,13 +267,16 @@ Content crate rule: add schema fields here first, add validation second, adapt g
 
 ```text
 crates/editor/src/main.rs
-  eframe app wiring and many UI flows; large legacy coordinator
+  eframe app wiring, workspace switching, and many UI flows; large legacy coordinator
 
 app/
   commands, config, maps, model, outliner, state structs
 
 assets/
   draft/import/labels/thumbnails for asset database editing
+
+cutscenes.rs
+  Cutscenes workspace UI; edits crates/content/data/cutscenes.ron through content::CutsceneDatabase; author source text only, not per-language translation fields
 
 canvas/
   editing operations and canvas rendering
@@ -276,7 +291,7 @@ inspector.rs, panels.rs, dialogs.rs
   editor side panels and modal flows
 ```
 
-Editor scope rule: this is the Alien Archive overworld map production tool, not a generic map editor. Prefer game-readback-compatible RON changes over schema-only UI.
+Editor scope rule: this is the Alien Archive Game Editor. The shipped workspaces are Overworld Map and Cutscenes. New authoring surfaces such as dialogues, events, actors, and assets should live under the same game editor shell when they share runtime content. Do not turn it into a generic engine editor; prefer game-readback-compatible RON changes over schema-only UI.
 
 ## Change Routing
 
@@ -295,6 +310,12 @@ Need new scan/codex behavior
 
 Need new objective behavior
   content/src/objectives.rs -> game/src/objectives.rs -> zone_system or scan/pickup hooks -> menu rows
+
+Need new cutscene/flow sequence
+  content/src/cutscenes.rs or crates/content/data/cutscenes.ron -> editor/src/cutscenes.rs for authoring -> GameContext::request_cutscene_once -> SceneCommand::Push(SceneId::Cutscene) -> cutscene_scene.rs
+
+Need translation/localization editing
+  Language workspace should own multi-language translation and proofreading for all authored text; do not add parallel English/Chinese text editors inside feature workspaces such as Cutscenes
 
 Need persistent runtime state
   save.rs schema/default/normalize -> GameContext methods -> call request_save -> tests for load/save/normalize
@@ -321,6 +342,7 @@ Use `GameContext` for runtime mutations that affect save data:
 
 ```text
 complete_codex_scan
+request_cutscene_once / mark_cutscene_seen / mark_cutscene_flag
 add_inventory_item
 set_inventory_save
 use_selected_quickbar_item path
@@ -335,6 +357,7 @@ derived profile sync
 inventory load meter sync
 activity log entry
 objective/codex mirrored state
+cutscene seen/flag state
 save dirty/requested flags
 world location update
 ```
@@ -380,11 +403,14 @@ Useful scoped tests:
 
 ```powershell
 cargo test -p alien_archive game_menu
+cargo test -p alien_archive cutscene
 cargo test -p alien_archive scan_system
 cargo test -p alien_archive zone_system
 cargo test -p alien_archive quick_items
+cargo test -p alien_archive_content cutscene
 cargo test -p alien_archive_content validation
 cargo test -p editor
+cargo check -p editor
 ```
 
 Launch examples:

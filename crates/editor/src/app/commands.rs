@@ -1,6 +1,6 @@
 use content::LayerKind;
 
-use super::state::{BatchAlignMode, BatchDistributeMode};
+use super::state::{BatchAlignMode, BatchDistributeMode, EditorWorkspace};
 use crate::tools::ToolKind;
 
 #[allow(dead_code)]
@@ -31,6 +31,7 @@ pub(crate) enum MenuCommand {
     ToggleZones,
     ToggleZoneLabels,
     ResetView,
+    SetWorkspace(EditorWorkspace),
     ValidateMap,
     SetLayer(LayerKind),
     SetTool(ToolKind),
