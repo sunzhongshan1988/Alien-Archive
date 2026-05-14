@@ -50,38 +50,72 @@ impl EditorApp {
         }
 
         if let Some(recovery) = self.autosave_recovery.clone() {
-            egui::Window::new("发现自动保存")
-                .collapsible(false)
-                .resizable(false)
-                .default_width(520.0)
+            let frame = egui::Frame::popup(ctx.global_style().as_ref())
+                .inner_margin(egui::Margin::symmetric(14, 12));
+            egui::Modal::new(egui::Id::new("autosave_recovery_modal"))
+                .frame(frame)
                 .show(ctx, |ui| {
+                    ui.set_width(520.0);
+                    ui.label(egui::RichText::new("发现自动保存").size(16.0).strong());
+                    ui.separator();
                     ui.label("检测到比主文件更新的自动保存。");
                     ui.separator();
                     ui.label("主文件");
                     ui.monospace(display_project_path(&self.project_root, &recovery.map_path));
+                    ui.add_space(4.0);
                     ui.label("自动保存");
                     ui.monospace(display_project_path(
                         &self.project_root,
                         &recovery.autosave_path,
                     ));
+                    ui.add_space(4.0);
                     ui.label(format!(
                         "自动保存比主文件新 {}",
                         format_duration(recovery.newer_by)
                     ));
+                    ui.add_space(8.0);
                     ui.separator();
-                    ui.horizontal(|ui| {
-                        if ui.button("恢复自动保存").clicked() {
-                            self.restore_autosave(recovery.clone());
-                        }
-                        if ui.button("丢弃自动保存").clicked() {
-                            self.discard_autosave(recovery.clone());
-                        }
+                    ui.add_space(6.0);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("稍后").clicked() {
                             self.autosave_recovery = None;
                             self.status = "已暂时忽略自动保存，文件仍保留".to_owned();
                         }
+                        if ui.button("丢弃自动保存").clicked() {
+                            self.discard_autosave(recovery.clone());
+                        }
+                        if ui.button("恢复自动保存").clicked() {
+                            self.restore_autosave(recovery.clone());
+                        }
                     });
                 });
+        }
+
+        if self.show_global_settings {
+            match standard_modal(
+                ctx,
+                "global_settings_modal",
+                "全局设置",
+                640.0,
+                0.0,
+                |ui| {
+                    self.draw_global_settings_panel(ui);
+                },
+            ) {
+                EditorModalAction::None => {}
+                EditorModalAction::Save => {
+                    if self.apply_global_settings("全局设置已保存") {
+                        self.show_global_settings = false;
+                    }
+                }
+                EditorModalAction::Apply => {
+                    self.apply_global_settings("全局设置已应用");
+                }
+                EditorModalAction::Cancel => {
+                    self.cancel_global_settings();
+                    self.show_global_settings = false;
+                }
+            }
         }
 
         if let Some(path) = self.open_confirm_path.clone() {
@@ -263,6 +297,70 @@ impl EditorApp {
                     }
                 });
         }
+    }
+
+    fn draw_global_settings_panel(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.set_width(128.0);
+                for section in GlobalSettingsSection::ALL {
+                    if ui
+                        .selectable_label(self.active_settings_section == section, section.label())
+                        .clicked()
+                    {
+                        self.active_settings_section = section;
+                    }
+                }
+            });
+            ui.separator();
+            ui.vertical(|ui| {
+                ui.set_min_width(360.0);
+                ui.heading(self.active_settings_section.label());
+                match self.active_settings_section {
+                    GlobalSettingsSection::System => self.draw_system_settings_panel(ui),
+                }
+            });
+        });
+    }
+
+    fn draw_system_settings_panel(&mut self, ui: &mut egui::Ui) {
+        inspector_section(ui, "语言设置");
+        ui.horizontal(|ui| {
+            ui.label("界面语言");
+            egui::ComboBox::from_id_salt("global_settings_language")
+                .width(180.0)
+                .selected_text(self.settings_language_draft.label())
+                .show_ui(ui, |ui| {
+                    for language in EditorLanguage::ALL {
+                        ui.selectable_value(
+                            &mut self.settings_language_draft,
+                            language,
+                            language.label(),
+                        );
+                    }
+                });
+        });
+        ui.colored_label(THEME_MUTED_TEXT, "当前版本使用简体中文。");
+    }
+
+    fn apply_global_settings(&mut self, success_status: &str) -> bool {
+        let language = self.settings_language_draft;
+        self.editor_language = language;
+        self.config.language = language.config_key().to_owned();
+        match save_editor_config(&self.project_root, &self.config) {
+            Ok(()) => {
+                self.status = success_status.to_owned();
+                true
+            }
+            Err(error) => {
+                self.status = format!("保存语言设置失败：{error:?}");
+                false
+            }
+        }
+    }
+
+    fn cancel_global_settings(&mut self) {
+        self.settings_language_draft = self.editor_language;
     }
 
     fn draw_asset_draft_editor(&mut self, ui: &mut egui::Ui, ctx: &EguiContext) {

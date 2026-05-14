@@ -333,6 +333,49 @@ impl EditorWorkspace {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum GlobalSettingsSection {
+    System,
+}
+
+impl GlobalSettingsSection {
+    pub(crate) const ALL: [Self; 1] = [Self::System];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::System => "系统设置",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum EditorLanguage {
+    SimplifiedChinese,
+}
+
+impl EditorLanguage {
+    pub(crate) const ALL: [Self; 1] = [Self::SimplifiedChinese];
+
+    pub(crate) fn from_config(value: &str) -> Self {
+        match value {
+            "zh-Hans" | "zh_CN" | "zh-CN" => Self::SimplifiedChinese,
+            _ => Self::SimplifiedChinese,
+        }
+    }
+
+    pub(crate) fn config_key(self) -> &'static str {
+        match self {
+            Self::SimplifiedChinese => "zh-Hans",
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::SimplifiedChinese => "简体中文",
+        }
+    }
+}
+
 pub(crate) struct EditorApp {
     pub(crate) native_menu: native_menu::NativeMenu,
     pub(crate) project_root: PathBuf,
@@ -362,6 +405,10 @@ pub(crate) struct EditorApp {
     pub(crate) event_search: String,
     pub(crate) selected_event_index: Option<usize>,
     pub(crate) objective_database: ObjectiveDatabase,
+    pub(crate) show_global_settings: bool,
+    pub(crate) active_settings_section: GlobalSettingsSection,
+    pub(crate) editor_language: EditorLanguage,
+    pub(crate) settings_language_draft: EditorLanguage,
     pub(crate) show_asset_dialog: bool,
     pub(crate) show_unregistered_assets: bool,
     pub(crate) show_asset_dependency_report: bool,

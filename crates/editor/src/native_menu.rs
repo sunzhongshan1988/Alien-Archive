@@ -257,6 +257,16 @@ fn build_menu(workspace: EditorWorkspace) -> muda::Result<muda::Menu> {
         ],
     )?;
 
+    let settings_menu = Submenu::with_items(
+        "设置",
+        true,
+        &[&menu_item(
+            "settings.global",
+            "全局设置",
+            Some("CmdOrCtrl+,"),
+        )],
+    )?;
+
     let map_menu = Submenu::with_items(
         "地图",
         true,
@@ -373,6 +383,7 @@ fn build_menu(workspace: EditorWorkspace) -> muda::Result<muda::Menu> {
             menu.append(&event_menu)?;
         }
     }
+    menu.append(&settings_menu)?;
     menu.append(&help_menu)?;
     Ok(menu)
 }
@@ -424,6 +435,7 @@ fn command_for_id(id: &str) -> Option<MenuCommand> {
         "workspace.map" => MenuCommand::SetWorkspace(EditorWorkspace::OverworldMap),
         "workspace.cutscenes" => MenuCommand::SetWorkspace(EditorWorkspace::Cutscenes),
         "workspace.events" => MenuCommand::SetWorkspace(EditorWorkspace::Events),
+        "settings.global" => MenuCommand::OpenGlobalSettings,
         "map.validate" => MenuCommand::ValidateMap,
         "map.reload_codex" => MenuCommand::ReloadCodexDatabase,
         "layer.ground" => MenuCommand::SetLayer(LayerKind::Ground),

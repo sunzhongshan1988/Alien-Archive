@@ -32,6 +32,7 @@ pub(crate) enum MenuCommand {
     ToggleZoneLabels,
     ResetView,
     SetWorkspace(EditorWorkspace),
+    OpenGlobalSettings,
     ValidateMap,
     ReloadCodexDatabase,
     SetLayer(LayerKind),

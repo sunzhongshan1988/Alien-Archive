@@ -4,16 +4,13 @@ use content::{CutsceneCompletion, CutsceneDefinition, CutsceneStep, CutsceneText
 
 use super::*;
 use crate::ui::{
-    command_bar::{
-        CommandBadgeStatus, command_bar, command_button, command_status_badge,
-        enabled_command_button,
-    },
+    buttons::{LUCIDE_TRASH_2_URI, editor_svg_icon_button_at},
     fields::property_row,
     panel_surface::{
         detail_surface, empty_state, panel_header as surface_panel_header, panel_surface,
     },
     property_grid,
-    resource_list::{resource_list_header, resource_row, resource_search},
+    resource_list::{resource_row, resource_search},
     rule_card::{add_rule_menu, card_gap, card_section_header, compact_card_button, rule_card},
     validation_panel::{ValidationLevel, ValidationMessage, info_panel, validation_panel},
 };
@@ -253,6 +250,7 @@ impl EditorApp {
     }
 
     fn draw_cutscene_list_scroll(&mut self, ui: &mut egui::Ui, rows: Vec<CutsceneListRow>) {
+        let mut pending_delete = None;
         egui::ScrollArea::vertical()
             .id_salt("cutscene_list_scroll")
             .auto_shrink([false, false])
@@ -270,83 +268,34 @@ impl EditorApp {
                         resource_row(ui, selected, &label, &detail, Vec::new()).on_hover_text(
                             format!("{} 个步骤 / 完成后 {}", row.step_count, row.completion),
                         );
-                    if response.clicked() {
+                    let delete_rect = Rect::from_center_size(
+                        Pos2::new(response.rect.right() - 16.0, response.rect.center().y),
+                        vec2(24.0, 24.0),
+                    );
+                    if editor_svg_icon_button_at(ui, delete_rect, LUCIDE_TRASH_2_URI, "删除过场")
+                        .clicked()
+                    {
+                        pending_delete = Some(row.index);
+                        break;
+                    } else if response.clicked() {
                         self.selected_cutscene_index = Some(row.index);
                     }
                 }
             });
+        if let Some(index) = pending_delete {
+            self.selected_cutscene_index = Some(index);
+            self.delete_selected_cutscene();
+        }
     }
 
     fn draw_cutscene_list_panel(&mut self, ui: &mut egui::Ui) {
-        let search = self.cutscene_search.trim().to_ascii_lowercase();
-        let visible_count = self
-            .cutscene_database
-            .cutscenes()
-            .iter()
-            .filter(|cutscene| cutscene_matches_search(cutscene, &search))
-            .count();
-        resource_list_header(
-            ui,
-            "过场",
-            &display_project_path(&self.project_root, &self.cutscene_db_path()),
-            visible_count,
-            self.cutscene_database.cutscenes().len(),
-            self.cutscene_db_dirty,
-        );
-        command_bar(ui, |ui| {
-            if command_button(ui, "新增").clicked() {
-                self.add_cutscene();
-            }
-            if enabled_command_button(
-                ui,
-                self.normalized_selected_cutscene_index().is_some(),
-                "复制",
-            )
-            .clicked()
-            {
-                self.duplicate_selected_cutscene();
-            }
-            if enabled_command_button(
-                ui,
-                self.normalized_selected_cutscene_index().is_some(),
-                "删除",
-            )
-            .clicked()
-            {
-                self.delete_selected_cutscene();
-            }
-        });
-        command_bar(ui, |ui| {
-            if enabled_command_button(ui, self.cutscene_db_dirty, "保存").clicked() {
-                self.save_cutscene_database();
-            }
-            if command_button(ui, "重载").clicked() {
-                self.reload_cutscene_database();
-            }
-            if command_button(ui, "校验").clicked() {
-                self.validate_cutscene_database_command();
-            }
-            command_status_badge(
-                ui,
-                if self.cutscene_db_dirty {
-                    "未保存"
-                } else {
-                    "已保存"
-                },
-                if self.cutscene_db_dirty {
-                    CommandBadgeStatus::Dirty
-                } else {
-                    CommandBadgeStatus::Ok
-                },
-            );
-        });
-        ui.separator();
         resource_search(
             ui,
             &mut self.cutscene_search,
             "搜索 id / 文本 / 标记 / 场景",
         );
         ui.separator();
+        let search = self.cutscene_search.trim().to_ascii_lowercase();
 
         let rows = self
             .cutscene_database

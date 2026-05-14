@@ -35,10 +35,11 @@ use app::{
     },
     state::{
         AssetCatalogEntry, AssetDependencyReport, AssetReferenceIssue, AutosaveRecovery,
-        BatchAlignMode, BatchDistributeMode, ClipboardItem, EditorApp, EditorWorkspace,
-        LayerUiState, LeftSidebarTab, MoveOrigin, MultiMoveDrag, NewMapDraft, OutlinerBadge,
-        OutlinerEntry, ResizeDrag, SelectedItem, SelectionMarquee, StampCaptureDrag, StampItem,
-        StampPattern, ZoneVertexDrag, default_layer_states,
+        BatchAlignMode, BatchDistributeMode, ClipboardItem, EditorApp, EditorLanguage,
+        EditorWorkspace, GlobalSettingsSection, LayerUiState, LeftSidebarTab, MoveOrigin,
+        MultiMoveDrag, NewMapDraft, OutlinerBadge, OutlinerEntry, ResizeDrag, SelectedItem,
+        SelectionMarquee, StampCaptureDrag, StampItem, StampPattern, ZoneVertexDrag,
+        default_layer_states,
     },
 };
 use asset_registry::{AssetEntry, AssetRegistry};
@@ -71,6 +72,7 @@ use ui::command_bar::{
 use ui::fields::{property_options, property_text_edit};
 use ui::header::panel_header;
 use ui::layer_row::layer_row;
+use ui::modal::{EditorModalAction, standard_modal};
 use ui::search::search_field;
 use ui::sections::inspector_section;
 use ui::side_rail::collapsed_side_rail;
@@ -122,6 +124,7 @@ impl EditorApp {
         let map_path = project_root.join(DEFAULT_MAP_PATH);
         let map_entries = scan_map_entries(&project_root);
         let config = load_editor_config(&project_root);
+        let editor_language = EditorLanguage::from_config(&config.language);
         let asset_database = AssetDatabase::load(&project_root.join(DEFAULT_ASSET_DB_PATH))
             .unwrap_or_else(|error| {
                 eprintln!("asset database load failed: {error:?}");
@@ -177,6 +180,10 @@ impl EditorApp {
             event_search: String::new(),
             selected_event_index: Some(0),
             objective_database,
+            show_global_settings: false,
+            active_settings_section: GlobalSettingsSection::System,
+            editor_language,
+            settings_language_draft: editor_language,
             show_asset_dialog: false,
             show_unregistered_assets: false,
             show_asset_dependency_report: false,
@@ -528,6 +535,7 @@ impl EditorApp {
             MenuCommand::SetWorkspace(workspace) => {
                 self.set_active_workspace(workspace, ctx);
             }
+            MenuCommand::OpenGlobalSettings => self.open_global_settings(),
             MenuCommand::ValidateMap => {
                 self.validation_issues = self.validate_current_map();
                 self.show_validation_panel = true;
@@ -578,6 +586,11 @@ impl EditorApp {
         ctx.request_repaint();
     }
 
+    fn open_global_settings(&mut self) {
+        self.settings_language_draft = self.editor_language;
+        self.show_global_settings = true;
+    }
+
     fn rebuild_native_menu_if_needed(&mut self) {
         if let Some(workspace) = self.pending_native_menu_workspace.take() {
             self.native_menu.set_workspace(workspace);
@@ -586,7 +599,9 @@ impl EditorApp {
 
     fn command_available_in_workspace(&self, command: MenuCommand) -> bool {
         match command {
-            MenuCommand::Save | MenuCommand::SetWorkspace(_) => true,
+            MenuCommand::Save | MenuCommand::SetWorkspace(_) | MenuCommand::OpenGlobalSettings => {
+                true
+            }
             MenuCommand::NewCutscene
             | MenuCommand::DuplicateCutscene
             | MenuCommand::DeleteCutscene
@@ -2081,6 +2096,7 @@ impl EditorApp {
                         self.draw_event_menu(ui);
                     }
                 }
+                self.draw_settings_menu(ui);
                 self.draw_help_menu(ui);
             },
         );
@@ -2571,6 +2587,15 @@ impl EditorApp {
             }
             if ui.button("校验").clicked() {
                 self.validate_event_database_command();
+                ui.close();
+            }
+        });
+    }
+
+    fn draw_settings_menu(&mut self, ui: &mut egui::Ui) {
+        menu_bar_button(ui, "设置", |ui| {
+            if ui.button("全局设置").clicked() {
+                self.open_global_settings();
                 ui.close();
             }
         });

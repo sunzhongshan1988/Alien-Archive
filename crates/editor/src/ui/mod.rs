@@ -4,6 +4,7 @@ pub(crate) mod command_bar;
 pub(crate) mod fields;
 pub(crate) mod header;
 pub(crate) mod layer_row;
+pub(crate) mod modal;
 pub(crate) mod panel_surface;
 pub(crate) mod property_grid;
 pub(crate) mod resource_list;

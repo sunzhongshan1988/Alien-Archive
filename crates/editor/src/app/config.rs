@@ -3,9 +3,20 @@ use std::{fs, path::Path};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
+#[serde(default)]
 pub(crate) struct EditorConfig {
     pub(crate) recent_maps: Vec<String>,
+    pub(crate) language: String,
+}
+
+impl Default for EditorConfig {
+    fn default() -> Self {
+        Self {
+            recent_maps: Vec::new(),
+            language: "zh-Hans".to_owned(),
+        }
+    }
 }
 
 pub(crate) fn editor_config_path(project_root: &Path) -> std::path::PathBuf {
