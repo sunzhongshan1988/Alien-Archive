@@ -2,6 +2,7 @@ use super::*;
 
 impl EditorApp {
     fn draw_asset_panel(&mut self, ui: &mut egui::Ui) {
+        crate::ui::panel_surface::panel_header(ui, "资源库", Some("Assets"));
         ui.small(format!("{} 个 metadata 素材", self.registry.assets().len()));
         search_field(ui, &mut self.asset_search, "搜索 id / tag / path");
         let search = self.asset_search.to_ascii_lowercase();
@@ -104,6 +105,7 @@ impl EditorApp {
     }
 
     fn draw_layer_panel(&mut self, ui: &mut egui::Ui) {
+        crate::ui::panel_surface::panel_header(ui, "图层", Some("Layers"));
         for layer in LayerKind::ALL {
             let count = self.layer_item_count(layer);
             let state = self.layer_states.entry(layer).or_default();
@@ -127,6 +129,7 @@ impl EditorApp {
     }
 
     fn draw_outliner_panel(&mut self, ui: &mut egui::Ui) {
+        crate::ui::panel_surface::panel_header(ui, "对象", Some("Outliner"));
         search_field(
             ui,
             &mut self.outliner_search,

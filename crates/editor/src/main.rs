@@ -65,6 +65,9 @@ use ui::buttons::{
     LUCIDE_EYE_OFF_URI, LUCIDE_EYE_URI, LUCIDE_TRASH_2_URI, editor_icon_button,
     editor_svg_icon_button_at,
 };
+use ui::command_bar::{
+    CommandBadgeStatus, command_bar, command_button, command_status_badge, enabled_command_button,
+};
 use ui::fields::{property_options, property_text_edit};
 use ui::header::panel_header;
 use ui::layer_row::layer_row;
@@ -2609,21 +2612,36 @@ impl EditorApp {
                 ui.set_height(TOOLBAR_HEIGHT);
                 if self.active_workspace == EditorWorkspace::Cutscenes {
                     toolbar_label(ui, "过场");
-                    if toolbar_command_button(ui, "新增", 48.0).clicked() {
-                        self.add_cutscene();
-                    }
-                    if toolbar_command_button(ui, "保存", 48.0)
-                        .on_hover_text("保存 cutscenes.ron")
-                        .clicked()
-                    {
-                        self.save_cutscene_database();
-                    }
-                    if toolbar_command_button(ui, "重载", 48.0)
-                        .on_hover_text("从 cutscenes.ron 重新加载")
-                        .clicked()
-                    {
-                        self.reload_cutscene_database();
-                    }
+                    command_bar(ui, |ui| {
+                        if command_button(ui, "新增").clicked() {
+                            self.add_cutscene();
+                        }
+                        if enabled_command_button(ui, self.cutscene_db_dirty, "保存")
+                            .on_hover_text("保存 cutscenes.ron")
+                            .clicked()
+                        {
+                            self.save_cutscene_database();
+                        }
+                        if command_button(ui, "重载")
+                            .on_hover_text("从 cutscenes.ron 重新加载")
+                            .clicked()
+                        {
+                            self.reload_cutscene_database();
+                        }
+                        command_status_badge(
+                            ui,
+                            if self.cutscene_db_dirty {
+                                "dirty"
+                            } else {
+                                "clean"
+                            },
+                            if self.cutscene_db_dirty {
+                                CommandBadgeStatus::Dirty
+                            } else {
+                                CommandBadgeStatus::Ok
+                            },
+                        );
+                    });
                     toolbar_centered(ui, vec2(260.0, 26.0), |ui| {
                         let selected = self
                             .selected_cutscene_index
@@ -2636,21 +2654,36 @@ impl EditorApp {
                 }
                 if self.active_workspace == EditorWorkspace::Events {
                     toolbar_label(ui, "事件");
-                    if toolbar_command_button(ui, "新增", 48.0).clicked() {
-                        self.add_event();
-                    }
-                    if toolbar_command_button(ui, "保存", 48.0)
-                        .on_hover_text("保存 events.ron")
-                        .clicked()
-                    {
-                        self.save_event_database();
-                    }
-                    if toolbar_command_button(ui, "重载", 48.0)
-                        .on_hover_text("从 events.ron 重新加载")
-                        .clicked()
-                    {
-                        self.reload_event_database();
-                    }
+                    command_bar(ui, |ui| {
+                        if command_button(ui, "新增").clicked() {
+                            self.add_event();
+                        }
+                        if enabled_command_button(ui, self.event_db_dirty, "保存")
+                            .on_hover_text("保存 events.ron")
+                            .clicked()
+                        {
+                            self.save_event_database();
+                        }
+                        if command_button(ui, "重载")
+                            .on_hover_text("从 events.ron 重新加载")
+                            .clicked()
+                        {
+                            self.reload_event_database();
+                        }
+                        command_status_badge(
+                            ui,
+                            if self.event_db_dirty {
+                                "dirty"
+                            } else {
+                                "clean"
+                            },
+                            if self.event_db_dirty {
+                                CommandBadgeStatus::Dirty
+                            } else {
+                                CommandBadgeStatus::Ok
+                            },
+                        );
+                    });
                     toolbar_centered(ui, vec2(260.0, 26.0), |ui| {
                         let selected = self
                             .selected_event_index

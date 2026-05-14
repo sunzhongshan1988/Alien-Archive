@@ -4821,7 +4821,8 @@ impl EditorApp {
     }
 
     pub(crate) fn draw_status_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(6.0, 0.0);
             if self.active_workspace == EditorWorkspace::Cutscenes {
                 let dirty_marker = if self.cutscene_db_dirty { "*" } else { "" };
                 let current_file = format!(
@@ -4834,16 +4835,34 @@ impl EditorApp {
                     .and_then(|index| self.cutscene_database.cutscenes().get(index))
                     .map(|cutscene| cutscene.id.as_str())
                     .unwrap_or("none");
-                ui.label(format!("File: {current_file}"));
-                ui.separator();
-                ui.label(format!(
-                    "Cutscenes: {}",
-                    self.cutscene_database.cutscenes().len()
-                ));
-                ui.separator();
-                ui.label(format!("Selected: {selected}"));
-                ui.separator();
-                ui.label(&self.status);
+                status_segment(ui, "File", &current_file);
+                status_segment(
+                    ui,
+                    "Items",
+                    &self.cutscene_database.cutscenes().len().to_string(),
+                );
+                status_segment(ui, "Selected", selected);
+                status_segment(ui, "Workspace", self.active_workspace.label());
+                status_message(ui, &self.status);
+                return;
+            }
+            if self.active_workspace == EditorWorkspace::Events {
+                let dirty_marker = if self.event_db_dirty { "*" } else { "" };
+                let current_file = format!(
+                    "{}{}",
+                    display_project_path(&self.project_root, &self.event_db_path()),
+                    dirty_marker
+                );
+                let selected = self
+                    .selected_event_index
+                    .and_then(|index| self.event_database.events().get(index))
+                    .map(|event| event.id.as_str())
+                    .unwrap_or("none");
+                status_segment(ui, "File", &current_file);
+                status_segment(ui, "Items", &self.event_database.events().len().to_string());
+                status_segment(ui, "Selected", selected);
+                status_segment(ui, "Workspace", self.active_workspace.label());
+                status_message(ui, &self.status);
                 return;
             }
             let mouse = self
@@ -4885,33 +4904,28 @@ impl EditorApp {
                 dirty_marker
             );
 
-            ui.label(format!("File: {current_file}"));
-            ui.separator();
-            ui.label(format!("Mouse Tile: {mouse}"));
-            ui.separator();
-            ui.label(format!("Selected: {asset}"));
-            ui.separator();
-            ui.label(format!("Selection: {selected_item}"));
-            ui.separator();
-            ui.label(format!("Transform: {transform}"));
-            ui.separator();
-            ui.label(format!("Layer: {}", self.active_layer.zh_label()));
-            ui.separator();
-            ui.label(format!(
-                "Ground Size: {}x{}",
-                self.ground_footprint_w.max(1),
-                self.ground_footprint_h.max(1)
-            ));
-            ui.separator();
-            ui.label(format!("Stamp: {stamp}"));
-            ui.separator();
-            ui.label(format!("Zoom: {:.0}%", self.zoom * 100.0));
-            ui.separator();
+            status_segment(ui, "File", &current_file);
+            status_segment(ui, "Mouse", &mouse);
+            status_segment(ui, "Asset", asset);
+            status_segment(ui, "Selection", &selected_item);
+            status_segment(ui, "Transform", &transform);
+            status_segment(ui, "Layer", self.active_layer.zh_label());
+            status_segment(
+                ui,
+                "Ground",
+                &format!(
+                    "{}x{}",
+                    self.ground_footprint_w.max(1),
+                    self.ground_footprint_h.max(1)
+                ),
+            );
+            status_segment(ui, "Stamp", &stamp);
+            status_segment(ui, "Zoom", &format!("{:.0}%", self.zoom * 100.0));
             if let Some(texture_status) = self.texture_loading_status() {
-                ui.label(texture_status);
-                ui.separator();
+                status_segment(ui, "Textures", &texture_status);
             }
-            ui.label(&self.status);
+            status_segment(ui, "Workspace", self.active_workspace.label());
+            status_message(ui, &self.status);
         });
     }
 
@@ -5013,6 +5027,20 @@ impl EditorApp {
             ((raw[0] / step).round() * step).clamp(0.0, self.document.width as f32),
             ((raw[1] / step).round() * step).clamp(0.0, self.document.height as f32),
         ]
+    }
+}
+
+fn status_segment(ui: &mut egui::Ui, label: &str, value: &str) {
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(label).color(THEME_MUTED_TEXT));
+        ui.label(value);
+    });
+    ui.separator();
+}
+
+fn status_message(ui: &mut egui::Ui, value: &str) {
+    if !value.trim().is_empty() {
+        ui.label(egui::RichText::new(value).color(THEME_ACCENT_STRONG));
     }
 }
 

@@ -1,6 +1,6 @@
 use eframe::egui::{self, TextEdit};
 
-pub(crate) const PROPERTY_LABEL_WIDTH: f32 = 82.0;
+pub(crate) const PROPERTY_LABEL_WIDTH: f32 = 118.0;
 
 pub(crate) fn property_row<R>(
     ui: &mut egui::Ui,

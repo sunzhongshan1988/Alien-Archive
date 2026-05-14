@@ -1,8 +1,13 @@
 pub(crate) mod asset_grid;
 pub(crate) mod buttons;
+pub(crate) mod command_bar;
 pub(crate) mod fields;
 pub(crate) mod header;
 pub(crate) mod layer_row;
+pub(crate) mod panel_surface;
+pub(crate) mod property_grid;
+pub(crate) mod resource_list;
+pub(crate) mod rule_card;
 pub(crate) mod search;
 pub(crate) mod sections;
 pub(crate) mod side_rail;
@@ -10,3 +15,4 @@ pub(crate) mod tabs;
 pub(crate) mod theme;
 pub(crate) mod toolbar;
 pub(crate) mod tree;
+pub(crate) mod validation_panel;

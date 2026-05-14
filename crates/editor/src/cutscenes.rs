@@ -3,10 +3,24 @@ use std::collections::HashSet;
 use content::{CutsceneCompletion, CutsceneDefinition, CutsceneStep, CutsceneText};
 
 use super::*;
-use crate::ui::fields::property_row;
+use crate::ui::{
+    command_bar::{
+        CommandBadgeStatus, command_bar, command_button, command_status_badge,
+        enabled_command_button,
+    },
+    fields::property_row,
+    panel_surface::{
+        detail_surface, empty_state, panel_header as surface_panel_header, panel_surface,
+    },
+    property_grid,
+    resource_list::{resource_list_header, resource_row, resource_search},
+    rule_card::{add_rule_menu, card_gap, card_section_header, compact_card_button, rule_card},
+    validation_panel::{ValidationLevel, ValidationMessage, info_panel, validation_panel},
+};
 
 const DEFAULT_SCENE_KEYS: [&str; 3] = ["Overworld", "Facility", "MainMenu"];
 const CUTSCENE_LIST_WIDTH: f32 = 330.0;
+const CUTSCENE_REFERENCE_WIDTH: f32 = 360.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CutsceneStepKind {
@@ -207,34 +221,35 @@ impl EditorApp {
     }
 
     pub(crate) fn draw_cutscene_workspace(&mut self, ui: &mut egui::Ui) {
-        ui.spacing_mut().item_spacing = vec2(12.0, 8.0);
-        let available = ui.available_size();
-        ui.allocate_ui_with_layout(
-            available,
-            egui::Layout::left_to_right(egui::Align::Min),
-            |ui| {
-                let height = ui.available_height();
-                ui.allocate_ui_with_layout(
-                    vec2(CUTSCENE_LIST_WIDTH, height),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        ui.push_id("cutscene_list_panel", |ui| {
-                            self.draw_cutscene_list_panel(ui);
-                        });
-                    },
-                );
-                ui.separator();
-                ui.allocate_ui_with_layout(
-                    vec2(ui.available_width(), height),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        ui.push_id("cutscene_detail_panel", |ui| {
-                            self.draw_cutscene_detail_panel(ui);
-                        });
-                    },
-                );
-            },
-        );
+        let height = ui.available_height();
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+            ui.allocate_ui_with_layout(
+                vec2(CUTSCENE_LIST_WIDTH, height),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| panel_surface(ui, |ui| self.draw_cutscene_list_panel(ui)),
+            );
+            ui.separator();
+            let main_width = (ui.available_width() - CUTSCENE_REFERENCE_WIDTH - 7.0).max(420.0);
+            ui.allocate_ui_with_layout(
+                vec2(main_width, height),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    panel_surface(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .id_salt("cutscene_detail_scroll")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| self.draw_cutscene_detail_panel(ui));
+                    });
+                },
+            );
+            ui.separator();
+            ui.allocate_ui_with_layout(
+                vec2(CUTSCENE_REFERENCE_WIDTH.min(ui.available_width()), height),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| panel_surface(ui, |ui| self.draw_cutscene_reference_panel(ui)),
+            );
+        });
     }
 
     fn draw_cutscene_list_scroll(&mut self, ui: &mut egui::Ui, rows: Vec<CutsceneListRow>) {
@@ -250,79 +265,89 @@ impl EditorApp {
                     } else {
                         row.id.clone()
                     };
-                    let response = ui
-                        .push_id(("cutscene_row", row.index), |ui| {
-                            ui.selectable_label(selected, label)
-                        })
-                        .inner
-                        .on_hover_text(format!(
-                            "{} steps / completion {}",
-                            row.step_count, row.completion
-                        ));
+                    let detail = format!("{} steps / {}", row.step_count, row.completion);
+                    let response =
+                        resource_row(ui, selected, &label, &detail, Vec::new()).on_hover_text(
+                            format!("{} steps / completion {}", row.step_count, row.completion),
+                        );
                     if response.clicked() {
                         self.selected_cutscene_index = Some(row.index);
                     }
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "{} steps / {}",
-                            row.step_count, row.completion
-                        ))
-                        .color(THEME_MUTED_TEXT),
-                    );
-                    ui.add_space(3.0);
                 }
             });
     }
 
     fn draw_cutscene_list_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Cutscenes");
-        ui.separator();
-        ui.monospace(display_project_path(
-            &self.project_root,
-            &self.cutscene_db_path(),
-        ));
-        ui.horizontal(|ui| {
-            if ui.button("新增").clicked() {
+        let search = self.cutscene_search.trim().to_ascii_lowercase();
+        let visible_count = self
+            .cutscene_database
+            .cutscenes()
+            .iter()
+            .filter(|cutscene| cutscene_matches_search(cutscene, &search))
+            .count();
+        resource_list_header(
+            ui,
+            "Cutscenes",
+            &display_project_path(&self.project_root, &self.cutscene_db_path()),
+            visible_count,
+            self.cutscene_database.cutscenes().len(),
+            self.cutscene_db_dirty,
+        );
+        command_bar(ui, |ui| {
+            if command_button(ui, "新增").clicked() {
                 self.add_cutscene();
             }
-            if ui
-                .add_enabled(
-                    self.normalized_selected_cutscene_index().is_some(),
-                    egui::Button::new("复制"),
-                )
-                .clicked()
+            if enabled_command_button(
+                ui,
+                self.normalized_selected_cutscene_index().is_some(),
+                "复制",
+            )
+            .clicked()
             {
                 self.duplicate_selected_cutscene();
             }
-            if ui
-                .add_enabled(
-                    self.normalized_selected_cutscene_index().is_some(),
-                    egui::Button::new("删除"),
-                )
-                .clicked()
+            if enabled_command_button(
+                ui,
+                self.normalized_selected_cutscene_index().is_some(),
+                "删除",
+            )
+            .clicked()
             {
                 self.delete_selected_cutscene();
             }
         });
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(self.cutscene_db_dirty, egui::Button::new("保存"))
-                .clicked()
-            {
+        command_bar(ui, |ui| {
+            if enabled_command_button(ui, self.cutscene_db_dirty, "保存").clicked() {
                 self.save_cutscene_database();
             }
-            if ui.button("重新加载").clicked() {
+            if command_button(ui, "重载").clicked() {
                 self.reload_cutscene_database();
             }
+            if command_button(ui, "校验").clicked() {
+                self.validate_cutscene_database_command();
+            }
+            command_status_badge(
+                ui,
+                if self.cutscene_db_dirty {
+                    "dirty"
+                } else {
+                    "clean"
+                },
+                if self.cutscene_db_dirty {
+                    CommandBadgeStatus::Dirty
+                } else {
+                    CommandBadgeStatus::Ok
+                },
+            );
         });
-        search_field(
+        ui.separator();
+        resource_search(
             ui,
             &mut self.cutscene_search,
             "搜索 id / 文本 / flag / scene",
         );
         ui.separator();
 
-        let search = self.cutscene_search.trim().to_ascii_lowercase();
         let rows = self
             .cutscene_database
             .cutscenes()
@@ -337,62 +362,39 @@ impl EditorApp {
             })
             .collect::<Vec<_>>();
 
-        ui.small(format!(
-            "{} / {} 个过场{}",
-            rows.len(),
-            self.cutscene_database.cutscenes().len(),
-            if self.cutscene_db_dirty { " *" } else { "" }
-        ));
-
         self.draw_cutscene_list_scroll(ui, rows);
     }
 
     fn draw_cutscene_detail_panel(&mut self, ui: &mut egui::Ui) {
         let Some(index) = self.normalized_selected_cutscene_index() else {
-            ui.vertical_centered(|ui| {
-                ui.add_space(90.0);
-                ui.heading("No Cutscene Selected");
-                ui.label("新建一个 cutscene 后，可以在这里编辑步骤。");
-            });
+            empty_state(
+                ui,
+                "No Cutscene Selected",
+                "新建或选择一个 cutscene 后，可以在这里编辑步骤。",
+            );
             return;
         };
 
         let original = self.cutscene_database.cutscenes()[index].clone();
         let mut draft = original.clone();
 
-        ui.horizontal(|ui| {
-            ui.heading(if draft.id.trim().is_empty() {
+        surface_panel_header(
+            ui,
+            if draft.id.trim().is_empty() {
                 "Untitled Cutscene"
             } else {
                 draft.id.as_str()
-            });
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("删除").clicked() {
-                    self.delete_selected_cutscene();
-                }
-                if ui.button("复制").clicked() {
-                    self.duplicate_selected_cutscene();
-                }
-            });
-        });
+            },
+            Some("blocking sequence"),
+        );
 
-        self.draw_cutscene_validation(ui);
-        ui.separator();
-        egui::Frame::group(ui.style())
-            .fill(THEME_PANEL_BG)
-            .show(ui, |ui| {
-                draw_cutscene_definition_editor(ui, index, &mut draft);
-            });
+        detail_surface(ui, |ui| {
+            draw_cutscene_definition_editor(ui, index, &mut draft)
+        });
 
         ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            ui.heading("Steps");
-            ui.label(
-                egui::RichText::new(format!("{} steps", draft.steps.len())).color(THEME_MUTED_TEXT),
-            );
-        });
+        card_section_header(ui, "Steps", draft.steps.len());
         draw_step_add_buttons(ui, &mut draft.steps);
-        ui.separator();
         egui::ScrollArea::vertical()
             .id_salt(("cutscene_steps_scroll", index))
             .auto_shrink([false, false])
@@ -413,20 +415,41 @@ impl EditorApp {
         }
     }
 
-    fn draw_cutscene_validation(&self, ui: &mut egui::Ui) {
-        let issues = self.cutscene_validation_issues();
-        if issues.is_empty() {
-            ui.colored_label(THEME_MUTED_TEXT, "校验：没有发现结构问题");
-            return;
-        }
+    fn draw_cutscene_reference_panel(&self, ui: &mut egui::Ui) {
+        let messages = self.cutscene_validation_messages();
+        validation_panel(ui, "Validation", &messages);
+        ui.add_space(8.0);
+        let selected = self
+            .selected_cutscene_index
+            .and_then(|index| self.cutscene_database.cutscenes().get(index));
+        let lines = selected
+            .map(|cutscene| {
+                vec![
+                    format!("Cutscene: {}", cutscene.id),
+                    format!("Steps: {}", cutscene.steps.len()),
+                    format!(
+                        "Completion: {}",
+                        cutscene_completion_label(&cutscene.completion)
+                    ),
+                    format!("Blocking: {}", cutscene.blocking),
+                    format!("Play once: {}", cutscene.play_once),
+                ]
+            })
+            .unwrap_or_else(|| vec!["选择 cutscene 后，这里会显示播放和完成行为。".to_owned()]);
+        info_panel(ui, "Playback", lines);
+    }
 
-        for issue in issues {
-            let color = match issue.severity {
-                CutsceneValidationSeverity::Error => THEME_ERROR,
-                CutsceneValidationSeverity::Warning => THEME_WARNING,
-            };
-            ui.colored_label(color, issue.message);
-        }
+    fn cutscene_validation_messages(&self) -> Vec<ValidationMessage> {
+        self.cutscene_validation_issues()
+            .into_iter()
+            .map(|issue| ValidationMessage {
+                level: match issue.severity {
+                    CutsceneValidationSeverity::Error => ValidationLevel::Error,
+                    CutsceneValidationSeverity::Warning => ValidationLevel::Warning,
+                },
+                message: issue.message,
+            })
+            .collect()
     }
 
     fn normalized_selected_cutscene_index(&mut self) -> Option<usize> {
@@ -515,7 +538,6 @@ fn draw_cutscene_definition_editor(
     cutscene_index: usize,
     cutscene: &mut CutsceneDefinition,
 ) {
-    inspector_section(ui, "Definition");
     property_text_edit_with_id(ui, "ID", ("cutscene_id", cutscene_index), &mut cutscene.id);
     property_row(ui, "Playback", |ui| {
         ui.checkbox(&mut cutscene.blocking, "blocking");
@@ -587,13 +609,13 @@ fn draw_completion_editor(
 }
 
 fn draw_step_add_buttons(ui: &mut egui::Ui, steps: &mut Vec<CutsceneStep>) {
-    ui.horizontal_wrapped(|ui| {
-        for kind in CutsceneStepKind::ALL {
-            if ui.button(format!("+ {}", kind.label())).clicked() {
-                steps.push(kind.default_step());
-            }
-        }
-    });
+    add_rule_menu(
+        ui,
+        "+ Add Step",
+        &CutsceneStepKind::ALL,
+        CutsceneStepKind::label,
+        |kind| steps.push(kind.default_step()),
+    );
 }
 
 fn draw_steps_editor(ui: &mut egui::Ui, cutscene_index: usize, steps: &mut Vec<CutsceneStep>) {
@@ -605,18 +627,35 @@ fn draw_steps_editor(ui: &mut egui::Ui, cutscene_index: usize, steps: &mut Vec<C
     let mut index = 0usize;
     while index < steps.len() {
         let mut action = None;
-        egui::Frame::group(ui.style())
-            .fill(THEME_PANEL_BG_SOFT)
-            .show(ui, |ui| {
-                draw_step_editor(
-                    ui,
-                    cutscene_index,
-                    index,
-                    steps.len(),
-                    &mut steps[index],
-                    &mut action,
-                );
-            });
+        let title = CutsceneStepKind::from_step(&steps[index]).label();
+        let can_move_up = index > 0;
+        let can_move_down = index + 1 < steps.len();
+        rule_card(
+            ui,
+            index + 1,
+            title,
+            "Step",
+            |ui| {
+                if compact_card_button(ui, "删除").clicked() {
+                    action = Some(StepAction::Delete);
+                }
+                if ui
+                    .add_enabled(can_move_down, egui::Button::new("下移"))
+                    .clicked()
+                {
+                    action = Some(StepAction::MoveDown);
+                }
+                if ui
+                    .add_enabled(can_move_up, egui::Button::new("上移"))
+                    .clicked()
+                {
+                    action = Some(StepAction::MoveUp);
+                }
+            },
+            |ui| {
+                draw_step_editor(ui, cutscene_index, index, &mut steps[index]);
+            },
+        );
         match action {
             Some(StepAction::MoveUp) if index > 0 => {
                 steps.swap(index, index - 1);
@@ -632,7 +671,7 @@ fn draw_steps_editor(ui: &mut egui::Ui, cutscene_index: usize, steps: &mut Vec<C
             }
             _ => {}
         }
-        ui.add_space(6.0);
+        card_gap(ui);
         index += 1;
     }
 }
@@ -641,43 +680,22 @@ fn draw_step_editor(
     ui: &mut egui::Ui,
     cutscene_index: usize,
     step_index: usize,
-    step_count: usize,
     step: &mut CutsceneStep,
-    action: &mut Option<StepAction>,
 ) {
-    ui.horizontal(|ui| {
-        ui.strong(format!("{:02}", step_index + 1));
-        let mut kind = CutsceneStepKind::from_step(step);
+    let mut kind = CutsceneStepKind::from_step(step);
+    property_grid::property_row(ui, "Kind", |ui| {
         egui::ComboBox::from_id_salt(("cutscene_step_kind", cutscene_index, step_index))
             .selected_text(kind.label())
-            .width(150.0)
+            .width(ui.available_width())
             .show_ui(ui, |ui| {
                 for option in CutsceneStepKind::ALL {
                     ui.selectable_value(&mut kind, option, option.label());
                 }
             });
-        if kind != CutsceneStepKind::from_step(step) {
-            *step = kind.default_step();
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button("删除").clicked() {
-                *action = Some(StepAction::Delete);
-            }
-            if ui
-                .add_enabled(step_index + 1 < step_count, egui::Button::new("下移"))
-                .clicked()
-            {
-                *action = Some(StepAction::MoveDown);
-            }
-            if ui
-                .add_enabled(step_index > 0, egui::Button::new("上移"))
-                .clicked()
-            {
-                *action = Some(StepAction::MoveUp);
-            }
-        });
     });
-    ui.separator();
+    if kind != CutsceneStepKind::from_step(step) {
+        *step = kind.default_step();
+    }
 
     match step {
         CutsceneStep::FadeIn { duration }
