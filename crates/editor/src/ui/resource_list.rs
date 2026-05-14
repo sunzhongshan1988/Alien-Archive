@@ -18,17 +18,17 @@ pub(crate) fn resource_list_header(
     ui.label(RichText::new(path).color(THEME_MUTED_TEXT).monospace());
     ui.add_space(4.0);
     let count_text = if visible_count == total_count {
-        format!("{total_count} items")
+        format!("{total_count} 个条目")
     } else {
-        format!("{visible_count} / {total_count} items")
+        format!("{visible_count} / {total_count} 个条目")
     };
     ui.horizontal(|ui| {
         ui.label(RichText::new(count_text).color(THEME_MUTED_TEXT));
         if dirty {
-            ui.label(RichText::new("unsaved").color(THEME_WARNING).monospace());
+            ui.label(RichText::new("未保存").color(THEME_WARNING).monospace());
         } else {
             ui.label(
-                RichText::new("saved")
+                RichText::new("已保存")
                     .color(THEME_ACCENT_STRONG)
                     .monospace(),
             );

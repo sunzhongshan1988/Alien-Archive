@@ -85,6 +85,7 @@ use util::{geometry::*, ids::*, sanitize::*};
 
 const MENU_BAR_HEIGHT: f32 = 30.0;
 const MENU_BAR_BUTTON_HEIGHT: f32 = 24.0;
+const MENU_BAR_BUTTON_MIN_WIDTH: f32 = 44.0;
 const TOP_BAR_DIVIDER_HEIGHT: f32 = 1.0;
 
 #[derive(Clone, Debug)]
@@ -106,7 +107,7 @@ fn main() -> eframe::Result<()> {
     };
 
     eframe::run_native(
-        "Alien Archive Game Editor",
+        "Alien Archive 游戏编辑器",
         options,
         Box::new(|cc| Ok(Box::new(EditorApp::new(cc)))),
     )
@@ -233,7 +234,7 @@ impl EditorApp {
             last_canvas_rect: None,
             thumbnails: HashMap::new(),
             thumbnail_loader: ThumbnailLoader::new(),
-            status: "Ready".to_owned(),
+            status: "就绪".to_owned(),
         };
         app.detect_autosave_recovery_for_current_map();
         app
@@ -632,13 +633,13 @@ impl EditorApp {
                 self.clear_current_autosave_file();
                 self.autosave_recovery = None;
                 self.status = format!(
-                    "Saved {}",
+                    "已保存 {}",
                     display_project_path(&self.project_root, &self.map_path)
                 );
                 true
             }
             Err(error) => {
-                self.status = format!("Save failed: {error:#}");
+                self.status = format!("保存失败：{error:#}");
                 false
             }
         }
@@ -646,7 +647,7 @@ impl EditorApp {
 
     fn save_map_as(&mut self) {
         let Some(id) = sanitize_map_id(&self.save_as_id) else {
-            self.status = "Save As failed: map id is empty".to_owned();
+            self.status = "另存为失败：地图 id 为空".to_owned();
             return;
         };
 
@@ -778,7 +779,7 @@ impl EditorApp {
                     })
                     .unwrap_or_default();
                 self.status = format!(
-                    "Opened {}{}",
+                    "已打开 {}{}",
                     display_project_path(&self.project_root, &self.map_path),
                     spawn_note
                 );
@@ -786,7 +787,7 @@ impl EditorApp {
             }
             Err(error) => {
                 self.status = format!(
-                    "Open failed for {}: {error:#}",
+                    "打开失败 {}：{error:#}",
                     display_project_path(&self.project_root, &path)
                 );
             }
@@ -1012,12 +1013,12 @@ impl EditorApp {
         let mut issues = Vec::new();
         for entity in &self.document.layers.entities {
             if let Some(transition) = &entity.transition {
-                self.validate_transition_link("entity", &entity.id, transition, &mut issues);
+                self.validate_transition_link("实体", &entity.id, transition, &mut issues);
             }
         }
         for zone in &self.document.layers.zones {
             if let Some(transition) = &zone.transition {
-                self.validate_transition_link("zone", &zone.id, transition, &mut issues);
+                self.validate_transition_link("区域", &zone.id, transition, &mut issues);
             }
         }
         issues
@@ -1040,7 +1041,7 @@ impl EditorApp {
             Err(error) => {
                 if !map_path.is_empty() && map_path.ends_with(".ron") {
                     issues.push(editor_validation_warning(format!(
-                        "{owner} {id} transition target map {map_path} {error}"
+                        "{owner} {id} 的转场目标地图 {map_path} {error}"
                     )));
                 }
                 return;
@@ -1051,7 +1052,7 @@ impl EditorApp {
             Ok(target) => target,
             Err(error) => {
                 issues.push(editor_validation_warning(format!(
-                    "{owner} {id} transition target map {map_path} could not be read: {error:#}"
+                    "{owner} {id} 的转场目标地图 {map_path} 读取失败：{error:#}"
                 )));
                 return;
             }
@@ -1067,7 +1068,7 @@ impl EditorApp {
         };
         if !target.spawns.iter().any(|spawn| spawn.id == spawn_id) {
             issues.push(editor_validation_warning(format!(
-                "{owner} {id} transition target map {map_path} has no spawn {spawn_id}"
+                "{owner} {id} 的转场目标地图 {map_path} 没有出生点 {spawn_id}"
             )));
         }
     }
@@ -1216,10 +1217,10 @@ impl EditorApp {
                 self.asset_database = database;
                 self.asset_db_dirty = false;
                 self.rebuild_asset_registry(ctx);
-                self.status = "素材 metadata 已重新加载".to_owned();
+                self.status = "素材元数据已重新加载".to_owned();
             }
             Err(error) => {
-                self.status = format!("素材 metadata 读取失败：{error:#}");
+                self.status = format!("素材元数据读取失败：{error:#}");
             }
         }
     }
@@ -1263,7 +1264,7 @@ impl EditorApp {
 
     fn apply_asset_draft(&mut self, ctx: &EguiContext) {
         let Some(asset) = self.asset_draft.to_definition() else {
-            self.status = "素材保存失败：id 或 path 为空".to_owned();
+            self.status = "素材保存失败：素材 ID 或图片路径为空".to_owned();
             return;
         };
         if !self.project_root.join(&asset.path).exists() {
@@ -1565,7 +1566,7 @@ impl EditorApp {
             newer_by,
         });
         self.status = format!(
-            "发现更新的 autosave：{}",
+            "发现更新的自动保存：{}",
             display_project_path(&self.project_root, &autosave_path)
         );
     }
@@ -1589,13 +1590,13 @@ impl EditorApp {
                 self.last_autosave = Instant::now();
                 self.autosave_recovery = None;
                 self.status = format!(
-                    "已恢复 autosave，请保存写回 {}",
+                    "已恢复自动保存，请保存写回 {}",
                     display_project_path(&self.project_root, &self.map_path)
                 );
             }
             Err(error) => {
                 self.status = format!(
-                    "恢复 autosave 失败 {}：{error:#}",
+                    "恢复自动保存失败 {}：{error:#}",
                     display_project_path(&self.project_root, &recovery.autosave_path)
                 );
             }
@@ -1607,17 +1608,17 @@ impl EditorApp {
             Ok(()) => {
                 self.autosave_recovery = None;
                 self.status = format!(
-                    "已丢弃 autosave：{}",
+                    "已丢弃自动保存：{}",
                     display_project_path(&self.project_root, &recovery.autosave_path)
                 );
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 self.autosave_recovery = None;
-                self.status = "autosave 已不存在".to_owned();
+                self.status = "自动保存已不存在".to_owned();
             }
             Err(error) => {
                 self.status = format!(
-                    "丢弃 autosave 失败 {}：{error}",
+                    "丢弃自动保存失败 {}：{error}",
                     display_project_path(&self.project_root, &recovery.autosave_path)
                 );
             }
@@ -1641,12 +1642,12 @@ impl EditorApp {
         match self.document.save(&path) {
             Ok(()) => {
                 self.status = format!(
-                    "Autosaved {}",
+                    "已自动保存 {}",
                     display_project_path(&self.project_root, &path)
                 );
             }
             Err(error) => {
-                self.status = format!("Autosave failed: {error:#}");
+                self.status = format!("自动保存失败：{error:#}");
             }
         }
     }
@@ -2154,26 +2155,26 @@ impl EditorApp {
             }
             EditorWorkspace::Cutscenes => {
                 if ui
-                    .add_enabled(self.cutscene_db_dirty, egui::Button::new("保存 Cutscenes"))
+                    .add_enabled(self.cutscene_db_dirty, egui::Button::new("保存过场"))
                     .clicked()
                 {
                     self.save_cutscene_database();
                     ui.close();
                 }
-                if ui.button("重新加载 Cutscenes").clicked() {
+                if ui.button("重新加载过场").clicked() {
                     self.reload_cutscene_database();
                     ui.close();
                 }
             }
             EditorWorkspace::Events => {
                 if ui
-                    .add_enabled(self.event_db_dirty, egui::Button::new("保存 Events"))
+                    .add_enabled(self.event_db_dirty, egui::Button::new("保存事件"))
                     .clicked()
                 {
                     self.save_event_database();
                     ui.close();
                 }
-                if ui.button("重新加载 Events").clicked() {
+                if ui.button("重新加载事件").clicked() {
                     self.reload_event_database();
                     ui.close();
                 }
@@ -2272,14 +2273,14 @@ impl EditorApp {
                 }
             }
             EditorWorkspace::Cutscenes => {
-                if ui.button("新增 Cutscene").clicked() {
+                if ui.button("新增过场").clicked() {
                     self.add_cutscene();
                     ui.close();
                 }
                 if ui
                     .add_enabled(
                         self.selected_cutscene_index.is_some(),
-                        egui::Button::new("复制 Cutscene"),
+                        egui::Button::new("复制过场"),
                     )
                     .clicked()
                 {
@@ -2289,7 +2290,7 @@ impl EditorApp {
                 if ui
                     .add_enabled(
                         self.selected_cutscene_index.is_some(),
-                        egui::Button::new("删除 Cutscene"),
+                        egui::Button::new("删除过场"),
                     )
                     .clicked()
                 {
@@ -2298,14 +2299,14 @@ impl EditorApp {
                 }
             }
             EditorWorkspace::Events => {
-                if ui.button("新增 Event").clicked() {
+                if ui.button("新增事件").clicked() {
                     self.add_event();
                     ui.close();
                 }
                 if ui
                     .add_enabled(
                         self.selected_event_index.is_some(),
-                        egui::Button::new("复制 Event"),
+                        egui::Button::new("复制事件"),
                     )
                     .clicked()
                 {
@@ -2315,7 +2316,7 @@ impl EditorApp {
                 if ui
                     .add_enabled(
                         self.selected_event_index.is_some(),
-                        egui::Button::new("删除 Event"),
+                        egui::Button::new("删除事件"),
                     )
                     .clicked()
                 {
@@ -2345,10 +2346,10 @@ impl EditorApp {
                 }
             }
             EditorWorkspace::Cutscenes => {
-                ui.label("Cutscenes 工作区没有地图画布视图选项");
+                ui.label("过场工作区没有地图画布视图选项");
             }
             EditorWorkspace::Events => {
-                ui.label("Events 工作区没有地图画布视图选项");
+                ui.label("事件工作区没有地图画布视图选项");
             }
         });
     }
@@ -2379,7 +2380,7 @@ impl EditorApp {
                 self.save_and_run_current_map();
                 ui.close();
             }
-            if ui.button("重新加载 Codex").clicked() {
+            if ui.button("重新加载图鉴").clicked() {
                 self.reload_codex_database();
                 ui.close();
             }
@@ -2475,7 +2476,7 @@ impl EditorApp {
                 ui.close();
             }
             ui.separator();
-            if ui.button("重新扫描 Metadata").clicked() {
+            if ui.button("重新扫描元数据").clicked() {
                 self.reload_asset_database(&ctx);
                 ui.close();
             }
@@ -2488,7 +2489,7 @@ impl EditorApp {
     }
 
     fn draw_cutscene_menu(&mut self, ui: &mut egui::Ui) {
-        menu_bar_button(ui, "Cutscenes", |ui| {
+        menu_bar_button(ui, "过场", |ui| {
             if ui.button("新增").clicked() {
                 self.add_cutscene();
                 ui.close();
@@ -2513,7 +2514,6 @@ impl EditorApp {
                 self.delete_selected_cutscene();
                 ui.close();
             }
-            ui.separator();
             if ui
                 .add_enabled(self.cutscene_db_dirty, egui::Button::new("保存"))
                 .clicked()
@@ -2533,7 +2533,7 @@ impl EditorApp {
     }
 
     fn draw_event_menu(&mut self, ui: &mut egui::Ui) {
-        menu_bar_button(ui, "Events", |ui| {
+        menu_bar_button(ui, "事件", |ui| {
             if ui.button("新增").clicked() {
                 self.add_event();
                 ui.close();
@@ -2558,7 +2558,6 @@ impl EditorApp {
                 self.delete_selected_event();
                 ui.close();
             }
-            ui.separator();
             if ui
                 .add_enabled(self.event_db_dirty, egui::Button::new("保存"))
                 .clicked()
@@ -2589,13 +2588,13 @@ impl EditorApp {
                 ui.label("区域工具：点击加点，双击或点回首点完成；Alt 自由点");
             }
             EditorWorkspace::Cutscenes => {
-                ui.label("Cmd/Ctrl+S 保存 Cutscenes");
-                ui.label("Cmd/Ctrl+N 新增 Cutscene");
+                ui.label("Cmd/Ctrl+S 保存过场");
+                ui.label("Cmd/Ctrl+N 新增过场");
                 ui.label("工作区切换在菜单栏的“工作区”里");
             }
             EditorWorkspace::Events => {
-                ui.label("Cmd/Ctrl+S 保存 Events");
-                ui.label("Cmd/Ctrl+N 新增 Event");
+                ui.label("Cmd/Ctrl+S 保存事件");
+                ui.label("Cmd/Ctrl+N 新增事件");
                 ui.label("工作区切换在菜单栏的“工作区”里");
             }
         });
@@ -2617,13 +2616,13 @@ impl EditorApp {
                             self.add_cutscene();
                         }
                         if enabled_command_button(ui, self.cutscene_db_dirty, "保存")
-                            .on_hover_text("保存 cutscenes.ron")
+                            .on_hover_text("保存过场文件")
                             .clicked()
                         {
                             self.save_cutscene_database();
                         }
                         if command_button(ui, "重载")
-                            .on_hover_text("从 cutscenes.ron 重新加载")
+                            .on_hover_text("重新加载过场文件")
                             .clicked()
                         {
                             self.reload_cutscene_database();
@@ -2631,9 +2630,9 @@ impl EditorApp {
                         command_status_badge(
                             ui,
                             if self.cutscene_db_dirty {
-                                "dirty"
+                                "未保存"
                             } else {
-                                "clean"
+                                "已保存"
                             },
                             if self.cutscene_db_dirty {
                                 CommandBadgeStatus::Dirty
@@ -2647,7 +2646,7 @@ impl EditorApp {
                             .selected_cutscene_index
                             .and_then(|index| self.cutscene_database.cutscenes().get(index))
                             .map(|cutscene| cutscene.id.as_str())
-                            .unwrap_or("none");
+                            .unwrap_or("无");
                         ui.label(egui::RichText::new(selected).color(THEME_MUTED_TEXT));
                     });
                     return;
@@ -2659,13 +2658,13 @@ impl EditorApp {
                             self.add_event();
                         }
                         if enabled_command_button(ui, self.event_db_dirty, "保存")
-                            .on_hover_text("保存 events.ron")
+                            .on_hover_text("保存事件文件")
                             .clicked()
                         {
                             self.save_event_database();
                         }
                         if command_button(ui, "重载")
-                            .on_hover_text("从 events.ron 重新加载")
+                            .on_hover_text("重新加载事件文件")
                             .clicked()
                         {
                             self.reload_event_database();
@@ -2673,9 +2672,9 @@ impl EditorApp {
                         command_status_badge(
                             ui,
                             if self.event_db_dirty {
-                                "dirty"
+                                "未保存"
                             } else {
-                                "clean"
+                                "已保存"
                             },
                             if self.event_db_dirty {
                                 CommandBadgeStatus::Dirty
@@ -2689,7 +2688,7 @@ impl EditorApp {
                             .selected_event_index
                             .and_then(|index| self.event_database.events().get(index))
                             .map(|event| event.id.as_str())
-                            .unwrap_or("none");
+                            .unwrap_or("无");
                         ui.label(egui::RichText::new(selected).color(THEME_MUTED_TEXT));
                     });
                     return;
@@ -2727,7 +2726,7 @@ impl EditorApp {
                             egui::DragValue::new(&mut self.ground_footprint_w)
                                 .range(1..=self.document.width as i32)
                                 .speed(0.1)
-                                .prefix("W "),
+                                .prefix("宽 "),
                         );
                     });
                     toolbar_centered(ui, vec2(54.0, 26.0), |ui| {
@@ -2735,22 +2734,22 @@ impl EditorApp {
                             egui::DragValue::new(&mut self.ground_footprint_h)
                                 .range(1..=self.document.height as i32)
                                 .speed(0.1)
-                                .prefix("H "),
+                                .prefix("高 "),
                         );
                     });
                     toolbar_centered(ui, vec2(86.0, 26.0), |ui| {
                         ui.checkbox(&mut self.terrain_autotile, "自动接边")
                     })
                     .inner
-                    .on_hover_text("刷地、矩形填充或擦除后，自动重算周围地形和跨材质 transition");
+                    .on_hover_text("刷地、矩形填充或擦除后，自动重算周围地形和跨材质过渡");
                     if toolbar_command_button(ui, "重算可见", 72.0)
-                        .on_hover_text("按当前画布视口重算地形边角和跨材质 transition")
+                        .on_hover_text("按当前画布视口重算地形边角和跨材质过渡")
                         .clicked()
                     {
                         self.recalc_visible_ground_command();
                     }
                     if toolbar_command_button(ui, "重算全图", 72.0)
-                        .on_hover_text("重算整张地图的地形边角和跨材质 transition")
+                        .on_hover_text("重算整张地图的地形边角和跨材质过渡")
                         .clicked()
                     {
                         self.recalc_all_ground_command();
@@ -2765,7 +2764,7 @@ impl EditorApp {
                             egui::DragValue::new(&mut self.collision_brush_w)
                                 .range(0.125..=self.document.width as f32)
                                 .speed(0.125)
-                                .prefix("W "),
+                                .prefix("宽 "),
                         );
                     });
                     toolbar_centered(ui, vec2(54.0, 26.0), |ui| {
@@ -2773,7 +2772,7 @@ impl EditorApp {
                             egui::DragValue::new(&mut self.collision_brush_h)
                                 .range(0.125..=self.document.height as f32)
                                 .speed(0.125)
-                                .prefix("H "),
+                                .prefix("高 "),
                         );
                     });
                 }
@@ -2785,9 +2784,9 @@ impl EditorApp {
                 }
                 if self.tool == ToolKind::Stamp {
                     ui.separator();
-                    toolbar_label(ui, "Stamp");
+                    toolbar_label(ui, "盖章");
                     if toolbar_command_button(ui, "从选择", 64.0)
-                        .on_hover_text("把当前多选对象生成临时 Stamp")
+                        .on_hover_text("把当前多选对象生成临时盖章")
                         .clicked()
                     {
                         self.create_stamp_from_selection();
@@ -2797,7 +2796,7 @@ impl EditorApp {
                             self.stamp_pattern.is_some(),
                             egui::Button::new("清空").corner_radius(3.0),
                         )
-                        .on_hover_text("清空当前临时 Stamp")
+                        .on_hover_text("清空当前临时盖章")
                         .clicked()
                     {
                         self.clear_stamp_pattern();
@@ -2843,7 +2842,7 @@ impl EditorApp {
                             egui::DragValue::new(&mut width)
                                 .range(1..=self.document.width as i32)
                                 .speed(0.1)
-                                .prefix("W "),
+                                .prefix("宽 "),
                         )
                         .changed()
                     })
@@ -2853,7 +2852,7 @@ impl EditorApp {
                             egui::DragValue::new(&mut height)
                                 .range(1..=self.document.height as i32)
                                 .speed(0.1)
-                                .prefix("H "),
+                                .prefix("高 "),
                         )
                         .changed()
                     })
@@ -2885,14 +2884,10 @@ fn menu_bar_button<R>(
 ) -> egui::Response {
     let button = egui::Button::new(label)
         .frame(false)
-        .min_size(vec2(menu_bar_button_width(label), MENU_BAR_BUTTON_HEIGHT));
+        .min_size(vec2(MENU_BAR_BUTTON_MIN_WIDTH, MENU_BAR_BUTTON_HEIGHT));
     let (response, _) =
         egui::containers::menu::MenuButton::from_button(button).ui(ui, add_contents);
     response
-}
-
-fn menu_bar_button_width(label: &str) -> f32 {
-    (label.chars().count() as f32 * 15.0 + 18.0).max(44.0)
 }
 
 fn draw_top_bar_divider(ui: &mut egui::Ui) {
@@ -3005,11 +3000,11 @@ fn draw_asset_scan_status(
     ui.separator();
     ui.label("扫描 / 图鉴");
     let Some(codex_id) = &asset.codex_id else {
-        ui.colored_label(THEME_MUTED_TEXT, "未设置 Codex ID，不会进入扫描候选。");
+        ui.colored_label(THEME_MUTED_TEXT, "未设置图鉴 ID，不会进入扫描候选。");
         return;
     };
 
-    ui.label(format!("Codex ID：{codex_id}"));
+    ui.label(format!("图鉴 ID：{codex_id}"));
     draw_codex_entry_preview(ui, codex_id, codex_database);
     if asset.kind == AssetKind::Entity {
         ui.colored_label(
@@ -3022,7 +3017,7 @@ fn draw_asset_scan_status(
     } else {
         ui.colored_label(
             THEME_WARNING,
-            "可扫描：否。当前运行时只扫描实体层，Object/Decal/Tile 的 Codex ID 只是素材 metadata。",
+            "可扫描：否。当前运行时只扫描实体层，物件/贴花/地块的图鉴 ID 只是素材元数据。",
         );
     }
 }
@@ -3035,7 +3030,7 @@ fn draw_asset_draft_scan_status(
     ui.separator();
     ui.label("扫描 / 图鉴预览");
     if draft.codex_id.trim().is_empty() {
-        ui.colored_label(THEME_MUTED_TEXT, "未设置 Codex ID，不会进入扫描候选。");
+        ui.colored_label(THEME_MUTED_TEXT, "未设置图鉴 ID，不会进入扫描候选。");
         return;
     }
 
@@ -3043,7 +3038,7 @@ fn draw_asset_draft_scan_status(
     if draft.kind == AssetKind::Entity {
         ui.colored_label(
             THEME_ACCENT_STRONG,
-            "可扫描素材：放到实体层后，运行时会读取这个 Codex ID。",
+            "可扫描素材：放到实体层后，运行时会读取这个图鉴 ID。",
         );
         if draft.entity_type.trim().is_empty() {
             ui.colored_label(THEME_WARNING, "实体类型为空，保存地图时会被校验拦住。");
@@ -3062,11 +3057,11 @@ fn draw_codex_entry_preview(
     codex_database: Option<&CodexDatabase>,
 ) {
     let Some(database) = codex_database else {
-        ui.colored_label(THEME_WARNING, "Codex 数据库未加载，无法确认图鉴内容。");
+        ui.colored_label(THEME_WARNING, "图鉴数据库未加载，无法确认图鉴内容。");
         return;
     };
     let Some(entry) = database.get(codex_id) else {
-        ui.colored_label(THEME_ERROR, "Codex 数据库中没有这个条目。");
+        ui.colored_label(THEME_ERROR, "图鉴数据库中没有这个条目。");
         return;
     };
 
@@ -3092,17 +3087,17 @@ fn draw_entity_scan_status(
     codex_database: Option<&CodexDatabase>,
 ) {
     ui.separator();
-    ui.label("Gameplay / 扫描");
+    ui.label("玩法 / 扫描");
     let Some(asset) = asset else {
-        ui.colored_label(THEME_ERROR, "找不到素材 metadata，无法判断扫描状态。");
+        ui.colored_label(THEME_ERROR, "找不到素材元数据，无法判断扫描状态。");
         return;
     };
     let Some(codex_id) = &asset.codex_id else {
-        ui.colored_label(THEME_MUTED_TEXT, "该实体素材没有 Codex ID，不会被扫描。");
+        ui.colored_label(THEME_MUTED_TEXT, "该实体素材没有图鉴 ID，不会被扫描。");
         return;
     };
 
-    ui.label(format!("Codex ID：{codex_id}"));
+    ui.label(format!("图鉴 ID：{codex_id}"));
     draw_codex_entry_preview(ui, codex_id, codex_database);
     ui.colored_label(THEME_ACCENT_STRONG, "运行时扫描候选：是。");
     if instance.interaction_rect.is_none() {
@@ -3125,8 +3120,8 @@ fn draw_object_layer_scan_status(
     };
     if let Some(codex_id) = &asset.codex_id {
         ui.separator();
-        ui.label("Gameplay / 扫描");
-        ui.label(format!("Codex ID：{codex_id}"));
+        ui.label("玩法 / 扫描");
+        ui.label(format!("图鉴 ID：{codex_id}"));
         draw_codex_entry_preview(ui, codex_id, codex_database);
         ui.colored_label(
             THEME_WARNING,
@@ -3504,7 +3499,7 @@ fn entity_rect_editor(
                 egui::DragValue::new(&mut rect.size[0])
                     .range(0.05..=32.0)
                     .speed(0.05)
-                    .prefix("w "),
+                    .prefix("宽 "),
             )
             .changed();
         *changed |= ui
@@ -3512,7 +3507,7 @@ fn entity_rect_editor(
                 egui::DragValue::new(&mut rect.size[1])
                     .range(0.05..=32.0)
                     .speed(0.05)
-                    .prefix("h "),
+                    .prefix("高 "),
             )
             .changed();
     });

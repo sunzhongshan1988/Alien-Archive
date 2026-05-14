@@ -467,7 +467,7 @@ impl EditorApp {
         response.context_menu(|ui| {
             let selections = self.current_selection_list();
             let Some(selection) = self.selected_item.clone() else {
-                ui.label("No selection");
+                ui.label("未选择对象");
                 return;
             };
 
@@ -658,7 +658,7 @@ impl EditorApp {
                 self.push_undo_snapshot();
                 self.document.erase_collision_rect(x, y, width, height);
                 self.mark_dirty();
-                self.status = format!("Erased collision {:.2}, {:.2}", x, y);
+                self.status = format!("已擦除碰撞 {:.2}, {:.2}", x, y);
                 return;
             }
 
@@ -669,7 +669,7 @@ impl EditorApp {
                 self.autotile_ground_near_rect(tile_x, tile_y, width, height);
             }
             self.mark_dirty();
-            self.status = format!("Erased {}, {}", tile_x, tile_y);
+            self.status = format!("已擦除 {}, {}", tile_x, tile_y);
             return;
         }
 
@@ -679,7 +679,7 @@ impl EditorApp {
             self.push_undo_snapshot();
             self.paint_collision_brush(x, y);
             self.mark_dirty();
-            self.status = format!("Collision {:.2}, {:.2}", x, y);
+            self.status = format!("碰撞 {:.2}, {:.2}", x, y);
             return;
         }
 
@@ -710,7 +710,7 @@ impl EditorApp {
                 self.snapped_map_position(raw_map_pos, Some(asset), modifiers),
             )
         }) else {
-            self.status = "Select an asset first".to_owned();
+            self.status = "请先选择素材".to_owned();
             return;
         };
         self.clear_selection();
@@ -751,11 +751,11 @@ impl EditorApp {
         self.mark_dirty();
         self.status = if let Some([width, height]) = placed_ground_size {
             format!(
-                "Placed {} {}x{} at {}, {}",
+                "已放置 {} {}x{} 到 {}, {}",
                 asset_id, width, height, tile_x, tile_y
             )
         } else {
-            format!("Placed {} at {}, {}", asset_id, tile_x, tile_y)
+            format!("已放置 {} 到 {}, {}", asset_id, tile_x, tile_y)
         };
     }
 
@@ -851,7 +851,7 @@ impl EditorApp {
                 self.status = if selections.len() > 1 {
                     format!("已选中 {} 个对象", selections.len())
                 } else {
-                    format!("Selected {}", selections[0].label())
+                    format!("已选中 {}", selections[0].label())
                 };
             } else {
                 if !additive {
@@ -903,7 +903,7 @@ impl EditorApp {
             if let Some(resize) = self.resize_drag.clone() {
                 self.resize_selected_item(canvas_rect, &resize.selection, pointer_pos, ctx);
                 self.mark_dirty();
-                self.status = format!("Resized {}", resize.selection.label());
+                self.status = format!("已调整 {}", resize.selection.label());
                 return;
             }
             let Some(selection) = self.selected_item.clone() else {
@@ -935,13 +935,13 @@ impl EditorApp {
                         id: ground_selection_id(new_x, new_y),
                     }));
                     self.mark_dirty();
-                    self.status = format!("Moved {} to {}, {}", selection.label(), new_x, new_y);
+                    self.status = format!("已移动 {} 到 {}, {}", selection.label(), new_x, new_y);
                     return;
                 }
             }
             self.mark_dirty();
             self.status = format!(
-                "Moved {} to {:.2}, {:.2}",
+                "已移动 {} 到 {:.2}, {:.2}",
                 selection.label(),
                 snapped_pos[0],
                 snapped_pos[1]
@@ -985,14 +985,14 @@ impl EditorApp {
                 } else {
                     self.selected_item
                         .as_ref()
-                        .map(|selection| format!("Selected {}", selection.label()))
-                        .unwrap_or_else(|| "No object selected".to_owned())
+                        .map(|selection| format!("已选中 {}", selection.label()))
+                        .unwrap_or_else(|| "未选中对象".to_owned())
                 };
             } else {
                 if !(modifiers.shift || modifiers.command || modifiers.ctrl) {
                     self.clear_selection();
                 }
-                self.status = "No object selected".to_owned();
+                self.status = "未选中对象".to_owned();
             }
         }
     }
@@ -1037,14 +1037,14 @@ impl EditorApp {
                 start: [tile_x, tile_y],
                 current: [tile_x, tile_y],
             });
-            self.status = "拖拽框选 Stamp 区域".to_owned();
+            self.status = "拖拽框选盖章区域".to_owned();
             return;
         }
 
         if response.dragged() {
             if let Some(drag) = &mut self.stamp_capture_drag {
                 drag.current = [tile_x, tile_y];
-                self.status = "拖拽框选 Stamp 区域".to_owned();
+                self.status = "拖拽框选盖章区域".to_owned();
             }
             return;
         }
@@ -1061,7 +1061,7 @@ impl EditorApp {
         }
 
         if self.stamp_pattern.is_none() {
-            self.status = "先用盖章工具拖拽框选一片地图生成 Stamp".to_owned();
+            self.status = "先用盖章工具拖拽框选一片地图生成盖章模板".to_owned();
             return;
         }
 
@@ -1071,7 +1071,7 @@ impl EditorApp {
     pub(crate) fn create_stamp_from_selection(&mut self) {
         let selections = self.current_selection_list();
         if selections.is_empty() {
-            self.status = "请先选择要做成 Stamp 的对象".to_owned();
+            self.status = "请先选择要做成盖章模板的对象".to_owned();
             return;
         }
 
@@ -1080,20 +1080,20 @@ impl EditorApp {
             .filter_map(|selection| self.stamp_item_for_selection(selection))
             .collect::<Vec<_>>();
         let Some(pattern) = self.normalized_stamp_pattern(items) else {
-            self.status = "当前选择不能生成 Stamp".to_owned();
+            self.status = "当前选择不能生成盖章模板".to_owned();
             return;
         };
 
         let count = pattern.item_count();
         self.stamp_pattern = Some(pattern);
         self.tool = ToolKind::Stamp;
-        self.status = format!("已从选择生成 Stamp：{} 个对象", count);
+        self.status = format!("已从选择生成盖章模板：{} 个对象", count);
     }
 
     pub(crate) fn clear_stamp_pattern(&mut self) {
         self.stamp_pattern = None;
         self.stamp_capture_drag = None;
-        self.status = "已清空 Stamp".to_owned();
+        self.status = "已清空盖章模板".to_owned();
     }
 
     fn capture_stamp_from_tile_rect(&mut self, start: [i32; 2], end: [i32; 2]) {
@@ -1108,7 +1108,7 @@ impl EditorApp {
         let width = pattern.width;
         let height = pattern.height;
         self.stamp_pattern = Some(pattern);
-        self.status = format!("已生成 Stamp：{}x{}，{} 个对象", width, height, count);
+        self.status = format!("已生成盖章模板：{}x{}，{} 个对象", width, height, count);
     }
 
     fn stamp_pattern_from_tile_rect(
@@ -1212,7 +1212,7 @@ impl EditorApp {
 
     fn paste_stamp_at(&mut self, x: i32, y: i32) {
         let Some(pattern) = self.stamp_pattern.clone() else {
-            self.status = "Stamp 为空".to_owned();
+            self.status = "盖章模板为空".to_owned();
             return;
         };
         if pattern
@@ -1220,7 +1220,7 @@ impl EditorApp {
             .iter()
             .all(|item| self.layer_state(item.layer()).locked)
         {
-            self.status = "Stamp 涉及的图层都已锁定".to_owned();
+            self.status = "盖章模板涉及的图层都已锁定".to_owned();
             return;
         }
 
@@ -1324,16 +1324,16 @@ impl EditorApp {
         }
 
         if placed == 0 {
-            self.status = "Stamp 没有可放置对象，可能越界或图层已锁定".to_owned();
+            self.status = "盖章模板没有可放置对象，可能越界或图层已锁定".to_owned();
             return;
         }
 
         self.set_selection(next_selection);
         self.mark_dirty();
         self.status = if skipped > 0 {
-            format!("Stamp 已放置 {} 个对象，跳过 {}", placed, skipped)
+            format!("盖章已放置 {} 个对象，跳过 {}", placed, skipped)
         } else {
-            format!("Stamp 已放置 {} 个对象", placed)
+            format!("盖章已放置 {} 个对象", placed)
         };
     }
 
@@ -3183,11 +3183,11 @@ impl EditorApp {
 
     pub(crate) fn flip_selected_item(&mut self) {
         let Some(selection) = self.selected_item.clone() else {
-            self.status = "Select an item before flipping".to_owned();
+            self.status = "请先选择要翻转的对象".to_owned();
             return;
         };
         let Some((flip_x, rotation)) = self.transform_for_selection(&selection) else {
-            self.status = format!("No transform target for {}", selection.label());
+            self.status = format!("{} 不能调整变换", selection.label());
             return;
         };
 
@@ -3198,16 +3198,16 @@ impl EditorApp {
         self.push_undo_snapshot();
         self.set_transform_for_selection(&selection, !flip_x, rotation);
         self.mark_dirty();
-        self.status = format!("Flipped {}", selection.label());
+        self.status = format!("已水平翻转 {}", selection.label());
     }
 
     pub(crate) fn rotate_selected_item(&mut self, delta: i32) {
         let Some(selection) = self.selected_item.clone() else {
-            self.status = "Select an item before rotating".to_owned();
+            self.status = "请先选择要旋转的对象".to_owned();
             return;
         };
         let Some((flip_x, rotation)) = self.transform_for_selection(&selection) else {
-            self.status = format!("No transform target for {}", selection.label());
+            self.status = format!("{} 不能调整变换", selection.label());
             return;
         };
 
@@ -3218,12 +3218,12 @@ impl EditorApp {
         self.push_undo_snapshot();
         self.set_transform_for_selection(&selection, flip_x, normalize_rotation(rotation + delta));
         self.mark_dirty();
-        self.status = format!("Rotated {}", selection.label());
+        self.status = format!("已旋转 {}", selection.label());
     }
 
     pub(crate) fn reset_selected_transform(&mut self) {
         let Some(selection) = self.selected_item.clone() else {
-            self.status = "Select an item before resetting transform".to_owned();
+            self.status = "请先选择要重置变换的对象".to_owned();
             return;
         };
 
@@ -3234,7 +3234,7 @@ impl EditorApp {
         self.push_undo_snapshot();
         self.set_transform_for_selection(&selection, false, 0);
         self.mark_dirty();
-        self.status = format!("Reset transform for {}", selection.label());
+        self.status = format!("已重置 {} 的变换", selection.label());
     }
 
     pub(crate) fn transform_for_selection(&self, selection: &SelectedItem) -> Option<(bool, i32)> {
@@ -3433,7 +3433,7 @@ impl EditorApp {
 
         if let Some([width, height]) = resized_to {
             self.mark_dirty();
-            self.status = format!("Resized Ground:{x},{y} to {width} x {height}");
+            self.status = format!("已调整地表 {x},{y} 为 {width} x {height}");
         }
     }
 
@@ -4285,7 +4285,7 @@ impl EditorApp {
                 painter,
                 rect.right_top(),
                 THEME_MULTI_SELECTION,
-                "生成 Stamp",
+                "生成盖章模板",
             );
             return;
         }
@@ -4298,7 +4298,7 @@ impl EditorApp {
             return;
         };
         let Some(pattern) = &self.stamp_pattern else {
-            self.draw_canvas_hover_label(painter, hover_pos, THEME_WARNING, "拖拽框选生成 Stamp");
+            self.draw_canvas_hover_label(painter, hover_pos, THEME_WARNING, "拖拽框选生成盖章模板");
             return;
         };
 
@@ -4377,7 +4377,7 @@ impl EditorApp {
         let bounds = self.tile_screen_rect(canvas_rect, x, y, pattern.width, pattern.height);
         self.paint_preview_rect(painter, bounds, color, !warnings.is_empty());
         let label = if warnings.is_empty() {
-            format!("Stamp {} 个对象", pattern.item_count())
+            format!("盖章 {} 个对象", pattern.item_count())
         } else {
             warnings.join("\n")
         };
@@ -4401,7 +4401,7 @@ impl EditorApp {
         if x + pattern.width > self.document.width as i32
             || y + pattern.height > self.document.height as i32
         {
-            warnings.push("Stamp 超出地图边界，粘贴时会跳过越界对象".to_owned());
+            warnings.push("盖章模板超出地图边界，粘贴时会跳过越界对象".to_owned());
         }
         warnings
     }
@@ -4834,15 +4834,15 @@ impl EditorApp {
                     .selected_cutscene_index
                     .and_then(|index| self.cutscene_database.cutscenes().get(index))
                     .map(|cutscene| cutscene.id.as_str())
-                    .unwrap_or("none");
-                status_segment(ui, "File", &current_file);
+                    .unwrap_or("无");
+                status_segment(ui, "文件", &current_file);
                 status_segment(
                     ui,
-                    "Items",
+                    "条目",
                     &self.cutscene_database.cutscenes().len().to_string(),
                 );
-                status_segment(ui, "Selected", selected);
-                status_segment(ui, "Workspace", self.active_workspace.label());
+                status_segment(ui, "选中", selected);
+                status_segment(ui, "工作区", self.active_workspace.label());
                 status_message(ui, &self.status);
                 return;
             }
@@ -4857,11 +4857,11 @@ impl EditorApp {
                     .selected_event_index
                     .and_then(|index| self.event_database.events().get(index))
                     .map(|event| event.id.as_str())
-                    .unwrap_or("none");
-                status_segment(ui, "File", &current_file);
-                status_segment(ui, "Items", &self.event_database.events().len().to_string());
-                status_segment(ui, "Selected", selected);
-                status_segment(ui, "Workspace", self.active_workspace.label());
+                    .unwrap_or("无");
+                status_segment(ui, "文件", &current_file);
+                status_segment(ui, "条目", &self.event_database.events().len().to_string());
+                status_segment(ui, "选中", selected);
+                status_segment(ui, "工作区", self.active_workspace.label());
                 status_message(ui, &self.status);
                 return;
             }
@@ -4869,21 +4869,21 @@ impl EditorApp {
                 .mouse_tile
                 .map(|tile| format!("{}, {}", tile[0], tile[1]))
                 .unwrap_or_else(|| "-".to_owned());
-            let asset = self.selected_asset.as_deref().unwrap_or("none");
+            let asset = self.selected_asset.as_deref().unwrap_or("无");
             let selections = self.current_selection_list();
             let selected_item = if selections.len() > 1 {
-                format!("{} items", selections.len())
+                format!("{} 个对象", selections.len())
             } else {
                 selections
                     .first()
                     .map(SelectedItem::label)
-                    .unwrap_or_else(|| "none".to_owned())
+                    .unwrap_or_else(|| "无".to_owned())
             };
             let transform = self
                 .selected_item
                 .as_ref()
                 .and_then(|selection| self.transform_for_selection(selection))
-                .map(|(flip_x, rotation)| format!("flip_x={}, rot={}deg", flip_x, rotation))
+                .map(|(flip_x, rotation)| format!("水平翻转={flip_x}, 旋转={rotation}度"))
                 .unwrap_or_else(|| "-".to_owned());
             let stamp = self
                 .stamp_pattern
@@ -4904,27 +4904,27 @@ impl EditorApp {
                 dirty_marker
             );
 
-            status_segment(ui, "File", &current_file);
-            status_segment(ui, "Mouse", &mouse);
-            status_segment(ui, "Asset", asset);
-            status_segment(ui, "Selection", &selected_item);
-            status_segment(ui, "Transform", &transform);
-            status_segment(ui, "Layer", self.active_layer.zh_label());
+            status_segment(ui, "文件", &current_file);
+            status_segment(ui, "鼠标", &mouse);
+            status_segment(ui, "素材", asset);
+            status_segment(ui, "选中", &selected_item);
+            status_segment(ui, "变换", &transform);
+            status_segment(ui, "图层", self.active_layer.zh_label());
             status_segment(
                 ui,
-                "Ground",
+                "地块",
                 &format!(
                     "{}x{}",
                     self.ground_footprint_w.max(1),
                     self.ground_footprint_h.max(1)
                 ),
             );
-            status_segment(ui, "Stamp", &stamp);
-            status_segment(ui, "Zoom", &format!("{:.0}%", self.zoom * 100.0));
+            status_segment(ui, "盖章", &stamp);
+            status_segment(ui, "缩放", &format!("{:.0}%", self.zoom * 100.0));
             if let Some(texture_status) = self.texture_loading_status() {
-                status_segment(ui, "Textures", &texture_status);
+                status_segment(ui, "贴图", &texture_status);
             }
-            status_segment(ui, "Workspace", self.active_workspace.label());
+            status_segment(ui, "工作区", self.active_workspace.label());
             status_message(ui, &self.status);
         });
     }

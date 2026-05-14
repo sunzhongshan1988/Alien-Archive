@@ -42,11 +42,11 @@ impl CutsceneStepKind {
 
     fn label(self) -> &'static str {
         match self {
-            Self::FadeIn => "Fade In",
-            Self::FadeOut => "Fade Out",
-            Self::Wait => "Wait",
-            Self::TextPanel => "Text Panel",
-            Self::SetFlag => "Set Flag",
+            Self::FadeIn => "淡入",
+            Self::FadeOut => "淡出",
+            Self::Wait => "等待",
+            Self::TextPanel => "文本面板",
+            Self::SetFlag => "设置标记",
         }
     }
 
@@ -117,13 +117,13 @@ impl EditorApp {
             Ok(()) => {
                 self.cutscene_db_dirty = false;
                 self.status = format!(
-                    "Cutscenes saved {}",
+                    "过场已保存 {}",
                     display_project_path(&self.project_root, &path)
                 );
                 true
             }
             Err(error) => {
-                self.status = format!("Cutscene save failed: {error:#}");
+                self.status = format!("过场保存失败：{error:#}");
                 false
             }
         }
@@ -141,12 +141,12 @@ impl EditorApp {
                     Some(0)
                 };
                 self.status = format!(
-                    "Cutscenes reloaded {}",
+                    "过场已重新加载 {}",
                     display_project_path(&self.project_root, &path)
                 );
             }
             Err(error) => {
-                self.status = format!("Cutscene reload failed: {error:#}");
+                self.status = format!("过场重新加载失败：{error:#}");
             }
         }
     }
@@ -214,9 +214,9 @@ impl EditorApp {
             .count();
 
         self.status = if errors == 0 && warnings == 0 {
-            "Cutscenes 校验通过".to_owned()
+            "过场校验通过".to_owned()
         } else {
-            format!("Cutscenes 校验：{errors} 个错误，{warnings} 个警告")
+            format!("过场校验：{errors} 个错误，{warnings} 个警告")
         };
     }
 
@@ -261,14 +261,14 @@ impl EditorApp {
                 for row in rows {
                     let selected = self.selected_cutscene_index == Some(row.index);
                     let label = if row.id.trim().is_empty() {
-                        "<empty id>".to_owned()
+                        "<空 id>".to_owned()
                     } else {
                         row.id.clone()
                     };
-                    let detail = format!("{} steps / {}", row.step_count, row.completion);
+                    let detail = format!("{} 个步骤 / {}", row.step_count, row.completion);
                     let response =
                         resource_row(ui, selected, &label, &detail, Vec::new()).on_hover_text(
-                            format!("{} steps / completion {}", row.step_count, row.completion),
+                            format!("{} 个步骤 / 完成后 {}", row.step_count, row.completion),
                         );
                     if response.clicked() {
                         self.selected_cutscene_index = Some(row.index);
@@ -287,7 +287,7 @@ impl EditorApp {
             .count();
         resource_list_header(
             ui,
-            "Cutscenes",
+            "过场",
             &display_project_path(&self.project_root, &self.cutscene_db_path()),
             visible_count,
             self.cutscene_database.cutscenes().len(),
@@ -329,9 +329,9 @@ impl EditorApp {
             command_status_badge(
                 ui,
                 if self.cutscene_db_dirty {
-                    "dirty"
+                    "未保存"
                 } else {
-                    "clean"
+                    "已保存"
                 },
                 if self.cutscene_db_dirty {
                     CommandBadgeStatus::Dirty
@@ -344,7 +344,7 @@ impl EditorApp {
         resource_search(
             ui,
             &mut self.cutscene_search,
-            "搜索 id / 文本 / flag / scene",
+            "搜索 id / 文本 / 标记 / 场景",
         );
         ui.separator();
 
@@ -369,8 +369,8 @@ impl EditorApp {
         let Some(index) = self.normalized_selected_cutscene_index() else {
             empty_state(
                 ui,
-                "No Cutscene Selected",
-                "新建或选择一个 cutscene 后，可以在这里编辑步骤。",
+                "未选择过场",
+                "新建或选择一个过场后，可以在这里编辑步骤。",
             );
             return;
         };
@@ -381,11 +381,11 @@ impl EditorApp {
         surface_panel_header(
             ui,
             if draft.id.trim().is_empty() {
-                "Untitled Cutscene"
+                "未命名过场"
             } else {
                 draft.id.as_str()
             },
-            Some("blocking sequence"),
+            Some("阻塞序列"),
         );
 
         detail_surface(ui, |ui| {
@@ -393,7 +393,7 @@ impl EditorApp {
         });
 
         ui.add_space(8.0);
-        card_section_header(ui, "Steps", draft.steps.len());
+        card_section_header(ui, "步骤", draft.steps.len());
         draw_step_add_buttons(ui, &mut draft.steps);
         egui::ScrollArea::vertical()
             .id_salt(("cutscene_steps_scroll", index))
@@ -417,7 +417,7 @@ impl EditorApp {
 
     fn draw_cutscene_reference_panel(&self, ui: &mut egui::Ui) {
         let messages = self.cutscene_validation_messages();
-        validation_panel(ui, "Validation", &messages);
+        validation_panel(ui, "校验", &messages);
         ui.add_space(8.0);
         let selected = self
             .selected_cutscene_index
@@ -425,18 +425,18 @@ impl EditorApp {
         let lines = selected
             .map(|cutscene| {
                 vec![
-                    format!("Cutscene: {}", cutscene.id),
-                    format!("Steps: {}", cutscene.steps.len()),
+                    format!("过场：{}", cutscene.id),
+                    format!("步骤：{}", cutscene.steps.len()),
                     format!(
-                        "Completion: {}",
+                        "完成后：{}",
                         cutscene_completion_label(&cutscene.completion)
                     ),
-                    format!("Blocking: {}", cutscene.blocking),
-                    format!("Play once: {}", cutscene.play_once),
+                    format!("阻塞播放：{}", yes_no_label(cutscene.blocking)),
+                    format!("仅播放一次：{}", yes_no_label(cutscene.play_once)),
                 ]
             })
-            .unwrap_or_else(|| vec!["选择 cutscene 后，这里会显示播放和完成行为。".to_owned()]);
-        info_panel(ui, "Playback", lines);
+            .unwrap_or_else(|| vec!["选择过场后，这里会显示播放和完成行为。".to_owned()]);
+        info_panel(ui, "播放", lines);
     }
 
     fn cutscene_validation_messages(&self) -> Vec<ValidationMessage> {
@@ -502,14 +502,14 @@ impl EditorApp {
             if id.is_empty() {
                 issues.push(CutsceneValidationIssue {
                     severity: CutsceneValidationSeverity::Error,
-                    message: "Cutscene id 不能为空".to_owned(),
+                    message: "过场 id 不能为空".to_owned(),
                 });
                 continue;
             }
             if !ids.insert(id.to_owned()) {
                 issues.push(CutsceneValidationIssue {
                     severity: CutsceneValidationSeverity::Error,
-                    message: format!("Cutscene id 重复：{id}"),
+                    message: format!("过场 id 重复：{id}"),
                 });
             }
             if cutscene.steps.is_empty() {
@@ -539,9 +539,9 @@ fn draw_cutscene_definition_editor(
     cutscene: &mut CutsceneDefinition,
 ) {
     property_text_edit_with_id(ui, "ID", ("cutscene_id", cutscene_index), &mut cutscene.id);
-    property_row(ui, "Playback", |ui| {
-        ui.checkbox(&mut cutscene.blocking, "blocking");
-        ui.checkbox(&mut cutscene.play_once, "play once");
+    property_row(ui, "播放", |ui| {
+        ui.checkbox(&mut cutscene.blocking, "阻塞播放");
+        ui.checkbox(&mut cutscene.play_once, "仅播放一次");
     });
     draw_completion_editor(ui, cutscene_index, &mut cutscene.completion);
 }
@@ -564,13 +564,13 @@ fn draw_completion_editor(
     property_row(ui, "完成后", |ui| {
         egui::ComboBox::from_id_salt(("cutscene_completion_kind", cutscene_index))
             .selected_text(match kind {
-                CompletionKind::Pop => "Pop",
-                CompletionKind::SwitchScene => "Switch Scene",
+                CompletionKind::Pop => "返回上一层",
+                CompletionKind::SwitchScene => "切换场景",
             })
             .width(160.0)
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut kind, CompletionKind::Pop, "Pop");
-                ui.selectable_value(&mut kind, CompletionKind::SwitchScene, "Switch Scene");
+                ui.selectable_value(&mut kind, CompletionKind::Pop, "返回上一层");
+                ui.selectable_value(&mut kind, CompletionKind::SwitchScene, "切换场景");
             });
     });
 
@@ -588,7 +588,7 @@ fn draw_completion_editor(
     if let CutsceneCompletion::SwitchScene { scene } = completion {
         property_text_edit_with_id(
             ui,
-            "Scene",
+            "场景",
             ("cutscene_completion_scene_text", cutscene_index),
             scene,
         );
@@ -611,7 +611,7 @@ fn draw_completion_editor(
 fn draw_step_add_buttons(ui: &mut egui::Ui, steps: &mut Vec<CutsceneStep>) {
     add_rule_menu(
         ui,
-        "+ Add Step",
+        "+ 添加步骤",
         &CutsceneStepKind::ALL,
         CutsceneStepKind::label,
         |kind| steps.push(kind.default_step()),
@@ -634,7 +634,7 @@ fn draw_steps_editor(ui: &mut egui::Ui, cutscene_index: usize, steps: &mut Vec<C
             ui,
             index + 1,
             title,
-            "Step",
+            "步骤",
             |ui| {
                 if compact_card_button(ui, "删除").clicked() {
                     action = Some(StepAction::Delete);
@@ -683,7 +683,7 @@ fn draw_step_editor(
     step: &mut CutsceneStep,
 ) {
     let mut kind = CutsceneStepKind::from_step(step);
-    property_grid::property_row(ui, "Kind", |ui| {
+    property_grid::property_row(ui, "类型", |ui| {
         egui::ComboBox::from_id_salt(("cutscene_step_kind", cutscene_index, step_index))
             .selected_text(kind.label())
             .width(ui.available_width())
@@ -701,7 +701,7 @@ fn draw_step_editor(
         CutsceneStep::FadeIn { duration }
         | CutsceneStep::FadeOut { duration }
         | CutsceneStep::Wait { duration } => {
-            property_duration(ui, "Duration", duration);
+            property_duration(ui, "时长", duration);
         }
         CutsceneStep::TextPanel {
             speaker,
@@ -715,11 +715,11 @@ fn draw_step_editor(
                     egui::DragValue::new(min_duration)
                         .range(0.0..=30.0)
                         .speed(0.05)
-                        .prefix("min "),
+                        .prefix("最短 "),
                 );
             });
             let mut has_speaker = speaker.is_some();
-            property_row(ui, "Speaker", |ui| {
+            property_row(ui, "说话人", |ui| {
                 ui.checkbox(&mut has_speaker, "显示说话人");
             });
             if has_speaker && speaker.is_none() {
@@ -730,7 +730,7 @@ fn draw_step_editor(
             if let Some(speaker) = speaker {
                 draw_source_text_editor(
                     ui,
-                    "Speaker",
+                    "说话人",
                     ("cutscene_step_speaker", cutscene_index, step_index),
                     speaker,
                     1,
@@ -747,7 +747,7 @@ fn draw_step_editor(
         CutsceneStep::SetFlag { flag } => {
             property_text_edit_with_id(
                 ui,
-                "Flag",
+                "标记",
                 ("cutscene_step_flag", cutscene_index, step_index),
                 flag,
             );
@@ -775,7 +775,7 @@ fn draw_source_text_editor(
 ) {
     ui.label(egui::RichText::new(label).color(THEME_MUTED_TEXT));
     let mut source = cutscene_source_text(text).to_owned();
-    let changed = property_row(ui, "Text", |ui| {
+    let changed = property_row(ui, "文本", |ui| {
         ui.add(
             egui::TextEdit::multiline(&mut source)
                 .id_salt((id_salt, "source"))
@@ -831,7 +831,7 @@ fn validate_cutscene_step(
     step: &CutsceneStep,
     issues: &mut Vec<CutsceneValidationIssue>,
 ) {
-    let step_label = format!("{cutscene_id} step {}", step_index + 1);
+    let step_label = format!("{cutscene_id} 步骤 {}", step_index + 1);
     match step {
         CutsceneStep::FadeIn { duration }
         | CutsceneStep::FadeOut { duration }
@@ -839,7 +839,7 @@ fn validate_cutscene_step(
             if !duration.is_finite() || *duration < 0.0 {
                 issues.push(CutsceneValidationIssue {
                     severity: CutsceneValidationSeverity::Error,
-                    message: format!("{step_label} duration 必须 >= 0"),
+                    message: format!("{step_label} 时长必须 >= 0"),
                 });
             }
         }
@@ -852,7 +852,7 @@ fn validate_cutscene_step(
             if !min_duration.is_finite() || *min_duration < 0.0 {
                 issues.push(CutsceneValidationIssue {
                     severity: CutsceneValidationSeverity::Error,
-                    message: format!("{step_label} min_duration 必须 >= 0"),
+                    message: format!("{step_label} 最短时长必须 >= 0"),
                 });
             }
             if body.english.trim().is_empty() && body.chinese.trim().is_empty() {
@@ -866,7 +866,7 @@ fn validate_cutscene_step(
             }) {
                 issues.push(CutsceneValidationIssue {
                     severity: CutsceneValidationSeverity::Warning,
-                    message: format!("{step_label} speaker 为空"),
+                    message: format!("{step_label} 说话人为空"),
                 });
             }
         }
@@ -874,7 +874,7 @@ fn validate_cutscene_step(
             if flag.trim().is_empty() {
                 issues.push(CutsceneValidationIssue {
                     severity: CutsceneValidationSeverity::Error,
-                    message: format!("{step_label} flag 不能为空"),
+                    message: format!("{step_label} 标记不能为空"),
                 });
             }
         }
@@ -919,7 +919,11 @@ fn append_step_search_text(step: &CutsceneStep, haystack: &mut String) {
 
 fn cutscene_completion_label(completion: &CutsceneCompletion) -> &str {
     match completion {
-        CutsceneCompletion::Pop => "Pop",
+        CutsceneCompletion::Pop => "返回上一层",
         CutsceneCompletion::SwitchScene { scene } => scene,
     }
+}
+
+fn yes_no_label(value: bool) -> &'static str {
+    if value { "是" } else { "否" }
 }

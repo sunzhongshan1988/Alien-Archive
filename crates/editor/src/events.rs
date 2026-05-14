@@ -51,14 +51,14 @@ impl EventConditionKind {
 
     fn label(self) -> &'static str {
         match self {
-            Self::FlagSet => "FlagSet",
-            Self::FlagMissing => "FlagMissing",
-            Self::CutsceneSeen => "CutsceneSeen",
-            Self::CutsceneMissing => "CutsceneMissing",
-            Self::CodexScanned => "CodexScanned",
-            Self::CodexMissing => "CodexMissing",
-            Self::ObjectiveCheckpointDone => "ObjectiveCheckpointDone",
-            Self::ObjectiveCheckpointMissing => "ObjectiveCheckpointMissing",
+            Self::FlagSet => "标记已设置",
+            Self::FlagMissing => "标记未设置",
+            Self::CutsceneSeen => "过场已播放",
+            Self::CutsceneMissing => "过场未播放",
+            Self::CodexScanned => "图鉴已扫描",
+            Self::CodexMissing => "图鉴未扫描",
+            Self::ObjectiveCheckpointDone => "目标检查点已完成",
+            Self::ObjectiveCheckpointMissing => "目标检查点未完成",
         }
     }
 
@@ -113,10 +113,10 @@ impl EventActionKind {
 
     fn label(self) -> &'static str {
         match self {
-            Self::PlayCutscene => "PlayCutscene",
-            Self::SetFlag => "SetFlag",
-            Self::AdvanceObjective => "AdvanceObjective",
-            Self::ShowNotice => "ShowNotice",
+            Self::PlayCutscene => "播放过场",
+            Self::SetFlag => "设置标记",
+            Self::AdvanceObjective => "推进目标",
+            Self::ShowNotice => "显示提示",
         }
     }
 
@@ -138,8 +138,22 @@ impl EventActionKind {
                 checkpoint_id: None,
                 complete_objective: false,
             },
-            Self::ShowNotice => EventAction::ShowNotice("Signal recorded.".to_owned()),
+            Self::ShowNotice => EventAction::ShowNotice("信号已记录。".to_owned()),
         }
+    }
+}
+
+fn event_trigger_label(trigger: &EventTrigger) -> &'static str {
+    match trigger {
+        EventTrigger::EnterZone => "进入区域",
+    }
+}
+
+fn event_scope_label(scope: &EventScope) -> &'static str {
+    match scope {
+        EventScope::OncePerZone => "每个区域一次",
+        EventScope::WorldOnce => "全局一次",
+        EventScope::Repeatable => "可重复",
     }
 }
 
@@ -157,7 +171,7 @@ impl EditorApp {
             .iter()
             .any(|issue| issue.severity == EventValidationSeverity::Error)
         {
-            self.status = "保存失败：Events 有错误".to_owned();
+            self.status = "保存失败：事件有错误".to_owned();
             return false;
         }
 
@@ -167,13 +181,13 @@ impl EditorApp {
             Ok(()) => {
                 self.event_db_dirty = false;
                 self.status = format!(
-                    "Events saved {}",
+                    "事件已保存 {}",
                     display_project_path(&self.project_root, &path)
                 );
                 true
             }
             Err(error) => {
-                self.status = format!("Event save failed: {error:#}");
+                self.status = format!("事件保存失败：{error:#}");
                 false
             }
         }
@@ -191,12 +205,12 @@ impl EditorApp {
                     Some(0)
                 };
                 self.status = format!(
-                    "Events reloaded {}",
+                    "事件已重新加载 {}",
                     display_project_path(&self.project_root, &path)
                 );
             }
             Err(error) => {
-                self.status = format!("Event reload failed: {error:#}");
+                self.status = format!("事件重新加载失败：{error:#}");
             }
         }
     }
@@ -205,7 +219,7 @@ impl EditorApp {
         let id = self.unique_event_id("event.new");
         let event = WorldEventDefinition {
             id,
-            actions: vec![EventAction::ShowNotice("Signal recorded.".to_owned())],
+            actions: vec![EventAction::ShowNotice("信号已记录。".to_owned())],
             ..WorldEventDefinition::default()
         };
         self.event_database.events_mut().push(event);
@@ -255,9 +269,9 @@ impl EditorApp {
             .filter(|issue| issue.severity == EventValidationSeverity::Warning)
             .count();
         self.status = if errors == 0 && warnings == 0 {
-            "Events 校验通过".to_owned()
+            "事件校验通过".to_owned()
         } else {
-            format!("Events 校验：{errors} 个错误，{warnings} 个警告")
+            format!("事件校验：{errors} 个错误，{warnings} 个警告")
         };
     }
 
@@ -303,7 +317,7 @@ impl EditorApp {
             .count();
         resource_list_header(
             ui,
-            "Events",
+            "事件",
             &display_project_path(&self.project_root, &self.event_db_path()),
             visible_count,
             self.event_database.events().len(),
@@ -337,9 +351,9 @@ impl EditorApp {
             command_status_badge(
                 ui,
                 if self.event_db_dirty {
-                    "dirty"
+                    "未保存"
                 } else {
-                    "clean"
+                    "已保存"
                 },
                 if self.event_db_dirty {
                     CommandBadgeStatus::Dirty
@@ -361,14 +375,14 @@ impl EditorApp {
                     }
                     let selected = self.selected_event_index == Some(index);
                     let detail = format!(
-                        "{} conditions / {} actions / {:?}",
+                        "{} 个条件 / {} 个动作 / {}",
                         event.conditions.len(),
                         event.actions.len(),
-                        event.scope
+                        event_scope_label(&event.scope)
                     );
                     let badge = if event.actions.is_empty() {
                         vec![crate::ui::tree::TreeBadge {
-                            label: "warn",
+                            label: "警告",
                             color: THEME_WARNING,
                         }]
                     } else {
@@ -385,7 +399,7 @@ impl EditorApp {
         let Some(index) = self.normalized_selected_event_index() else {
             empty_state(
                 ui,
-                "No Event Selected",
+                "未选择事件",
                 "在左侧新建或选择一个事件，然后配置触发条件和动作。",
             );
             return;
@@ -396,11 +410,11 @@ impl EditorApp {
         panel_header(
             ui,
             if draft.id.trim().is_empty() {
-                "Untitled Event"
+                "未命名事件"
             } else {
                 &draft.id
             },
-            Some("EnterZone driven world event"),
+            Some("由区域触发的世界事件"),
         );
         draw_event_definition_editor(
             ui,
@@ -417,7 +431,7 @@ impl EditorApp {
 
     fn draw_event_reference_panel(&self, ui: &mut egui::Ui) {
         let messages = self.event_validation_messages();
-        validation_panel(ui, "Validation", &messages);
+        validation_panel(ui, "校验", &messages);
         ui.add_space(8.0);
 
         let selected_event = self
@@ -426,8 +440,8 @@ impl EditorApp {
         let Some(event) = selected_event else {
             info_panel(
                 ui,
-                "References",
-                ["选择事件后，这里会显示当前地图中的 Zone 引用。".to_owned()],
+                "引用",
+                ["选择事件后，这里会显示当前地图中的区域引用。".to_owned()],
             );
             return;
         };
@@ -442,23 +456,21 @@ impl EditorApp {
             .collect::<Vec<_>>();
         zones.sort();
         let mut lines = vec![
-            format!("Event: {}", event.id),
-            format!("Scope: {:?}", event.scope),
-            format!("Current map zones: {}", zones.len()),
+            format!("事件：{}", event.id),
+            format!("作用范围：{}", event_scope_label(&event.scope)),
+            format!("当前地图区域：{}", zones.len()),
         ];
         if zones.is_empty() {
-            lines.push(
-                "没有 Zone 引用当前事件。请在地图 Zone Inspector 的 Event 字段选择它。".to_owned(),
-            );
+            lines.push("没有区域引用当前事件。请在地图区域检查器的事件字段选择它。".to_owned());
         } else {
             lines.extend(
                 zones
                     .into_iter()
                     .take(8)
-                    .map(|zone| format!("Zone: {zone}")),
+                    .map(|zone| format!("区域：{zone}")),
             );
         }
-        info_panel(ui, "References", lines);
+        info_panel(ui, "引用", lines);
     }
 
     fn event_validation_messages(&self) -> Vec<ValidationMessage> {
@@ -535,44 +547,60 @@ fn draw_event_definition_editor(
     objectives: &content::ObjectiveDatabase,
 ) {
     detail_surface(ui, |ui| {
-        ui.heading("Definition");
+        ui.heading("定义");
         ui.separator();
         text_field(ui, "ID", ("event_id", event_index), &mut event.id);
-        property_row(ui, "Trigger", |ui| {
+        property_row(ui, "触发", |ui| {
             egui::ComboBox::from_id_salt(("event_trigger", event_index))
-                .selected_text("EnterZone")
+                .selected_text(event_trigger_label(&event.trigger))
                 .width(ui.available_width())
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut event.trigger, EventTrigger::EnterZone, "EnterZone");
+                    ui.selectable_value(
+                        &mut event.trigger,
+                        EventTrigger::EnterZone,
+                        event_trigger_label(&EventTrigger::EnterZone),
+                    );
                 });
         });
-        property_row(ui, "Scope", |ui| {
+        property_row(ui, "范围", |ui| {
             egui::ComboBox::from_id_salt(("event_scope", event_index))
-                .selected_text(format!("{:?}", event.scope))
+                .selected_text(event_scope_label(&event.scope))
                 .width(ui.available_width())
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut event.scope, EventScope::OncePerZone, "OncePerZone");
-                    ui.selectable_value(&mut event.scope, EventScope::WorldOnce, "WorldOnce");
-                    ui.selectable_value(&mut event.scope, EventScope::Repeatable, "Repeatable");
+                    ui.selectable_value(
+                        &mut event.scope,
+                        EventScope::OncePerZone,
+                        event_scope_label(&EventScope::OncePerZone),
+                    );
+                    ui.selectable_value(
+                        &mut event.scope,
+                        EventScope::WorldOnce,
+                        event_scope_label(&EventScope::WorldOnce),
+                    );
+                    ui.selectable_value(
+                        &mut event.scope,
+                        EventScope::Repeatable,
+                        event_scope_label(&EventScope::Repeatable),
+                    );
                 });
         });
         helper_text(
             ui,
-            "Zone 只引用 event_id；条件和动作由运行时解释。无条件表示 always allowed。",
+            "区域只引用事件 ID；条件和动作由运行时解释。无条件表示始终允许。",
         );
     });
 
     ui.add_space(10.0);
-    card_section_header(ui, "Conditions", event.conditions.len());
+    card_section_header(ui, "条件", event.conditions.len());
     add_rule_menu(
         ui,
-        "+ Add Condition",
+        "+ 添加条件",
         &EventConditionKind::ALL,
         EventConditionKind::label,
         |kind| event.conditions.push(kind.default_condition()),
     );
     if event.conditions.is_empty() {
-        helper_text(ui, "无条件：玩家进入引用该 event_id 的 Zone 时即可触发。");
+        helper_text(ui, "无条件：玩家进入引用该事件 ID 的区域时即可触发。");
     }
     for index in (0..event.conditions.len()).rev() {
         let mut remove = false;
@@ -581,7 +609,7 @@ fn draw_event_definition_editor(
             ui,
             index + 1,
             kind_label,
-            "Condition",
+            "条件",
             |ui| {
                 if compact_card_button(ui, "删除").clicked() {
                     remove = true;
@@ -604,10 +632,10 @@ fn draw_event_definition_editor(
     }
 
     ui.add_space(10.0);
-    card_section_header(ui, "Actions", event.actions.len());
+    card_section_header(ui, "动作", event.actions.len());
     add_rule_menu(
         ui,
-        "+ Add Action",
+        "+ 添加动作",
         &EventActionKind::ALL,
         EventActionKind::label,
         |kind| event.actions.push(kind.default_action()),
@@ -615,7 +643,7 @@ fn draw_event_definition_editor(
     if event.actions.is_empty() {
         ui.colored_label(
             THEME_WARNING,
-            "没有 action：事件会通过校验警告，运行时不会产生效果。",
+            "没有动作：事件会通过校验警告，运行时不会产生效果。",
         );
     }
     for index in (0..event.actions.len()).rev() {
@@ -625,7 +653,7 @@ fn draw_event_definition_editor(
             ui,
             index + 1,
             kind_label,
-            "Action",
+            "动作",
             |ui| {
                 if compact_card_button(ui, "删除").clicked() {
                     remove = true;
@@ -657,7 +685,7 @@ fn draw_condition_editor(
     objectives: &content::ObjectiveDatabase,
 ) {
     let mut kind = EventConditionKind::from_condition(condition);
-    property_row(ui, "Kind", |ui| {
+    property_row(ui, "类型", |ui| {
         egui::ComboBox::from_id_salt(("event_condition_kind", event_index, condition_index))
             .selected_text(kind.label())
             .width(ui.available_width())
@@ -686,7 +714,7 @@ fn draw_condition_editor(
         EventCondition::CutsceneSeen(value) | EventCondition::CutsceneMissing(value) => {
             text_field(
                 ui,
-                "Cutscene ID",
+                "过场 ID",
                 ("event_condition_cutscene", event_index, condition_index),
                 value,
             );
@@ -717,7 +745,7 @@ fn draw_action_editor(
     objectives: &content::ObjectiveDatabase,
 ) {
     let mut kind = EventActionKind::from_action(action);
-    property_row(ui, "Kind", |ui| {
+    property_row(ui, "类型", |ui| {
         egui::ComboBox::from_id_salt(("event_action_kind", event_index, action_index))
             .selected_text(kind.label())
             .width(ui.available_width())
@@ -743,7 +771,7 @@ fn draw_action_editor(
         EventAction::SetFlag(flag) => {
             text_field(
                 ui,
-                "Flag",
+                "标记",
                 ("event_action_flag", event_index, action_index),
                 flag,
             );
@@ -762,14 +790,14 @@ fn draw_action_editor(
                 objectives,
             );
             set_optional_string(checkpoint_id, checkpoint);
-            property_row(ui, "Complete", |ui| {
+            property_row(ui, "完成", |ui| {
                 ui.checkbox(complete_objective, "完成整个目标");
             });
         }
         EventAction::ShowNotice(message) => {
             multiline_field(
                 ui,
-                "Notice",
+                "提示",
                 ("event_action_notice", event_index, action_index),
                 message,
                 3,
@@ -789,14 +817,7 @@ fn draw_cutscene_picker(
         .iter()
         .map(|cutscene| cutscene.id.clone())
         .collect::<Vec<_>>();
-    picker_field(
-        ui,
-        "Cutscene ID",
-        id,
-        cutscene_id,
-        "选择 Cutscene",
-        &options,
-    );
+    picker_field(ui, "过场 ID", id, cutscene_id, "选择过场", &options);
 }
 
 fn draw_objective_checkpoint_picker(
@@ -813,10 +834,10 @@ fn draw_objective_checkpoint_picker(
         .collect::<Vec<_>>();
     picker_field(
         ui,
-        "Objective ID",
+        "目标 ID",
         (&id, "objective"),
         objective_id,
-        "选择 Objective",
+        "选择目标",
         &objective_options,
     );
     let checkpoint_options = objectives
@@ -831,10 +852,10 @@ fn draw_objective_checkpoint_picker(
         .unwrap_or_default();
     picker_field(
         ui,
-        "Checkpoint ID",
+        "检查点 ID",
         (&id, "checkpoint"),
         checkpoint_id,
-        "选择 Checkpoint",
+        "选择检查点",
         &checkpoint_options,
     );
 }

@@ -108,13 +108,13 @@ fn build_menu(workspace: EditorWorkspace) -> muda::Result<muda::Menu> {
         true,
         &[
             &PredefinedMenuItem::about(
-                Some("关于 Alien Archive Game Editor"),
+                Some("关于 Alien Archive 游戏编辑器"),
                 Some(AboutMetadata {
-                    name: Some("Alien Archive Game Editor".to_owned()),
+                    name: Some("Alien Archive 游戏编辑器".to_owned()),
                     version: Some(env!("CARGO_PKG_VERSION").to_owned()),
                     short_version: None,
                     authors: None,
-                    comments: Some("Alien Archive game content editor".to_owned()),
+                    comments: Some("Alien Archive 游戏内容编辑器".to_owned()),
                     copyright: None,
                     license: None,
                     website: None,
@@ -124,11 +124,11 @@ fn build_menu(workspace: EditorWorkspace) -> muda::Result<muda::Menu> {
                 }),
             ),
             &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::hide(Some("隐藏 Alien Archive Game Editor")),
+            &PredefinedMenuItem::hide(Some("隐藏 Alien Archive 游戏编辑器")),
             &PredefinedMenuItem::hide_others(Some("隐藏其他")),
             &PredefinedMenuItem::show_all(Some("全部显示")),
             &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::quit(Some("退出 Alien Archive Game Editor")),
+            &PredefinedMenuItem::quit(Some("退出 Alien Archive 游戏编辑器")),
         ],
     )?;
 
@@ -153,16 +153,16 @@ fn build_menu(workspace: EditorWorkspace) -> muda::Result<muda::Menu> {
             "文件",
             true,
             &[
-                &menu_item("cutscene.save", "保存 Cutscenes", Some("CmdOrCtrl+s")),
-                &menu_item("cutscene.reload", "重新加载 Cutscenes", None),
+                &menu_item("cutscene.save", "保存过场", Some("CmdOrCtrl+s")),
+                &menu_item("cutscene.reload", "重新加载过场", None),
             ],
         )?,
         EditorWorkspace::Events => Submenu::with_items(
             "文件",
             true,
             &[
-                &menu_item("event.save", "保存 Events", Some("CmdOrCtrl+s")),
-                &menu_item("event.reload", "重新加载 Events", None),
+                &menu_item("event.save", "保存事件", Some("CmdOrCtrl+s")),
+                &menu_item("event.reload", "重新加载事件", None),
             ],
         )?,
     };
@@ -197,18 +197,18 @@ fn build_menu(workspace: EditorWorkspace) -> muda::Result<muda::Menu> {
             "编辑",
             true,
             &[
-                &menu_item("cutscene.new", "新增 Cutscene", Some("CmdOrCtrl+n")),
-                &menu_item("cutscene.duplicate", "复制 Cutscene", None),
-                &menu_item("cutscene.delete", "删除 Cutscene", None),
+                &menu_item("cutscene.new", "新增过场", Some("CmdOrCtrl+n")),
+                &menu_item("cutscene.duplicate", "复制过场", None),
+                &menu_item("cutscene.delete", "删除过场", None),
             ],
         )?,
         EditorWorkspace::Events => Submenu::with_items(
             "编辑",
             true,
             &[
-                &menu_item("event.new", "新增 Event", Some("CmdOrCtrl+n")),
-                &menu_item("event.duplicate", "复制 Event", None),
-                &menu_item("event.delete", "删除 Event", None),
+                &menu_item("event.new", "新增事件", Some("CmdOrCtrl+n")),
+                &menu_item("event.duplicate", "复制事件", None),
+                &menu_item("event.delete", "删除事件", None),
             ],
         )?,
     };
@@ -231,7 +231,7 @@ fn build_menu(workspace: EditorWorkspace) -> muda::Result<muda::Menu> {
             "视图",
             true,
             &[&MenuItem::new(
-                "Cutscenes 工作区没有地图画布视图选项",
+                "过场工作区没有地图画布视图选项",
                 false,
                 None,
             )],
@@ -240,7 +240,7 @@ fn build_menu(workspace: EditorWorkspace) -> muda::Result<muda::Menu> {
             "视图",
             true,
             &[&MenuItem::new(
-                "Events 工作区没有地图画布视图选项",
+                "事件工作区没有地图画布视图选项",
                 false,
                 None,
             )],
@@ -251,9 +251,9 @@ fn build_menu(workspace: EditorWorkspace) -> muda::Result<muda::Menu> {
         "工作区",
         true,
         &[
-            &menu_item("workspace.map", "Overworld Map", None),
-            &menu_item("workspace.cutscenes", "Cutscenes", None),
-            &menu_item("workspace.events", "Events", None),
+            &menu_item("workspace.map", "开放世界地图", None),
+            &menu_item("workspace.cutscenes", "过场", None),
+            &menu_item("workspace.events", "事件", None),
         ],
     )?;
 
@@ -263,7 +263,7 @@ fn build_menu(workspace: EditorWorkspace) -> muda::Result<muda::Menu> {
         &[
             &menu_item("map.validate", "校验地图", Some("CmdOrCtrl+Shift+v")),
             &menu_item("file.save_run", "保存并运行当前地图", None),
-            &menu_item("map.reload_codex", "重新加载 Codex", None),
+            &menu_item("map.reload_codex", "重新加载图鉴", None),
         ],
     )?;
 
@@ -309,18 +309,17 @@ fn build_menu(workspace: EditorWorkspace) -> muda::Result<muda::Menu> {
             &PredefinedMenuItem::separator(),
             &menu_item("asset.unregistered", "未登记图片", None),
             &menu_item("asset.dependency_report", "资产依赖报告", None),
-            &menu_item("asset.reload", "重新扫描 Metadata", None),
+            &menu_item("asset.reload", "重新扫描元数据", None),
         ],
     )?;
 
     let cutscene_menu = Submenu::with_items(
-        "Cutscenes",
+        "过场",
         true,
         &[
             &menu_item("cutscene.menu_new", "新增", None),
             &menu_item("cutscene.menu_duplicate", "复制当前", None),
             &menu_item("cutscene.menu_delete", "删除当前", None),
-            &PredefinedMenuItem::separator(),
             &menu_item("cutscene.menu_save", "保存", None),
             &menu_item("cutscene.menu_reload", "重新加载", None),
             &menu_item("cutscene.menu_validate", "校验", None),
@@ -328,13 +327,12 @@ fn build_menu(workspace: EditorWorkspace) -> muda::Result<muda::Menu> {
     )?;
 
     let event_menu = Submenu::with_items(
-        "Events",
+        "事件",
         true,
         &[
             &menu_item("event.menu_new", "新增", None),
             &menu_item("event.menu_duplicate", "复制当前", None),
             &menu_item("event.menu_delete", "删除当前", None),
-            &PredefinedMenuItem::separator(),
             &menu_item("event.menu_save", "保存", None),
             &menu_item("event.menu_reload", "重新加载", None),
             &menu_item("event.menu_validate", "校验", None),
@@ -347,8 +345,8 @@ fn build_menu(workspace: EditorWorkspace) -> muda::Result<muda::Menu> {
         &[&MenuItem::new(
             match workspace {
                 EditorWorkspace::OverworldMap => "地图快捷键见窗口状态栏",
-                EditorWorkspace::Cutscenes => "Cutscenes: Cmd/Ctrl+S 保存，Cmd/Ctrl+N 新增",
-                EditorWorkspace::Events => "Events: Cmd/Ctrl+S 保存，Cmd/Ctrl+N 新增",
+                EditorWorkspace::Cutscenes => "过场：Cmd/Ctrl+S 保存，Cmd/Ctrl+N 新增",
+                EditorWorkspace::Events => "事件：Cmd/Ctrl+S 保存，Cmd/Ctrl+N 新增",
             },
             false,
             None,

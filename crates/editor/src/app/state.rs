@@ -326,9 +326,9 @@ impl EditorWorkspace {
 
     pub(crate) fn label(self) -> &'static str {
         match self {
-            Self::OverworldMap => "Overworld Map",
-            Self::Cutscenes => "Cutscenes",
-            Self::Events => "Events",
+            Self::OverworldMap => "开放世界地图",
+            Self::Cutscenes => "过场",
+            Self::Events => "事件",
         }
     }
 }

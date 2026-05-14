@@ -33,7 +33,7 @@ pub(crate) fn validation_panel(ui: &mut egui::Ui, title: &str, messages: &[Valid
             .filter(|message| message.level == ValidationLevel::Warning)
             .count();
         ui.label(
-            RichText::new(format!("{errors} errors / {warnings} warnings")).color(if errors > 0 {
+            RichText::new(format!("{errors} 个错误 / {warnings} 个警告")).color(if errors > 0 {
                 THEME_ERROR
             } else {
                 THEME_WARNING

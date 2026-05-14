@@ -3,8 +3,7 @@ use eframe::egui::{Vec2, vec2};
 
 use super::state::{OutlinerBadge, OutlinerEntry, SelectedItem};
 
-pub(crate) const OUTLINER_GROUPS: &[&str] =
-    &["Spawns", "Entities", "Objects", "Decals", "Zones", "Ground"];
+pub(crate) const OUTLINER_GROUPS: &[&str] = &["出生点", "实体", "物件", "贴花", "区域", "地表"];
 pub(crate) const EDITOR_KNOWN_ZONE_TYPES: &[&str] = content::semantics::KNOWN_ZONE_TYPE_KEYS;
 
 pub(crate) fn outliner_entry(

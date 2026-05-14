@@ -2,9 +2,8 @@ use super::*;
 
 impl EditorApp {
     fn draw_asset_panel(&mut self, ui: &mut egui::Ui) {
-        crate::ui::panel_surface::panel_header(ui, "资源库", Some("Assets"));
-        ui.small(format!("{} 个 metadata 素材", self.registry.assets().len()));
-        search_field(ui, &mut self.asset_search, "搜索 id / tag / path");
+        ui.small(format!("{} 个元数据素材", self.registry.assets().len()));
+        search_field(ui, &mut self.asset_search, "搜索 id / 标签 / 路径");
         let search = self.asset_search.to_ascii_lowercase();
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
@@ -74,7 +73,7 @@ impl EditorApp {
             self.ground_footprint_w = footprint[0];
             self.ground_footprint_h = footprint[1];
         }
-        self.status = format!("Selected {}", asset.id);
+        self.status = format!("已选择素材 {}", asset.id);
     }
 
     pub(super) fn draw_left_sidebar(&mut self, ui: &mut egui::Ui) {
@@ -90,6 +89,7 @@ impl EditorApp {
             });
         });
         ui.separator();
+        ui.add_space(8.0);
 
         match self.active_left_tab {
             LeftSidebarTab::Assets => {
@@ -105,7 +105,6 @@ impl EditorApp {
     }
 
     fn draw_layer_panel(&mut self, ui: &mut egui::Ui) {
-        crate::ui::panel_surface::panel_header(ui, "图层", Some("Layers"));
         for layer in LayerKind::ALL {
             let count = self.layer_item_count(layer);
             let state = self.layer_states.entry(layer).or_default();
@@ -129,11 +128,10 @@ impl EditorApp {
     }
 
     fn draw_outliner_panel(&mut self, ui: &mut egui::Ui) {
-        crate::ui::panel_surface::panel_header(ui, "对象", Some("Outliner"));
         search_field(
             ui,
             &mut self.outliner_search,
-            "搜索 id / asset / type / codex / tag",
+            "搜索 id / 素材 / 类型 / 图鉴 / 标签",
         );
 
         let search = self.outliner_search.trim().to_ascii_lowercase();
@@ -145,7 +143,7 @@ impl EditorApp {
 
         let scan_count = visible_entries
             .iter()
-            .filter(|entry| entry.badges.iter().any(|badge| badge.label == "scan"))
+            .filter(|entry| entry.badges.iter().any(|badge| badge.label == "扫描"))
             .count();
         ui.small(format!(
             "{} 个对象，{} 个扫描候选",
@@ -175,7 +173,7 @@ impl EditorApp {
             }
 
             let default_open = if search.is_empty() {
-                *group == "Objects"
+                *group == "物件"
             } else {
                 true
             };
@@ -285,13 +283,13 @@ impl EditorApp {
             let mut badges = Vec::new();
             if solid_cells.contains(&cell) {
                 badges.push(OutlinerBadge {
-                    label: "solid",
+                    label: "碰撞",
                     color: THEME_ERROR,
                 });
             }
             entries.push(outliner_entry(
-                "Spawns",
-                format!("spawn {}", spawn.id),
+                "出生点",
+                format!("出生点 {}", spawn.id),
                 format!("{:.1}, {:.1}", spawn.x, spawn.y),
                 None,
                 vec2(spawn.x * tile_size, spawn.y * tile_size),
@@ -306,12 +304,12 @@ impl EditorApp {
             let codex_id = asset.and_then(|asset| asset.codex_id.as_deref());
             if codex_id.is_some() {
                 badges.push(OutlinerBadge {
-                    label: "scan",
+                    label: "扫描",
                     color: THEME_ACCENT_STRONG,
                 });
                 if entity.interaction_rect.is_none() {
                     badges.push(OutlinerBadge {
-                        label: "missing rect",
+                        label: "缺范围",
                         color: THEME_WARNING,
                     });
                 }
@@ -320,7 +318,7 @@ impl EditorApp {
                 badges.extend(self.codex_status_badges(codex_id));
                 if codex_counts.get(codex_id).copied().unwrap_or(0) > 1 {
                     badges.push(OutlinerBadge {
-                        label: "dup codex",
+                        label: "图鉴重复",
                         color: THEME_WARNING,
                     });
                 }
@@ -331,19 +329,19 @@ impl EditorApp {
                 .is_some_and(|unlock| !unlock.is_empty())
             {
                 badges.push(OutlinerBadge {
-                    label: "unlock",
+                    label: "解锁",
                     color: THEME_WARNING,
                 });
             }
             if entity.entity_type.trim().is_empty() {
                 badges.push(OutlinerBadge {
-                    label: "no type",
+                    label: "缺类型",
                     color: THEME_ERROR,
                 });
             }
             if asset.is_none() {
                 badges.push(OutlinerBadge {
-                    label: "missing asset",
+                    label: "缺素材",
                     color: THEME_ERROR,
                 });
             }
@@ -357,7 +355,7 @@ impl EditorApp {
                 .unwrap_or_default();
             let unlock_search = unlock_search_text(entity.unlock.as_ref());
             entries.push(outliner_entry(
-                "Entities",
+                "实体",
                 entity.id.clone(),
                 format!("{} | {}", entity.asset, entity.entity_type),
                 Some(SelectedItem {
@@ -385,7 +383,7 @@ impl EditorApp {
             let codex_id = asset.and_then(|asset| asset.codex_id.as_deref());
             if codex_id.is_some() {
                 badges.push(OutlinerBadge {
-                    label: "codex only",
+                    label: "仅图鉴",
                     color: THEME_WARNING,
                 });
                 if let Some(codex_id) = codex_id {
@@ -394,12 +392,12 @@ impl EditorApp {
             }
             if asset.is_none() {
                 badges.push(OutlinerBadge {
-                    label: "missing asset",
+                    label: "缺素材",
                     color: THEME_ERROR,
                 });
             }
             entries.push(self.object_outliner_entry(
-                "Objects",
+                "物件",
                 LayerKind::Objects,
                 object,
                 asset,
@@ -414,19 +412,19 @@ impl EditorApp {
             let codex_id = asset.and_then(|asset| asset.codex_id.as_deref());
             if let Some(codex_id) = codex_id {
                 badges.push(OutlinerBadge {
-                    label: "codex only",
+                    label: "仅图鉴",
                     color: THEME_WARNING,
                 });
                 badges.extend(self.codex_status_badges(codex_id));
             }
             if asset.is_none() {
                 badges.push(OutlinerBadge {
-                    label: "missing asset",
+                    label: "缺素材",
                     color: THEME_ERROR,
                 });
             }
             entries.push(self.object_outliner_entry(
-                "Decals",
+                "贴花",
                 LayerKind::Decals,
                 decal,
                 asset,
@@ -439,12 +437,12 @@ impl EditorApp {
             let mut badges = Vec::new();
             if zone.zone_type.trim().is_empty() {
                 badges.push(OutlinerBadge {
-                    label: "no type",
+                    label: "缺类型",
                     color: THEME_ERROR,
                 });
             } else if !EDITOR_KNOWN_ZONE_TYPES.contains(&zone.zone_type.as_str()) {
                 badges.push(OutlinerBadge {
-                    label: "unknown",
+                    label: "未知",
                     color: THEME_WARNING,
                 });
             }
@@ -455,7 +453,7 @@ impl EditorApp {
             };
             if zone.points.len() < min_zone_points {
                 badges.push(OutlinerBadge {
-                    label: "few points",
+                    label: "点太少",
                     color: THEME_WARNING,
                 });
             }
@@ -465,34 +463,34 @@ impl EditorApp {
                         .surface
                         .as_ref()
                         .map(|surface| match surface.kind {
-                            content::WalkSurfaceKind::Platform => "platform",
-                            content::WalkSurfaceKind::Ramp => "ramp",
+                            content::WalkSurfaceKind::Platform => "平台",
+                            content::WalkSurfaceKind::Ramp => "斜坡",
                         })
-                        .unwrap_or("surface"),
+                        .unwrap_or("地表"),
                     color: THEME_ACCENT_STRONG,
                 });
             }
             if zone.gate.is_some() {
                 badges.push(OutlinerBadge {
-                    label: "gate",
+                    label: "门",
                     color: THEME_WARNING,
                 });
             }
             if zone.collision.is_some() {
                 badges.push(OutlinerBadge {
-                    label: "surface collision",
+                    label: "地表碰撞",
                     color: THEME_ACCENT_STRONG,
                 });
             }
             if zone.hazard.is_some() {
                 badges.push(OutlinerBadge {
-                    label: "hazard",
+                    label: "伤害",
                     color: THEME_ERROR,
                 });
             }
             if zone.prompt.is_some() {
                 badges.push(OutlinerBadge {
-                    label: "prompt",
+                    label: "提示",
                     color: THEME_ACCENT,
                 });
             }
@@ -502,7 +500,7 @@ impl EditorApp {
                 .is_some_and(|unlock| !unlock.is_empty())
             {
                 badges.push(OutlinerBadge {
-                    label: "unlock",
+                    label: "解锁",
                     color: THEME_WARNING,
                 });
             }
@@ -555,7 +553,7 @@ impl EditorApp {
                 .unwrap_or_default();
             let detail = if let Some(surface) = &zone.surface {
                 format!(
-                    "{} | {} points | {} {}",
+                    "{} | {} 点 | {} {}",
                     zone.zone_type,
                     zone.points.len(),
                     surface.kind.zh_label(),
@@ -563,23 +561,23 @@ impl EditorApp {
                 )
             } else if let Some(gate) = &zone.gate {
                 format!(
-                    "{} | {} points | gate {}",
+                    "{} | {} 点 | 门 {}",
                     zone.zone_type,
                     zone.points.len(),
                     gate.surface_id.as_deref().unwrap_or("-")
                 )
             } else if let Some(collision) = &zone.collision {
                 format!(
-                    "{} | {} points | surface {}",
+                    "{} | {} 点 | 地表 {}",
                     zone.zone_type,
                     zone.points.len(),
                     collision.surface_id.as_deref().unwrap_or("-")
                 )
             } else {
-                format!("{} | {} points", zone.zone_type, zone.points.len())
+                format!("{} | {} 点", zone.zone_type, zone.points.len())
             };
             entries.push(outliner_entry(
-                "Zones",
+                "区域",
                 zone.id.clone(),
                 detail,
                 Some(SelectedItem {
@@ -604,7 +602,7 @@ impl EditorApp {
 
         for tile in &self.document.layers.ground {
             entries.push(outliner_entry(
-                "Ground",
+                "地表",
                 ground_selection_id(tile.x, tile.y),
                 format!("{} | {}x{}", tile.asset, tile.w.max(1), tile.h.max(1)),
                 Some(SelectedItem {
@@ -664,13 +662,13 @@ impl EditorApp {
     fn codex_status_badges(&self, codex_id: &str) -> Vec<OutlinerBadge> {
         let Some(database) = &self.codex_database else {
             return vec![OutlinerBadge {
-                label: "no codex db",
+                label: "缺图鉴库",
                 color: THEME_WARNING,
             }];
         };
         let Some(entry) = database.get(codex_id) else {
             return vec![OutlinerBadge {
-                label: "missing codex",
+                label: "缺图鉴",
                 color: THEME_ERROR,
             }];
         };
@@ -678,19 +676,19 @@ impl EditorApp {
         let mut badges = Vec::new();
         if entry.title.trim().is_empty() {
             badges.push(OutlinerBadge {
-                label: "no title",
+                label: "缺标题",
                 color: THEME_WARNING,
             });
         }
         if entry.category.trim().is_empty() {
             badges.push(OutlinerBadge {
-                label: "no category",
+                label: "缺分类",
                 color: THEME_WARNING,
             });
         }
         if entry.description.trim().is_empty() {
             badges.push(OutlinerBadge {
-                label: "no text",
+                label: "缺正文",
                 color: THEME_WARNING,
             });
         }

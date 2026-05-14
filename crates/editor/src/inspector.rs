@@ -2,7 +2,7 @@ use super::*;
 
 impl EditorApp {
     pub(super) fn draw_inspector_panel(&mut self, ui: &mut egui::Ui) {
-        if panel_header(ui, "Inspector", ">", "收起右侧栏") {
+        if panel_header(ui, "检查器", ">", "收起右侧栏") {
             self.show_right_sidebar = false;
         }
 
@@ -231,7 +231,7 @@ impl EditorApp {
             )
             .changed();
 
-        inspector_section(ui, "Codex 数据");
+        inspector_section(ui, "图鉴数据");
         ui.small(display_project_path(
             &self.project_root,
             &self.codex_db_path(),
@@ -244,7 +244,7 @@ impl EditorApp {
                 ui.colored_label(THEME_WARNING, &self.codex_db_status);
             }
         }
-        if ui.button("重新加载 Codex").clicked() {
+        if ui.button("重新加载图鉴").clicked() {
             self.reload_codex_database();
         }
 
@@ -306,7 +306,7 @@ impl EditorApp {
             ui.label(format!("图鉴：{codex_id}"));
         }
         if !asset.tags.is_empty() {
-            ui.label(format!("Tags：{}", asset.tags.join(", ")));
+            ui.label(format!("标签：{}", asset.tags.join(", ")));
         }
         ui.small(&asset.relative_path);
         draw_asset_scan_status(ui, asset, self.codex_database.as_ref());
@@ -373,14 +373,14 @@ impl EditorApp {
                             .add(
                                 egui::DragValue::new(&mut tile.w)
                                     .range(1..=512)
-                                    .prefix("w "),
+                                    .prefix("宽 "),
                             )
                             .changed();
                         changed |= ui
                             .add(
                                 egui::DragValue::new(&mut tile.h)
                                     .range(1..=512)
-                                    .prefix("h "),
+                                    .prefix("高 "),
                             )
                             .changed();
                         changed |= ui.checkbox(&mut tile.flip_x, "水平翻转").changed();
@@ -539,10 +539,10 @@ impl EditorApp {
                     changed |= labeled_text_edit(ui, "区域 ID", &mut zone.id);
                     changed |= labeled_text_edit(ui, "区域类型", &mut zone.zone_type);
                     let mut event_id = zone.event_id.clone().unwrap_or_default();
-                    let event_text_changed = labeled_text_edit(ui, "Event", &mut event_id);
+                    let event_text_changed = labeled_text_edit(ui, "事件", &mut event_id);
                     let event_option_changed = property_options(
                         ui,
-                        "Event 选项",
+                        "事件选项",
                         "zone_event_id",
                         &mut event_id,
                         &event_id_options,
@@ -574,7 +574,7 @@ impl EditorApp {
                         });
                         if let Some(surface) = &mut zone.surface {
                             let mut surface_id = surface.surface_id.clone().unwrap_or_default();
-                            if labeled_text_edit(ui, "Surface ID", &mut surface_id) {
+                            if labeled_text_edit(ui, "表面 ID", &mut surface_id) {
                                 set_optional_string(&mut surface.surface_id, surface_id);
                                 changed = true;
                             }
@@ -616,7 +616,7 @@ impl EditorApp {
                                 .changed();
                             ui.colored_label(
                                 THEME_MUTED_TEXT,
-                                "圆台顶面和斜坡填同一个 Surface ID；只有斜坡入口能从地面切入台面。",
+                                "圆台顶面和斜坡填同一个表面 ID；只有斜坡入口能从地面切入台面。",
                             );
                         }
                     }
@@ -642,7 +642,7 @@ impl EditorApp {
                         });
                         if let Some(gate) = &mut zone.gate {
                             let mut surface_id = gate.surface_id.clone().unwrap_or_default();
-                            if labeled_text_edit(ui, "Surface ID", &mut surface_id) {
+                            if labeled_text_edit(ui, "表面 ID", &mut surface_id) {
                                 set_optional_string(&mut gate.surface_id, surface_id);
                                 changed = true;
                             }
@@ -670,14 +670,14 @@ impl EditorApp {
                         });
                         if let Some(collision) = &mut zone.collision {
                             let mut surface_id = collision.surface_id.clone().unwrap_or_default();
-                            if labeled_text_edit(ui, "Surface ID", &mut surface_id) {
+                            if labeled_text_edit(ui, "表面 ID", &mut surface_id) {
                                 set_optional_string(&mut collision.surface_id, surface_id);
                                 changed = true;
                             }
                         }
                         ui.colored_label(
                             THEME_MUTED_TEXT,
-                            "留空表示地面/底部碰撞；填圆台 Surface ID 后，只在玩家站在该表面时生效。",
+                            "留空表示地面/底部碰撞；填圆台表面 ID 后，只在玩家站在该表面时生效。",
                         );
                     }
 
@@ -811,7 +811,7 @@ impl EditorApp {
             ui.separator();
             ui.label(&link.source);
             ui.small(format!(
-                "scene: {} | map: {} | spawn: {}",
+                "场景：{} | 地图：{} | 出生点：{}",
                 link.scene, link.map_path, link.spawn_id
             ));
             if let Some(problem) = &link.problem {
@@ -986,7 +986,7 @@ fn draw_zone_hazard_editor(
     for (index, effect) in hazard.effects.iter_mut().enumerate() {
         ui.horizontal(|ui| {
             ui.label(format!("效果 #{}", index + 1));
-            if labeled_text_edit(ui, "Meter", &mut effect.meter) {
+            if labeled_text_edit(ui, "计量项", &mut effect.meter) {
                 *changed = true;
             }
             *changed |= ui
@@ -1014,7 +1014,7 @@ fn draw_zone_hazard_editor(
     }
     ui.colored_label(
         THEME_MUTED_TEXT,
-        "负数表示消耗，常用 meter：health / stamina / suit / oxygen / radiation / spores。",
+        "负数表示消耗，常用计量项键名：health / stamina / suit / oxygen / radiation / spores。",
     );
 }
 
@@ -1086,11 +1086,11 @@ fn draw_zone_objective_editor(
         return;
     };
 
-    if labeled_text_edit(ui, "Objective ID", &mut objective.objective_id) {
+    if labeled_text_edit(ui, "目标 ID", &mut objective.objective_id) {
         *changed = true;
     }
     let mut checkpoint_id = objective.checkpoint_id.clone().unwrap_or_default();
-    if labeled_text_edit(ui, "Checkpoint ID", &mut checkpoint_id) {
+    if labeled_text_edit(ui, "检查点 ID", &mut checkpoint_id) {
         set_optional_string(&mut objective.checkpoint_id, checkpoint_id);
         *changed = true;
     }
@@ -1117,7 +1117,7 @@ fn draw_zone_objective_editor(
         .changed();
     ui.colored_label(
         THEME_MUTED_TEXT,
-        "ObjectiveZone 可启动目标；Checkpoint 填 Checkpoint ID 后推进目标步骤。",
+        "目标区域可启动目标；填写检查点 ID 后推进目标步骤。",
     );
 }
 

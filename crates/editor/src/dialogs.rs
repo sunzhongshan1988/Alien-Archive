@@ -55,7 +55,7 @@ impl EditorApp {
                 .resizable(false)
                 .default_width(520.0)
                 .show(ctx, |ui| {
-                    ui.label("检测到比主文件更新的 autosave。");
+                    ui.label("检测到比主文件更新的自动保存。");
                     ui.separator();
                     ui.label("主文件");
                     ui.monospace(display_project_path(&self.project_root, &recovery.map_path));
@@ -65,20 +65,20 @@ impl EditorApp {
                         &recovery.autosave_path,
                     ));
                     ui.label(format!(
-                        "autosave 比主文件新 {}",
+                        "自动保存比主文件新 {}",
                         format_duration(recovery.newer_by)
                     ));
                     ui.separator();
                     ui.horizontal(|ui| {
-                        if ui.button("恢复 autosave").clicked() {
+                        if ui.button("恢复自动保存").clicked() {
                             self.restore_autosave(recovery.clone());
                         }
-                        if ui.button("丢弃 autosave").clicked() {
+                        if ui.button("丢弃自动保存").clicked() {
                             self.discard_autosave(recovery.clone());
                         }
                         if ui.button("稍后").clicked() {
                             self.autosave_recovery = None;
-                            self.status = "已暂时忽略 autosave，文件仍保留".to_owned();
+                            self.status = "已暂时忽略自动保存，文件仍保留".to_owned();
                         }
                     });
                 });
@@ -189,12 +189,12 @@ impl EditorApp {
                             draw_string_section(ui, "未登记 PNG", &report.unregistered_pngs);
                             draw_asset_reference_section(
                                 ui,
-                                "地图引用未知 asset",
+                                "地图引用未知素材",
                                 &report.unknown_references,
                             );
                             draw_asset_catalog_section(
                                 ui,
-                                "地图未使用 asset",
+                                "地图未使用素材",
                                 &report.unused_assets,
                                 &self.project_root,
                             );
@@ -362,13 +362,13 @@ impl EditorApp {
                     egui::DragValue::new(&mut self.asset_draft.footprint[0])
                         .range(1..=64)
                         .speed(0.1)
-                        .prefix("占格 W "),
+                        .prefix("占格宽 "),
                 );
                 ui.add(
                     egui::DragValue::new(&mut self.asset_draft.footprint[1])
                         .range(1..=64)
                         .speed(0.1)
-                        .prefix("占格 H "),
+                        .prefix("占格高 "),
                 );
             });
             if infer_tile_footprint(self.asset_draft.default_size, self.document.tile_size)
@@ -431,8 +431,8 @@ impl EditorApp {
         }
 
         ui.separator();
-        ui.label("Tags / 额外属性");
-        labeled_text_edit(ui, "Tags", &mut self.asset_draft.tags);
+        ui.label("标签 / 额外属性");
+        labeled_text_edit(ui, "标签", &mut self.asset_draft.tags);
         labeled_text_edit_with_options(
             ui,
             "实体类型",
@@ -442,7 +442,7 @@ impl EditorApp {
         );
         labeled_text_edit_with_options(
             ui,
-            "Codex ID",
+            "图鉴 ID",
             "asset_draft_codex_id",
             &mut self.asset_draft.codex_id,
             &codex_id_options,

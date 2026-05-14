@@ -15,14 +15,14 @@ pub(crate) fn load_codex_database(project_root: &Path) -> (Option<CodexDatabase>
     match CodexDatabase::load(&path) {
         Ok(database) => {
             let count = database.entries().len();
-            (Some(database), format!("Codex 数据已加载：{count} 个条目"))
+            (Some(database), format!("图鉴数据已加载：{count} 个条目"))
         }
         Err(error) => {
             eprintln!("codex database load failed: {error:?}");
             (
                 None,
                 format!(
-                    "Codex 数据读取失败 {}：{error:#}",
+                    "图鉴数据读取失败 {}：{error:#}",
                     display_project_path(project_root, &path)
                 ),
             )
