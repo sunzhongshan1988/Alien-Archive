@@ -1,6 +1,7 @@
 mod activity_log;
 mod cutscene_scene;
 mod debug_overlay;
+mod event_system;
 mod facility_scene;
 mod field_hud;
 mod game_menu_activity;
@@ -26,7 +27,7 @@ mod world_runtime;
 mod zone_system;
 
 use anyhow::Result;
-use content::{CodexDatabase, CutsceneDatabase, CutsceneDefinition, semantics};
+use content::{CodexDatabase, CutsceneDatabase, CutsceneDefinition, EventDatabase, semantics};
 use runtime::{Button, Camera2d, InputState, Renderer, SceneCommand, Vec2};
 use std::{collections::HashSet, path::PathBuf};
 
@@ -45,6 +46,7 @@ use pause_scene::PauseScene;
 use profile_scene::ProfileScene;
 
 use debug_overlay::{DebugOverlay, SceneDebugSnapshot};
+use event_system::{EventExecutionContext, EventExecutionResult};
 use field_hud::{FieldHud, quickbar_slot_at_position};
 pub use profile_derived::{DerivedMeterValue, DerivedScoreValue, ProfileDerivedState};
 use profile_derived::{ProfileDerivationInput, derive_profile_state, inventory_load_units};
@@ -150,6 +152,7 @@ pub struct GameContext {
     pub facility_player_position: Option<Vec2>,
     pub codex_database: CodexDatabase,
     pub cutscene_database: CutsceneDatabase,
+    pub event_database: EventDatabase,
     pub objective_database: ObjectiveDatabase,
     pub scanned_codex_ids: HashSet<String>,
     pub save_path: PathBuf,
@@ -282,6 +285,25 @@ impl GameContext {
             self.request_save();
         }
         changed
+    }
+
+    pub fn is_cutscene_flag_set(&self, flag: &str) -> bool {
+        self.save_data.cutscenes.flags.contains(flag.trim())
+    }
+
+    pub fn has_seen_cutscene(&self, cutscene_id: &str) -> bool {
+        self.save_data
+            .cutscenes
+            .seen_ids
+            .contains(cutscene_id.trim())
+    }
+
+    pub fn is_objective_checkpoint_done(&self, objective_id: &str, checkpoint_id: &str) -> bool {
+        self.save_data
+            .objectives
+            .states
+            .get(objective_id.trim())
+            .is_some_and(|state| state.completed_checkpoints.contains(checkpoint_id.trim()))
     }
 
     pub fn complete_codex_scan(&mut self, codex_id: &str) -> bool {
@@ -464,6 +486,24 @@ impl GameContext {
             self.request_save();
         }
         inserted
+    }
+
+    fn execute_world_event(
+        &mut self,
+        event_id: &str,
+        map_path: &str,
+        zone_id: &str,
+        notice: &mut notice_system::NoticeState,
+    ) -> EventExecutionResult {
+        let Some(event) = self.event_database.get(event_id).cloned() else {
+            return EventExecutionResult::NotFound;
+        };
+        event_system::execute_event(
+            self,
+            &event,
+            EventExecutionContext { map_path, zone_id },
+            notice,
+        )
     }
 
     pub fn apply_zone_meter_effect(
@@ -683,6 +723,7 @@ impl GameContext {
     fn replace_save_data(&mut self, save_path: PathBuf, save_data: SaveData) {
         let codex_database = self.codex_database.clone();
         let cutscene_database = self.cutscene_database.clone();
+        let event_database = self.event_database.clone();
         let objective_database = self.objective_database.clone();
         *self = Self::from_save_with_objectives(
             save_path,
@@ -691,6 +732,7 @@ impl GameContext {
             objective_database,
         );
         self.cutscene_database = cutscene_database;
+        self.event_database = event_database;
     }
 
     fn apply_scan_profile_progress(&mut self, codex_id: &str) {

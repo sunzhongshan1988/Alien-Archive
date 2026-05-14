@@ -1,7 +1,8 @@
 use std::collections::HashSet;
 
 use crate::{
-    AssetDatabase, AssetKind, CodexDatabase, LayerKind, MapDocument, UnlockRule, semantics,
+    AssetDatabase, AssetKind, CodexDatabase, EventDatabase, LayerKind, MapDocument, UnlockRule,
+    semantics,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -40,6 +41,15 @@ pub fn validate_map_with_codex(
     document: &MapDocument,
     assets: &AssetDatabase,
     codex: Option<&CodexDatabase>,
+) -> Vec<MapValidationIssue> {
+    validate_map_with_databases(document, assets, codex, None)
+}
+
+pub fn validate_map_with_databases(
+    document: &MapDocument,
+    assets: &AssetDatabase,
+    codex: Option<&CodexDatabase>,
+    events: Option<&EventDatabase>,
 ) -> Vec<MapValidationIssue> {
     let mut issues = Vec::new();
     let solid_collision_bounds = document
@@ -400,6 +410,31 @@ pub fn validate_map_with_codex(
         }
         if let Some(unlock) = &zone.unlock {
             validate_unlock_rule("zone", &zone.id, unlock, codex, &mut issues);
+        }
+        if zone.zone_type == semantics::ZONE_EVENT_TRIGGER
+            && zone
+                .event_id
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+        {
+            issues.push(MapValidationIssue::warning(format!(
+                "zone {} is EventTrigger but has no event_id",
+                zone.id
+            )));
+        }
+        if let Some(event_id) = zone.event_id.as_deref() {
+            let event_id = event_id.trim();
+            if event_id.is_empty() {
+                issues.push(MapValidationIssue::warning(format!(
+                    "zone {} has empty event_id",
+                    zone.id
+                )));
+            } else if events.is_some_and(|database| database.get(event_id).is_none()) {
+                issues.push(MapValidationIssue::error(format!(
+                    "zone {} references unknown event_id {}",
+                    zone.id, event_id
+                )));
+            }
         }
         if zone.zone_type == semantics::ZONE_MAP_TRANSITION {
             if let Some(transition) = &zone.transition {
@@ -979,6 +1014,7 @@ mod tests {
             id: "ramp_surface".to_owned(),
             zone_type: "WalkSurface".to_owned(),
             points: vec![[1.0, 1.0], [3.0, 1.0], [3.0, 3.0], [1.0, 3.0]],
+            event_id: None,
             hazard: None,
             prompt: None,
             objective: None,
@@ -1017,6 +1053,7 @@ mod tests {
             id: "cliff_edge".to_owned(),
             zone_type: "CollisionLine".to_owned(),
             points: vec![[1.0, 1.0], [4.0, 1.0]],
+            event_id: None,
             hazard: None,
             prompt: None,
             objective: None,
@@ -1049,6 +1086,7 @@ mod tests {
             id: "crystal_base_collision".to_owned(),
             zone_type: "CollisionArea".to_owned(),
             points: vec![[1.0, 1.0], [3.0, 1.0], [3.0, 3.0], [1.0, 3.0]],
+            event_id: None,
             hazard: None,
             prompt: None,
             objective: None,
@@ -1078,6 +1116,7 @@ mod tests {
             id: "platform_gate".to_owned(),
             zone_type: "SurfaceGate".to_owned(),
             points: vec![[1.0, 1.0], [4.0, 1.0]],
+            event_id: None,
             hazard: None,
             prompt: None,
             objective: None,
@@ -1117,6 +1156,7 @@ mod tests {
             id: "toxic_pocket".to_owned(),
             zone_type: "HazardZone".to_owned(),
             points: vec![[1.0, 1.0], [3.0, 1.0], [3.0, 3.0], [1.0, 3.0]],
+            event_id: None,
             hazard: Some(HazardRule {
                 effects: vec![HazardEffect::new("oxygen", -4.0)],
                 message: Some("空气质量异常".to_owned()),
@@ -1133,6 +1173,7 @@ mod tests {
             id: "first_view".to_owned(),
             zone_type: "PromptZone".to_owned(),
             points: vec![[4.0, 1.0], [6.0, 1.0], [6.0, 3.0], [4.0, 3.0]],
+            event_id: None,
             hazard: None,
             prompt: Some(PromptRule {
                 message: Some("前方发现遗迹轮廓".to_owned()),
@@ -1173,6 +1214,7 @@ mod tests {
             id: "objective_start".to_owned(),
             zone_type: "ObjectiveZone".to_owned(),
             points: vec![[1.0, 1.0], [3.0, 1.0], [3.0, 3.0], [1.0, 3.0]],
+            event_id: None,
             hazard: None,
             prompt: None,
             objective: Some(ObjectiveRule {
@@ -1189,6 +1231,7 @@ mod tests {
             id: "objective_checkpoint".to_owned(),
             zone_type: "Checkpoint".to_owned(),
             points: vec![[4.0, 1.0], [6.0, 1.0], [6.0, 3.0], [4.0, 3.0]],
+            event_id: None,
             hazard: None,
             prompt: None,
             objective: Some(ObjectiveRule {

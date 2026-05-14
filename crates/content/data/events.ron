@@ -1,0 +1,17 @@
+(
+    events: [
+        (
+            id: "landing.intro_zone_sample",
+            trigger: EnterZone,
+            scope: WorldOnce,
+            conditions: [
+                FlagMissing("event:landing.intro_zone_sample"),
+            ],
+            actions: [
+                PlayCutscene("intro.new_game"),
+                SetFlag("landing.intro_zone_sample.played"),
+                ShowNotice("Signal event recorded."),
+            ],
+        ),
+    ],
+)

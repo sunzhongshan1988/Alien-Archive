@@ -4,6 +4,7 @@ mod assets;
 mod canvas;
 mod cutscenes;
 mod dialogs;
+mod events;
 mod inspector;
 mod native_menu;
 mod panels;
@@ -49,9 +50,9 @@ use assets::{
 use canvas::rendering::{draw_grid, paint_transformed_image, zone_colors};
 use content::{
     AnchorKind, AssetDatabase, AssetKind, CodexDatabase, CutsceneDatabase, DEFAULT_ASSET_DB_PATH,
-    DEFAULT_CODEX_DB_PATH, DEFAULT_CUTSCENE_DB_PATH, DEFAULT_MAP_PATH, InstanceRect, LayerKind,
-    MapDocument, MapValidationIssue, MapValidationSeverity, SnapMode, UnlockRule,
-    validate_map_with_codex,
+    DEFAULT_CODEX_DB_PATH, DEFAULT_CUTSCENE_DB_PATH, DEFAULT_EVENT_DB_PATH, DEFAULT_MAP_PATH,
+    EventDatabase, InstanceRect, LayerKind, MapDocument, MapValidationIssue, MapValidationSeverity,
+    ObjectiveDatabase, SnapMode, UnlockRule, validate_map_with_databases,
 };
 use eframe::egui::{
     self, Color32, Context as EguiContext, Key, Modifiers, Pos2, Rect, Sense, Shape, Stroke,
@@ -131,13 +132,23 @@ impl EditorApp {
             eprintln!("cutscene database load failed: {error:?}");
             CutsceneDatabase::default()
         });
+        let event_database = EventDatabase::load(&project_root.join(DEFAULT_EVENT_DB_PATH))
+            .unwrap_or_else(|error| {
+                eprintln!("event database load failed: {error:?}");
+                EventDatabase::default()
+            });
+        let objective_database = ObjectiveDatabase::load_default();
         let document =
             MapDocument::load(&map_path).unwrap_or_else(|_| MapDocument::new_landing_site());
         let save_as_id = document.id.clone();
         let mut app = Self {
-            native_menu: native_menu::NativeMenu::install(),
+            native_menu: native_menu::NativeMenu::install(
+                EditorWorkspace::OverworldMap,
+                cc.egui_ctx.clone(),
+            ),
             project_root: project_root.clone(),
             active_workspace: EditorWorkspace::OverworldMap,
+            pending_native_menu_workspace: None,
             selected_map_path: map_path.clone(),
             map_path,
             map_entries,
@@ -157,6 +168,11 @@ impl EditorApp {
             cutscene_db_dirty: false,
             cutscene_search: String::new(),
             selected_cutscene_index: Some(0),
+            event_database,
+            event_db_dirty: false,
+            event_search: String::new(),
+            selected_event_index: Some(0),
+            objective_database,
             show_asset_dialog: false,
             show_unregistered_assets: false,
             show_asset_dependency_report: false,
@@ -320,7 +336,9 @@ impl EditorApp {
     fn handle_shortcuts(&mut self, ctx: &EguiContext) {
         let wants_keyboard_input = ctx.egui_wants_keyboard_input();
         ctx.input_mut(|input| {
-            if input.consume_key(Modifiers::COMMAND, Key::O) {
+            if self.active_workspace == EditorWorkspace::OverworldMap
+                && input.consume_key(Modifiers::COMMAND, Key::O)
+            {
                 self.open_map_dialog();
             }
             if input.consume_key(Modifiers::COMMAND, Key::S) {
@@ -328,6 +346,18 @@ impl EditorApp {
             }
 
             if wants_keyboard_input {
+                return;
+            }
+            if self.active_workspace == EditorWorkspace::Cutscenes {
+                if input.consume_key(Modifiers::COMMAND, Key::N) {
+                    self.add_cutscene();
+                }
+                return;
+            }
+            if self.active_workspace == EditorWorkspace::Events {
+                if input.consume_key(Modifiers::COMMAND, Key::N) {
+                    self.add_event();
+                }
                 return;
             }
             if input.consume_key(Modifiers::COMMAND, Key::Y)
@@ -444,6 +474,11 @@ impl EditorApp {
     }
 
     fn execute_menu_command(&mut self, command: MenuCommand, ctx: &EguiContext) {
+        if !self.command_available_in_workspace(command) {
+            self.status = format!("该命令不适用于 {}", self.active_workspace.label());
+            return;
+        }
+
         match command {
             MenuCommand::NewMap => {
                 self.new_map_draft = NewMapDraft::default();
@@ -487,14 +522,14 @@ impl EditorApp {
                 self.zoom = 1.0;
             }
             MenuCommand::SetWorkspace(workspace) => {
-                self.active_workspace = workspace;
-                self.status = format!("工作区：{}", workspace.label());
+                self.set_active_workspace(workspace, ctx);
             }
             MenuCommand::ValidateMap => {
                 self.validation_issues = self.validate_current_map();
                 self.show_validation_panel = true;
                 self.status = validation_summary(&self.validation_issues);
             }
+            MenuCommand::ReloadCodexDatabase => self.reload_codex_database(),
             MenuCommand::SetLayer(layer) => self.active_layer = layer,
             MenuCommand::SetTool(tool) => self.set_tool(tool),
             MenuCommand::AddAsset => self.open_add_asset_dialog(),
@@ -510,6 +545,57 @@ impl EditorApp {
             MenuCommand::ShowUnregisteredAssets => self.show_unregistered_assets = true,
             MenuCommand::ShowAssetDependencyReport => self.open_asset_dependency_report(),
             MenuCommand::ReloadAssetDatabase => self.reload_asset_database(ctx),
+            MenuCommand::NewCutscene => self.add_cutscene(),
+            MenuCommand::DuplicateCutscene => self.duplicate_selected_cutscene(),
+            MenuCommand::DeleteCutscene => self.delete_selected_cutscene(),
+            MenuCommand::SaveCutscenes => {
+                self.save_cutscene_database();
+            }
+            MenuCommand::ReloadCutscenes => self.reload_cutscene_database(),
+            MenuCommand::ValidateCutscenes => self.validate_cutscene_database_command(),
+            MenuCommand::NewEvent => self.add_event(),
+            MenuCommand::DuplicateEvent => self.duplicate_selected_event(),
+            MenuCommand::DeleteEvent => self.delete_selected_event(),
+            MenuCommand::SaveEvents => {
+                self.save_event_database();
+            }
+            MenuCommand::ReloadEvents => self.reload_event_database(),
+            MenuCommand::ValidateEvents => self.validate_event_database_command(),
+        }
+    }
+
+    fn set_active_workspace(&mut self, workspace: EditorWorkspace, ctx: &EguiContext) {
+        if self.active_workspace == workspace {
+            return;
+        }
+        self.active_workspace = workspace;
+        self.pending_native_menu_workspace = Some(workspace);
+        self.status = format!("工作区：{}", workspace.label());
+        ctx.request_repaint();
+    }
+
+    fn rebuild_native_menu_if_needed(&mut self) {
+        if let Some(workspace) = self.pending_native_menu_workspace.take() {
+            self.native_menu.set_workspace(workspace);
+        }
+    }
+
+    fn command_available_in_workspace(&self, command: MenuCommand) -> bool {
+        match command {
+            MenuCommand::Save | MenuCommand::SetWorkspace(_) => true,
+            MenuCommand::NewCutscene
+            | MenuCommand::DuplicateCutscene
+            | MenuCommand::DeleteCutscene
+            | MenuCommand::SaveCutscenes
+            | MenuCommand::ReloadCutscenes
+            | MenuCommand::ValidateCutscenes => self.active_workspace == EditorWorkspace::Cutscenes,
+            MenuCommand::NewEvent
+            | MenuCommand::DuplicateEvent
+            | MenuCommand::DeleteEvent
+            | MenuCommand::SaveEvents
+            | MenuCommand::ReloadEvents
+            | MenuCommand::ValidateEvents => self.active_workspace == EditorWorkspace::Events,
+            _ => self.active_workspace == EditorWorkspace::OverworldMap,
         }
     }
 
@@ -517,6 +603,7 @@ impl EditorApp {
         match self.active_workspace {
             EditorWorkspace::OverworldMap => self.save_map(),
             EditorWorkspace::Cutscenes => self.save_cutscene_database(),
+            EditorWorkspace::Events => self.save_event_database(),
         }
     }
 
@@ -802,10 +889,11 @@ impl EditorApp {
     }
 
     fn validate_current_map(&self) -> Vec<MapValidationIssue> {
-        let mut issues = validate_map_with_codex(
+        let mut issues = validate_map_with_databases(
             &self.document,
             &self.asset_database,
             self.codex_database.as_ref(),
+            Some(&self.event_database),
         );
         issues.extend(self.validate_transition_links());
         issues
@@ -1971,324 +2059,543 @@ impl EditorApp {
                 ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
                 ui.spacing_mut().button_padding = vec2(8.0, 0.0);
                 ui.spacing_mut().interact_size.y = MENU_BAR_BUTTON_HEIGHT;
-                menu_bar_button(ui, "文件", |ui| {
-                    if ui.button("新建地图").clicked() {
-                        self.new_map_draft = NewMapDraft::default();
-                        self.show_new_map_dialog = true;
-                        ui.close();
+                self.draw_file_menu(ui);
+                self.draw_edit_menu(ui);
+                self.draw_view_menu(ui);
+                self.draw_workspace_menu(ui);
+                match self.active_workspace {
+                    EditorWorkspace::OverworldMap => {
+                        self.draw_map_menu(ui);
+                        self.draw_layer_menu(ui);
+                        self.draw_tool_menu(ui);
+                        self.draw_asset_menu(ui);
                     }
-                    if ui.button("打开...").clicked() {
-                        self.open_map_dialog();
-                        ui.close();
+                    EditorWorkspace::Cutscenes => {
+                        self.draw_cutscene_menu(ui);
                     }
-                    ui.menu_button("从列表打开", |ui| {
-                        for entry in self.map_entries.clone() {
-                            if ui.button(&entry.label).clicked() {
-                                self.selected_map_path = entry.path.clone();
-                                self.open_selected_map();
-                                ui.close();
-                            }
-                        }
-                        ui.separator();
-                        if ui.button("刷新列表").clicked() {
-                            self.refresh_map_entries();
-                            ui.close();
-                        }
-                    });
-                    ui.menu_button("最近地图", |ui| {
-                        if self.config.recent_maps.is_empty() {
-                            ui.label("暂无");
-                        }
-                        for recent in self.config.recent_maps.clone() {
-                            if ui.button(&recent).clicked() {
-                                let path = self.project_root.join(&recent);
-                                if self.dirty && path != self.map_path {
-                                    self.open_confirm_path = Some(path);
-                                } else {
-                                    self.open_map(path);
-                                }
-                                ui.close();
-                            }
-                        }
-                    });
-                    if ui.button("保存").clicked() {
-                        self.save_map();
-                        ui.close();
+                    EditorWorkspace::Events => {
+                        self.draw_event_menu(ui);
                     }
-                    if ui.button("保存并运行当前地图").clicked() {
-                        self.save_and_run_current_map();
-                        ui.close();
-                    }
-                    if ui.button("另存为").clicked() {
-                        self.save_map_as();
-                        ui.close();
-                    }
-                    if ui.button("删除地图").clicked() {
-                        self.delete_confirm_path = Some(self.selected_map_path.clone());
-                        ui.close();
-                    }
-                    if ui.button("还原").clicked() {
-                        if self.dirty {
-                            self.open_confirm_path = Some(self.map_path.clone());
-                        }
-                        ui.close();
-                    }
-                });
-
-                menu_bar_button(ui, "编辑", |ui| {
-                    if ui
-                        .add_enabled(!self.undo_stack.is_empty(), egui::Button::new("撤销"))
-                        .clicked()
-                    {
-                        self.undo();
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(!self.redo_stack.is_empty(), egui::Button::new("重做"))
-                        .clicked()
-                    {
-                        self.redo();
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button("复制").clicked() {
-                        self.copy_selected_item();
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(!self.clipboard.is_empty(), egui::Button::new("粘贴"))
-                        .clicked()
-                    {
-                        self.paste_clipboard();
-                        ui.close();
-                    }
-                    if ui.button("复制一份").clicked() {
-                        self.duplicate_selected_item();
-                        ui.close();
-                    }
-                    let selections = self.current_selection_list();
-                    let hidden_count = self.hidden_selection_count(&selections);
-                    let hidden_label = if !selections.is_empty() && hidden_count == selections.len()
-                    {
-                        "显示所选"
-                    } else {
-                        "隐藏所选"
-                    };
-                    if ui
-                        .add_enabled(!selections.is_empty(), egui::Button::new(hidden_label))
-                        .clicked()
-                    {
-                        self.toggle_current_selection_hidden();
-                        ui.close();
-                    }
-                    if ui.button("删除").clicked() {
-                        self.delete_current_selection();
-                        ui.close();
-                    }
-                    ui.separator();
-                    let align_enabled =
-                        self.alignable_selection_count(&self.current_selection_list()) >= 2;
-                    ui.menu_button("批量对齐", |ui| {
-                        for mode in BatchAlignMode::ALL {
-                            if ui
-                                .add_enabled(align_enabled, egui::Button::new(mode.label()))
-                                .clicked()
-                            {
-                                self.align_selected_items(mode);
-                                ui.close();
-                            }
-                        }
-                    });
-                    let distribute_enabled =
-                        self.distributable_selection_count(&self.current_selection_list()) >= 3;
-                    ui.menu_button("均匀分布", |ui| {
-                        for mode in BatchDistributeMode::ALL {
-                            if ui
-                                .add_enabled(distribute_enabled, egui::Button::new(mode.label()))
-                                .clicked()
-                            {
-                                self.distribute_selected_items(mode);
-                                ui.close();
-                            }
-                        }
-                    });
-                    let current_asset = self.selected_asset().cloned();
-                    let replace_enabled = current_asset.as_ref().is_some_and(|asset| {
-                        self.replaceable_selection_count(&self.current_selection_list(), asset) > 0
-                    });
-                    if ui
-                        .add_enabled(replace_enabled, egui::Button::new("用当前素材替换所选"))
-                        .clicked()
-                    {
-                        self.replace_selected_assets_with_current();
-                        ui.close();
-                    }
-                });
-
-                menu_bar_button(ui, "视图", |ui| {
-                    ui.checkbox(&mut self.show_left_sidebar, "左侧栏");
-                    ui.checkbox(&mut self.show_right_sidebar, "右侧栏");
-                    ui.separator();
-                    ui.checkbox(&mut self.show_grid, "网格");
-                    ui.checkbox(&mut self.show_collision, "碰撞");
-                    ui.checkbox(&mut self.show_entity_bounds, "实体边界");
-                    ui.checkbox(&mut self.show_zones, "区域");
-                    ui.checkbox(&mut self.show_zone_labels, "区域标签");
-                    ui.separator();
-                    if ui.button("重置视图").clicked() {
-                        self.pan = vec2(48.0, 48.0);
-                        self.zoom = 1.0;
-                        ui.close();
-                    }
-                });
-
-                menu_bar_button(ui, "工作区", |ui| {
-                    for workspace in EditorWorkspace::ALL {
-                        if ui
-                            .selectable_label(self.active_workspace == workspace, workspace.label())
-                            .clicked()
-                        {
-                            self.active_workspace = workspace;
-                            self.status = format!("工作区：{}", workspace.label());
-                            ui.close();
-                        }
-                    }
-                    ui.separator();
-                    if ui
-                        .add_enabled(self.cutscene_db_dirty, egui::Button::new("保存 Cutscenes"))
-                        .clicked()
-                    {
-                        self.save_cutscene_database();
-                        ui.close();
-                    }
-                    if ui.button("重新加载 Cutscenes").clicked() {
-                        self.reload_cutscene_database();
-                        ui.close();
-                    }
-                });
-
-                menu_bar_button(ui, "地图", |ui| {
-                    if ui.button("校验地图").clicked() {
-                        self.validation_issues = self.validate_current_map();
-                        self.show_validation_panel = true;
-                        self.status = validation_summary(&self.validation_issues);
-                        ui.close();
-                    }
-                    if ui.button("保存并运行当前地图").clicked() {
-                        self.save_and_run_current_map();
-                        ui.close();
-                    }
-                    if ui.button("重新加载 Codex").clicked() {
-                        self.reload_codex_database();
-                        ui.close();
-                    }
-                    ui.label(format!(
-                        "{} / {}x{} / {}px",
-                        self.document.id,
-                        self.document.width,
-                        self.document.height,
-                        self.document.tile_size
-                    ));
-                });
-
-                menu_bar_button(ui, "图层", |ui| {
-                    for layer in LayerKind::ALL {
-                        ui.horizontal(|ui| {
-                            if ui
-                                .selectable_value(
-                                    &mut self.active_layer,
-                                    layer,
-                                    format!("{} ({})", layer.zh_label(), layer_shortcut(layer)),
-                                )
-                                .clicked()
-                            {
-                                ui.close();
-                            }
-                            let state = self.layer_states.entry(layer).or_default();
-                            ui.checkbox(&mut state.visible, "显示");
-                            ui.checkbox(&mut state.locked, "锁定");
-                        });
-                    }
-                });
-
-                menu_bar_button(ui, "工具", |ui| {
-                    for tool in ToolKind::ALL {
-                        if ui
-                            .selectable_label(self.tool == tool, tool.menu_label())
-                            .clicked()
-                        {
-                            self.set_tool(tool);
-                            ui.close();
-                        }
-                    }
-                });
-
-                menu_bar_button(ui, "素材", |ui| {
-                    let ctx = ui.ctx().clone();
-                    if ui.button("添加素材").clicked() {
-                        self.open_add_asset_dialog();
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            self.selected_asset.is_some(),
-                            egui::Button::new("编辑当前素材"),
-                        )
-                        .clicked()
-                    {
-                        if let Some(asset_id) = self.selected_asset.clone() {
-                            self.open_edit_asset_dialog(&asset_id);
-                        }
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            self.selected_asset.is_some(),
-                            egui::Button::new("移除当前素材"),
-                        )
-                        .clicked()
-                    {
-                        self.delete_selected_asset_definition(&ctx);
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(self.asset_db_dirty, egui::Button::new("保存素材库"))
-                        .clicked()
-                    {
-                        self.save_asset_database();
-                        ui.close();
-                    }
-                    if ui.button("未登记图片").clicked() {
-                        self.show_unregistered_assets = true;
-                        ui.close();
-                    }
-                    if ui.button("资产依赖报告").clicked() {
-                        self.open_asset_dependency_report();
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button("重新扫描 Metadata").clicked() {
-                        self.reload_asset_database(&ctx);
-                        ui.close();
-                    }
-                    ui.label(format!(
-                        "{} 个素材{}",
-                        self.registry.assets().len(),
-                        if self.asset_db_dirty { " *" } else { "" }
-                    ));
-                });
-
-                menu_bar_button(ui, "帮助", |ui| {
-                    ui.label("Cmd/Ctrl+S 保存");
-                    ui.label("Cmd/Ctrl+Z 撤销 / Cmd/Ctrl+Shift+Z 重做");
-                    ui.label("V/B/G/R/E/I/S/C/A/H/Z 切换工具");
-                    ui.label("1-6 切换图层");
-                    ui.label("空格拖拽平移，滚轮缩放");
-                    ui.label("鼠标中键拖拽平移");
-                    ui.label("区域工具：点击加点，双击或点回首点完成；Alt 自由点");
-                });
+                }
+                self.draw_help_menu(ui);
             },
         );
+    }
+
+    fn draw_file_menu(&mut self, ui: &mut egui::Ui) {
+        menu_bar_button(ui, "文件", |ui| match self.active_workspace {
+            EditorWorkspace::OverworldMap => {
+                if ui.button("新建地图").clicked() {
+                    self.new_map_draft = NewMapDraft::default();
+                    self.show_new_map_dialog = true;
+                    ui.close();
+                }
+                if ui.button("打开地图...").clicked() {
+                    self.open_map_dialog();
+                    ui.close();
+                }
+                ui.menu_button("从列表打开", |ui| {
+                    for entry in self.map_entries.clone() {
+                        if ui.button(&entry.label).clicked() {
+                            self.selected_map_path = entry.path.clone();
+                            self.open_selected_map();
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    if ui.button("刷新列表").clicked() {
+                        self.refresh_map_entries();
+                        ui.close();
+                    }
+                });
+                ui.menu_button("最近地图", |ui| {
+                    if self.config.recent_maps.is_empty() {
+                        ui.label("暂无");
+                    }
+                    for recent in self.config.recent_maps.clone() {
+                        if ui.button(&recent).clicked() {
+                            let path = self.project_root.join(&recent);
+                            if self.dirty && path != self.map_path {
+                                self.open_confirm_path = Some(path);
+                            } else {
+                                self.open_map(path);
+                            }
+                            ui.close();
+                        }
+                    }
+                });
+                ui.separator();
+                if ui.button("保存地图").clicked() {
+                    self.save_map();
+                    ui.close();
+                }
+                if ui.button("保存并运行当前地图").clicked() {
+                    self.save_and_run_current_map();
+                    ui.close();
+                }
+                if ui.button("另存为").clicked() {
+                    self.save_map_as();
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("删除地图").clicked() {
+                    self.delete_confirm_path = Some(self.selected_map_path.clone());
+                    ui.close();
+                }
+                if ui.button("还原地图").clicked() {
+                    if self.dirty {
+                        self.open_confirm_path = Some(self.map_path.clone());
+                    }
+                    ui.close();
+                }
+            }
+            EditorWorkspace::Cutscenes => {
+                if ui
+                    .add_enabled(self.cutscene_db_dirty, egui::Button::new("保存 Cutscenes"))
+                    .clicked()
+                {
+                    self.save_cutscene_database();
+                    ui.close();
+                }
+                if ui.button("重新加载 Cutscenes").clicked() {
+                    self.reload_cutscene_database();
+                    ui.close();
+                }
+            }
+            EditorWorkspace::Events => {
+                if ui
+                    .add_enabled(self.event_db_dirty, egui::Button::new("保存 Events"))
+                    .clicked()
+                {
+                    self.save_event_database();
+                    ui.close();
+                }
+                if ui.button("重新加载 Events").clicked() {
+                    self.reload_event_database();
+                    ui.close();
+                }
+            }
+        });
+    }
+
+    fn draw_edit_menu(&mut self, ui: &mut egui::Ui) {
+        menu_bar_button(ui, "编辑", |ui| match self.active_workspace {
+            EditorWorkspace::OverworldMap => {
+                if ui
+                    .add_enabled(!self.undo_stack.is_empty(), egui::Button::new("撤销"))
+                    .clicked()
+                {
+                    self.undo();
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(!self.redo_stack.is_empty(), egui::Button::new("重做"))
+                    .clicked()
+                {
+                    self.redo();
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("复制").clicked() {
+                    self.copy_selected_item();
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(!self.clipboard.is_empty(), egui::Button::new("粘贴"))
+                    .clicked()
+                {
+                    self.paste_clipboard();
+                    ui.close();
+                }
+                if ui.button("复制一份").clicked() {
+                    self.duplicate_selected_item();
+                    ui.close();
+                }
+                let selections = self.current_selection_list();
+                let hidden_count = self.hidden_selection_count(&selections);
+                let hidden_label = if !selections.is_empty() && hidden_count == selections.len() {
+                    "显示所选"
+                } else {
+                    "隐藏所选"
+                };
+                if ui
+                    .add_enabled(!selections.is_empty(), egui::Button::new(hidden_label))
+                    .clicked()
+                {
+                    self.toggle_current_selection_hidden();
+                    ui.close();
+                }
+                if ui.button("删除").clicked() {
+                    self.delete_current_selection();
+                    ui.close();
+                }
+                ui.separator();
+                let align_enabled =
+                    self.alignable_selection_count(&self.current_selection_list()) >= 2;
+                ui.menu_button("批量对齐", |ui| {
+                    for mode in BatchAlignMode::ALL {
+                        if ui
+                            .add_enabled(align_enabled, egui::Button::new(mode.label()))
+                            .clicked()
+                        {
+                            self.align_selected_items(mode);
+                            ui.close();
+                        }
+                    }
+                });
+                let distribute_enabled =
+                    self.distributable_selection_count(&self.current_selection_list()) >= 3;
+                ui.menu_button("均匀分布", |ui| {
+                    for mode in BatchDistributeMode::ALL {
+                        if ui
+                            .add_enabled(distribute_enabled, egui::Button::new(mode.label()))
+                            .clicked()
+                        {
+                            self.distribute_selected_items(mode);
+                            ui.close();
+                        }
+                    }
+                });
+                let current_asset = self.selected_asset().cloned();
+                let replace_enabled = current_asset.as_ref().is_some_and(|asset| {
+                    self.replaceable_selection_count(&self.current_selection_list(), asset) > 0
+                });
+                if ui
+                    .add_enabled(replace_enabled, egui::Button::new("用当前素材替换所选"))
+                    .clicked()
+                {
+                    self.replace_selected_assets_with_current();
+                    ui.close();
+                }
+            }
+            EditorWorkspace::Cutscenes => {
+                if ui.button("新增 Cutscene").clicked() {
+                    self.add_cutscene();
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(
+                        self.selected_cutscene_index.is_some(),
+                        egui::Button::new("复制 Cutscene"),
+                    )
+                    .clicked()
+                {
+                    self.duplicate_selected_cutscene();
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(
+                        self.selected_cutscene_index.is_some(),
+                        egui::Button::new("删除 Cutscene"),
+                    )
+                    .clicked()
+                {
+                    self.delete_selected_cutscene();
+                    ui.close();
+                }
+            }
+            EditorWorkspace::Events => {
+                if ui.button("新增 Event").clicked() {
+                    self.add_event();
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(
+                        self.selected_event_index.is_some(),
+                        egui::Button::new("复制 Event"),
+                    )
+                    .clicked()
+                {
+                    self.duplicate_selected_event();
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(
+                        self.selected_event_index.is_some(),
+                        egui::Button::new("删除 Event"),
+                    )
+                    .clicked()
+                {
+                    self.delete_selected_event();
+                    ui.close();
+                }
+            }
+        });
+    }
+
+    fn draw_view_menu(&mut self, ui: &mut egui::Ui) {
+        menu_bar_button(ui, "视图", |ui| match self.active_workspace {
+            EditorWorkspace::OverworldMap => {
+                ui.checkbox(&mut self.show_left_sidebar, "左侧栏");
+                ui.checkbox(&mut self.show_right_sidebar, "右侧栏");
+                ui.separator();
+                ui.checkbox(&mut self.show_grid, "网格");
+                ui.checkbox(&mut self.show_collision, "碰撞");
+                ui.checkbox(&mut self.show_entity_bounds, "实体边界");
+                ui.checkbox(&mut self.show_zones, "区域");
+                ui.checkbox(&mut self.show_zone_labels, "区域标签");
+                ui.separator();
+                if ui.button("重置视图").clicked() {
+                    self.pan = vec2(48.0, 48.0);
+                    self.zoom = 1.0;
+                    ui.close();
+                }
+            }
+            EditorWorkspace::Cutscenes => {
+                ui.label("Cutscenes 工作区没有地图画布视图选项");
+            }
+            EditorWorkspace::Events => {
+                ui.label("Events 工作区没有地图画布视图选项");
+            }
+        });
+    }
+
+    fn draw_workspace_menu(&mut self, ui: &mut egui::Ui) {
+        menu_bar_button(ui, "工作区", |ui| {
+            for workspace in EditorWorkspace::ALL {
+                if ui
+                    .selectable_label(self.active_workspace == workspace, workspace.label())
+                    .clicked()
+                {
+                    self.set_active_workspace(workspace, ui.ctx());
+                    ui.close();
+                }
+            }
+        });
+    }
+
+    fn draw_map_menu(&mut self, ui: &mut egui::Ui) {
+        menu_bar_button(ui, "地图", |ui| {
+            if ui.button("校验地图").clicked() {
+                self.validation_issues = self.validate_current_map();
+                self.show_validation_panel = true;
+                self.status = validation_summary(&self.validation_issues);
+                ui.close();
+            }
+            if ui.button("保存并运行当前地图").clicked() {
+                self.save_and_run_current_map();
+                ui.close();
+            }
+            if ui.button("重新加载 Codex").clicked() {
+                self.reload_codex_database();
+                ui.close();
+            }
+            ui.separator();
+            ui.label(format!(
+                "{} / {}x{} / {}px",
+                self.document.id,
+                self.document.width,
+                self.document.height,
+                self.document.tile_size
+            ));
+        });
+    }
+
+    fn draw_layer_menu(&mut self, ui: &mut egui::Ui) {
+        menu_bar_button(ui, "图层", |ui| {
+            for layer in LayerKind::ALL {
+                ui.horizontal(|ui| {
+                    if ui
+                        .selectable_value(
+                            &mut self.active_layer,
+                            layer,
+                            format!("{} ({})", layer.zh_label(), layer_shortcut(layer)),
+                        )
+                        .clicked()
+                    {
+                        ui.close();
+                    }
+                    let state = self.layer_states.entry(layer).or_default();
+                    ui.checkbox(&mut state.visible, "显示");
+                    ui.checkbox(&mut state.locked, "锁定");
+                });
+            }
+        });
+    }
+
+    fn draw_tool_menu(&mut self, ui: &mut egui::Ui) {
+        menu_bar_button(ui, "工具", |ui| {
+            for tool in ToolKind::ALL {
+                if ui
+                    .selectable_label(self.tool == tool, tool.menu_label())
+                    .clicked()
+                {
+                    self.set_tool(tool);
+                    ui.close();
+                }
+            }
+        });
+    }
+
+    fn draw_asset_menu(&mut self, ui: &mut egui::Ui) {
+        menu_bar_button(ui, "素材", |ui| {
+            let ctx = ui.ctx().clone();
+            if ui.button("添加素材").clicked() {
+                self.open_add_asset_dialog();
+                ui.close();
+            }
+            if ui
+                .add_enabled(
+                    self.selected_asset.is_some(),
+                    egui::Button::new("编辑当前素材"),
+                )
+                .clicked()
+            {
+                if let Some(asset_id) = self.selected_asset.clone() {
+                    self.open_edit_asset_dialog(&asset_id);
+                }
+                ui.close();
+            }
+            if ui
+                .add_enabled(
+                    self.selected_asset.is_some(),
+                    egui::Button::new("移除当前素材"),
+                )
+                .clicked()
+            {
+                self.delete_selected_asset_definition(&ctx);
+                ui.close();
+            }
+            if ui
+                .add_enabled(self.asset_db_dirty, egui::Button::new("保存素材库"))
+                .clicked()
+            {
+                self.save_asset_database();
+                ui.close();
+            }
+            if ui.button("未登记图片").clicked() {
+                self.show_unregistered_assets = true;
+                ui.close();
+            }
+            if ui.button("资产依赖报告").clicked() {
+                self.open_asset_dependency_report();
+                ui.close();
+            }
+            ui.separator();
+            if ui.button("重新扫描 Metadata").clicked() {
+                self.reload_asset_database(&ctx);
+                ui.close();
+            }
+            ui.label(format!(
+                "{} 个素材{}",
+                self.registry.assets().len(),
+                if self.asset_db_dirty { " *" } else { "" }
+            ));
+        });
+    }
+
+    fn draw_cutscene_menu(&mut self, ui: &mut egui::Ui) {
+        menu_bar_button(ui, "Cutscenes", |ui| {
+            if ui.button("新增").clicked() {
+                self.add_cutscene();
+                ui.close();
+            }
+            if ui
+                .add_enabled(
+                    self.selected_cutscene_index.is_some(),
+                    egui::Button::new("复制当前"),
+                )
+                .clicked()
+            {
+                self.duplicate_selected_cutscene();
+                ui.close();
+            }
+            if ui
+                .add_enabled(
+                    self.selected_cutscene_index.is_some(),
+                    egui::Button::new("删除当前"),
+                )
+                .clicked()
+            {
+                self.delete_selected_cutscene();
+                ui.close();
+            }
+            ui.separator();
+            if ui
+                .add_enabled(self.cutscene_db_dirty, egui::Button::new("保存"))
+                .clicked()
+            {
+                self.save_cutscene_database();
+                ui.close();
+            }
+            if ui.button("重新加载").clicked() {
+                self.reload_cutscene_database();
+                ui.close();
+            }
+            if ui.button("校验").clicked() {
+                self.validate_cutscene_database_command();
+                ui.close();
+            }
+        });
+    }
+
+    fn draw_event_menu(&mut self, ui: &mut egui::Ui) {
+        menu_bar_button(ui, "Events", |ui| {
+            if ui.button("新增").clicked() {
+                self.add_event();
+                ui.close();
+            }
+            if ui
+                .add_enabled(
+                    self.selected_event_index.is_some(),
+                    egui::Button::new("复制当前"),
+                )
+                .clicked()
+            {
+                self.duplicate_selected_event();
+                ui.close();
+            }
+            if ui
+                .add_enabled(
+                    self.selected_event_index.is_some(),
+                    egui::Button::new("删除当前"),
+                )
+                .clicked()
+            {
+                self.delete_selected_event();
+                ui.close();
+            }
+            ui.separator();
+            if ui
+                .add_enabled(self.event_db_dirty, egui::Button::new("保存"))
+                .clicked()
+            {
+                self.save_event_database();
+                ui.close();
+            }
+            if ui.button("重新加载").clicked() {
+                self.reload_event_database();
+                ui.close();
+            }
+            if ui.button("校验").clicked() {
+                self.validate_event_database_command();
+                ui.close();
+            }
+        });
+    }
+
+    fn draw_help_menu(&mut self, ui: &mut egui::Ui) {
+        menu_bar_button(ui, "帮助", |ui| match self.active_workspace {
+            EditorWorkspace::OverworldMap => {
+                ui.label("Cmd/Ctrl+S 保存当前地图");
+                ui.label("Cmd/Ctrl+Z 撤销 / Cmd/Ctrl+Shift+Z 重做");
+                ui.label("V/B/G/R/E/I/S/C/A/H/Z 切换工具");
+                ui.label("1-6 切换图层");
+                ui.label("空格拖拽平移，滚轮缩放");
+                ui.label("鼠标中键拖拽平移");
+                ui.label("区域工具：点击加点，双击或点回首点完成；Alt 自由点");
+            }
+            EditorWorkspace::Cutscenes => {
+                ui.label("Cmd/Ctrl+S 保存 Cutscenes");
+                ui.label("Cmd/Ctrl+N 新增 Cutscene");
+                ui.label("工作区切换在菜单栏的“工作区”里");
+            }
+            EditorWorkspace::Events => {
+                ui.label("Cmd/Ctrl+S 保存 Events");
+                ui.label("Cmd/Ctrl+N 新增 Event");
+                ui.label("工作区切换在菜单栏的“工作区”里");
+            }
+        });
     }
 
     fn draw_tool_bar(&mut self, ui: &mut egui::Ui) {
@@ -2300,18 +2607,6 @@ impl EditorApp {
                 ui.spacing_mut().button_padding = vec2(8.0, 0.0);
                 ui.spacing_mut().interact_size.y = 26.0;
                 ui.set_height(TOOLBAR_HEIGHT);
-                toolbar_label(ui, "工作区");
-                for workspace in EditorWorkspace::ALL {
-                    if ui
-                        .selectable_label(self.active_workspace == workspace, workspace.label())
-                        .clicked()
-                    {
-                        self.active_workspace = workspace;
-                        self.status = format!("工作区：{}", workspace.label());
-                    }
-                }
-
-                ui.separator();
                 if self.active_workspace == EditorWorkspace::Cutscenes {
                     toolbar_label(ui, "过场");
                     if toolbar_command_button(ui, "新增", 48.0).clicked() {
@@ -2334,6 +2629,33 @@ impl EditorApp {
                             .selected_cutscene_index
                             .and_then(|index| self.cutscene_database.cutscenes().get(index))
                             .map(|cutscene| cutscene.id.as_str())
+                            .unwrap_or("none");
+                        ui.label(egui::RichText::new(selected).color(THEME_MUTED_TEXT));
+                    });
+                    return;
+                }
+                if self.active_workspace == EditorWorkspace::Events {
+                    toolbar_label(ui, "事件");
+                    if toolbar_command_button(ui, "新增", 48.0).clicked() {
+                        self.add_event();
+                    }
+                    if toolbar_command_button(ui, "保存", 48.0)
+                        .on_hover_text("保存 events.ron")
+                        .clicked()
+                    {
+                        self.save_event_database();
+                    }
+                    if toolbar_command_button(ui, "重载", 48.0)
+                        .on_hover_text("从 events.ron 重新加载")
+                        .clicked()
+                    {
+                        self.reload_event_database();
+                    }
+                    toolbar_centered(ui, vec2(260.0, 26.0), |ui| {
+                        let selected = self
+                            .selected_event_index
+                            .and_then(|index| self.event_database.events().get(index))
+                            .map(|event| event.id.as_str())
                             .unwrap_or("none");
                         ui.label(egui::RichText::new(selected).color(THEME_MUTED_TEXT));
                     });
@@ -2571,6 +2893,13 @@ impl eframe::App for EditorApp {
         if self.active_workspace == EditorWorkspace::Cutscenes {
             egui::CentralPanel::default().show_inside(ui, |ui| self.draw_cutscene_workspace(ui));
             self.draw_dialogs(&ctx);
+            self.rebuild_native_menu_if_needed();
+            return;
+        }
+        if self.active_workspace == EditorWorkspace::Events {
+            egui::CentralPanel::default().show_inside(ui, |ui| self.draw_event_workspace(ui));
+            self.draw_dialogs(&ctx);
+            self.rebuild_native_menu_if_needed();
             return;
         }
         if self.show_left_sidebar {
@@ -2607,6 +2936,7 @@ impl eframe::App for EditorApp {
         }
         egui::CentralPanel::default().show_inside(ui, |ui| self.draw_canvas(ui, &ctx));
         self.draw_dialogs(&ctx);
+        self.rebuild_native_menu_if_needed();
     }
 }
 

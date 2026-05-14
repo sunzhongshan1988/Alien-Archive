@@ -1,13 +1,14 @@
 # Alien Archive Game Editor 改进路线
 
-最后更新：2026-05-10
+最后更新：2026-05-14
 
-本文记录 `Alien Archive Game Editor` 的编辑器路线。当前已经落地的是 `Overworld Map` 和 `Cutscenes` 工作区；后续 Dialogues、Events、Actors、Assets 等内容编辑也应该进入同一个 Game Editor 壳层。当前方向仍然是：
+本文记录 `Alien Archive Game Editor` 的编辑器路线。当前已经落地的是 `Overworld Map`、`Cutscenes` 和 `Events` 工作区；后续 Dialogues、Actors、Assets 等内容编辑也应该进入同一个 Game Editor 壳层。当前方向仍然是：
 
 - 编辑器代码放在 `crates/editor`
 - 资源索引放在 `assets/data/assets/overworld_assets.ron`
 - 地图保存为 `assets/data/maps/*.ron`
 - 过场保存为 `crates/content/data/cutscenes.ron`
+- 开放世界事件保存为 `crates/content/data/events.ron`
 - 运行时代码直接读取编辑器产出的 RON
 - 不把它扩成通用地图编辑器、通用引擎编辑器或 JSON 管线
 
@@ -46,6 +47,7 @@
 - 文件工作流：新建、打开、保存、另存、删除、还原、最近地图、自动保存、autosave 启动恢复/丢弃。
 - 地图格式：`MapDocument` 包含 `Ground` / `Decals` / `Objects` / `Entities` / `Zones` / `Collision` 六类层。
 - 过场格式：`CutsceneDatabase` 已有 Game Editor 内置工作区，可编辑 `FadeIn` / `FadeOut` / `Wait` / `TextPanel` / `SetFlag` 步骤，保存到 `crates/content/data/cutscenes.ron`。Cutscenes 工作区只负责源文本，不在同一界面同时维护多语言翻译。
+- 开放世界事件格式：`EventDatabase` 已有 Game Editor 内置工作区，可编辑 `WorldEventDefinition` 的 id、scope、conditions 和 actions，保存到 `crates/content/data/events.ron`。地图 Zone 只引用 `event_id`，运行时由 `event_system` 解释条件和动作。
 - 资产格式：`AssetDefinition` 已有 `kind`、`default_layer`、`default_size`、`footprint`、`anchor`、`snap`、`tags`、`entity_type`、`codex_id`。
 - 画布工具：选择、画笔、油漆桶、矩形、橡皮、吸管、碰撞、区域、平移、缩放。
 - 编辑能力：撤销/重做、复制/粘贴、duplicate、拖拽移动、框选、多选、翻转、旋转、重置、z-index。
@@ -331,6 +333,12 @@ Godot 的 TileSet property painting 对我们很有参考价值：
 地面底材优先做真实 `32x32` 单格 tile，不要把 128x128 或 4x4 footprint 的大图当基础地面拉伸使用。中心块需要有可读的像素纹理（砂粒、风纹、裂缝、矿点、遗迹槽线），但边缘不能有高亮外框或阴影；明显焦痕、晶体、道路边缘和大地貌分界应通过 transition tile、decals 或 Stamp 叠加完成。
 
 ## 实施记录
+
+### 2026-05-14
+
+- 开放世界 Events 第一版落地：新增 `content::EventDatabase` 和默认 `crates/content/data/events.ron`，事件支持 `OncePerZone` / `WorldOnce` / `Repeatable` scope、基础条件和 `PlayCutscene` / `SetFlag` / `AdvanceObjective` / `ShowNotice` actions。
+- 地图 Zone 新增 `event_id` 引用；Inspector 提供 Events 下拉和手动输入，地图校验会检查未知事件引用。运行时 `zone_system` 会在玩家进入带事件的 Zone 时调用 `event_system`，并在同一帧只取第一个成功播放的 cutscene。
+- Game Editor 新增 `Events` 工作区和菜单，读写 `crates/content/data/events.ron`，支持新增、复制、删除、保存、重载和校验事件；Cutscene 和 Objective/checkpoint 引用已接入下拉。
 
 ### 2026-05-10
 

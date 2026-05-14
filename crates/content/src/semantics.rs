@@ -64,6 +64,7 @@ pub enum ZoneTypeKind {
     Prompt,
     Objective,
     Checkpoint,
+    EventTrigger,
     Trigger,
 }
 
@@ -79,6 +80,7 @@ pub const ZONE_HAZARD: &str = "HazardZone";
 pub const ZONE_PROMPT: &str = "PromptZone";
 pub const ZONE_OBJECTIVE: &str = "ObjectiveZone";
 pub const ZONE_CHECKPOINT: &str = "Checkpoint";
+pub const ZONE_EVENT_TRIGGER: &str = "EventTrigger";
 pub const ZONE_TRIGGER: &str = "Trigger";
 
 pub const ZONE_DEF_SCAN_AREA: ZoneTypeDef =
@@ -125,6 +127,12 @@ pub const ZONE_DEF_OBJECTIVE: ZoneTypeDef =
     ZoneTypeDef::new(ZONE_OBJECTIVE, "目标区", ZoneTypeKind::Objective, true);
 pub const ZONE_DEF_CHECKPOINT: ZoneTypeDef =
     ZoneTypeDef::new(ZONE_CHECKPOINT, "检查点", ZoneTypeKind::Checkpoint, true);
+pub const ZONE_DEF_EVENT_TRIGGER: ZoneTypeDef = ZoneTypeDef::new(
+    ZONE_EVENT_TRIGGER,
+    "事件触发",
+    ZoneTypeKind::EventTrigger,
+    true,
+);
 pub const ZONE_DEF_TRIGGER: ZoneTypeDef =
     ZoneTypeDef::new(ZONE_TRIGGER, "触发区", ZoneTypeKind::Trigger, false);
 
@@ -141,6 +149,7 @@ pub const ZONE_TYPE_DEFS: &[ZoneTypeDef] = &[
     ZONE_DEF_PROMPT,
     ZONE_DEF_OBJECTIVE,
     ZONE_DEF_CHECKPOINT,
+    ZONE_DEF_EVENT_TRIGGER,
     ZONE_DEF_TRIGGER,
 ];
 

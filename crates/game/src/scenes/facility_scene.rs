@@ -228,7 +228,7 @@ impl Scene for FacilityScene {
             self.notice
                 .push_scan_complete(ctx.language, &codex_id, &ctx.codex_database);
         }
-        self.zones.update(
+        let zone_command = self.zones.update(
             ctx,
             &mut self.notice,
             &self.world,
@@ -236,6 +236,9 @@ impl Scene for FacilityScene {
             self.player.rect(),
             dt,
         );
+        if zone_command != SceneCommand::None {
+            return Ok(zone_command);
+        }
 
         let jump_requested = input.just_pressed(Button::Up)
             || (input.just_pressed(Button::Scan) && !self.scan.should_capture_scan_button());

@@ -1,6 +1,7 @@
 mod assets;
 mod codex;
 mod cutscenes;
+mod events;
 pub mod items;
 mod map;
 mod objectives;
@@ -15,6 +16,10 @@ pub use cutscenes::{
     CutsceneCompletion, CutsceneDatabase, CutsceneDefinition, CutsceneStep, CutsceneText,
     DEFAULT_CUTSCENE_DB_PATH,
 };
+pub use events::{
+    DEFAULT_EVENT_DB_PATH, EventAction, EventCondition, EventDatabase, EventScope, EventTrigger,
+    EventValidationIssue, EventValidationSeverity, WorldEventDefinition,
+};
 pub use map::{
     CollisionCell, CollisionZoneRule, DEFAULT_MAP_ID, DEFAULT_MAP_PATH, EntityInstance,
     HazardEffect, HazardRule, InstanceRect, LayerKind, MapDocument, MapLayers, ObjectInstance,
@@ -27,4 +32,5 @@ pub use objectives::{
 };
 pub use validation::{
     MapValidationIssue, MapValidationSeverity, validate_map, validate_map_with_codex,
+    validate_map_with_databases,
 };

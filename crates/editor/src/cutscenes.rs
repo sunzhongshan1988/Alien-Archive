@@ -188,6 +188,24 @@ impl EditorApp {
         self.status = format!("已删除过场 {}", removed.id);
     }
 
+    pub(crate) fn validate_cutscene_database_command(&mut self) {
+        let issues = self.cutscene_validation_issues();
+        let errors = issues
+            .iter()
+            .filter(|issue| issue.severity == CutsceneValidationSeverity::Error)
+            .count();
+        let warnings = issues
+            .iter()
+            .filter(|issue| issue.severity == CutsceneValidationSeverity::Warning)
+            .count();
+
+        self.status = if errors == 0 && warnings == 0 {
+            "Cutscenes 校验通过".to_owned()
+        } else {
+            format!("Cutscenes 校验：{errors} 个错误，{warnings} 个警告")
+        };
+    }
+
     pub(crate) fn draw_cutscene_workspace(&mut self, ui: &mut egui::Ui) {
         ui.spacing_mut().item_spacing = vec2(12.0, 8.0);
         let available = ui.available_size();

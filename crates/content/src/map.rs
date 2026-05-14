@@ -401,6 +401,8 @@ pub struct ZoneInstance {
     pub id: String,
     pub zone_type: String,
     pub points: Vec<[f32; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_id: Option<String>,
     #[serde(default, skip_serializing_if = "option_hazard_rule_is_none_or_empty")]
     pub hazard: Option<HazardRule>,
     #[serde(default, skip_serializing_if = "option_prompt_rule_is_none_or_empty")]

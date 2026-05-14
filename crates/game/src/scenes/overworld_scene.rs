@@ -222,7 +222,7 @@ impl Scene for OverworldScene {
             self.notice
                 .push_scan_complete(ctx.language, &codex_id, &ctx.codex_database);
         }
-        self.zones.update(
+        let zone_command = self.zones.update(
             ctx,
             &mut self.notice,
             &self.world,
@@ -230,6 +230,9 @@ impl Scene for OverworldScene {
             self.player.rect(),
             dt,
         );
+        if zone_command != SceneCommand::None {
+            return Ok(zone_command);
+        }
 
         let status = ctx.update_field_status(
             dt,

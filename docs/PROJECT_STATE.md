@@ -1,6 +1,6 @@
 # Alien Archive 项目状态
 
-最后更新：2026-05-10
+最后更新：2026-05-14
 
 ## 项目目标
 
@@ -84,6 +84,9 @@
 - `SaveData.cutscenes` 记录已播放 cutscene id 和流程 flag；触发入口通过 `GameContext::request_cutscene_once`，播放完成后由 `mark_cutscene_seen` / `mark_cutscene_flag` 请求保存。
 - 新建存档会先播放 `intro.new_game`，结束后切入 Overworld；读取已有存档仍按当前保存场景恢复。
 - Game Editor 已新增 `Cutscenes` 工作区，可直接编辑 `crates/content/data/cutscenes.ron`：新增/复制/删除 cutscene，编辑 `FadeIn` / `FadeOut` / `Wait` / `TextPanel` / `SetFlag` 步骤，切换 `Pop` 或 `SwitchScene` 完成行为，并在保存前检查空 id、重复 id、非法时长和空 flag。Cutscenes 工作区只编辑剧情源文本；多语言翻译和校对应进入独立 Language 工作区统一处理。
+- 新增 `content::EventDatabase` 和 `WorldEventDefinition`，默认数据位于 `crates/content/data/events.ron`，用于把“进入区域后播放过场、设置 flag、推进任务、显示提示”从地图 Zone 规则里抽出来。
+- 地图 Zone 新增可选 `event_id`，运行时由 `zone_system` 在玩家进入区域时交给 `event_system` 判断 scope、conditions 并执行 actions。第一版 scope 支持 `OncePerZone`、`WorldOnce` 和 `Repeatable`。
+- Game Editor 已新增 `Events` 工作区，可直接编辑 `crates/content/data/events.ron`：新增/复制/删除事件，编辑条件和动作，并提供 Cutscene / Objective / checkpoint 下拉引用。Zone Inspector 可以给区域选择或手动输入 `event_id`，地图校验会检查未知事件引用。
 
 4. 本地存档
 
@@ -234,17 +237,18 @@
 - 实现 `SaveData` 本地存档层，保存语言、场景、地图、玩家位置、Codex 解锁、已收集实体、交互历史、人物档案、背包和快捷栏。
 - `MapDocument` 支持实体/区域级 `unlock` 规则，运行时入口/出口可按扫描记录或背包物品放行。
 - `MapDocument` 支持实体/区域级 `transition` 目标，运行时入口/出口和 `MapTransition` 区域可按目标场景、地图、出生点切换。
-- `MapDocument` 支持区域级 `hazard` / `prompt` / `objective` 规则，运行时可用地图 Zone 驱动危险环境、一次性提示和任务推进。
+- `MapDocument` 支持区域级 `hazard` / `prompt` / `objective` 规则和轻量 `event_id` 引用，运行时可用地图 Zone 驱动危险环境、一次性提示、任务推进和开放世界事件。
 - 运行时 `Map::load` 支持新的编辑器 RON 地图格式，并保留旧版 legacy RON 地图解析。
 - `World::solid_rects()` 提供 tile/entity/collision 碰撞矩形。
 - `World::codex_entities()` 提供扫描候选实体。
 - 运行时启动时加载 `content::CodexDatabase`，供扫描 UI 和游戏内 Codex 菜单共同使用。
 - 运行时启动时加载 `objectives::ObjectiveDatabase`，供区域脚本推进和游戏内日志页目标概览共同使用。
+- 运行时启动时加载 `content::EventDatabase`，供 Zone `event_id` 触发开放世界事件。
 - 运行时启动时加载 `SaveData`，用于恢复语言、Codex 解锁、背包、人物档案和上次所在地图位置。
 - `SaveData` 已支持固定存档槽路径，主菜单可以读取、新建、删除并刷新槽位摘要。
-- `WorldSave` 已记录一次性区域触发状态，用于 `PromptZone` 这类跨会话不重复事件。
+- `WorldSave` 已记录一次性区域触发状态，用于 `PromptZone` 和 `OncePerZone` 开放世界事件这类跨会话不重复触发。
 - 运行时已接入人物状态更新：体力、负重、外骨骼、生命和环境抗性会受移动、跳跃、背包和场景环境影响并保存。
-- `crates/editor` 已作为 Alien Archive Game Editor 入口存在，当前落地工作区是 Overworld Map 和 Cutscenes，分别读写 `assets/data/maps/*.ron` 与 `crates/content/data/cutscenes.ron`。
+- `crates/editor` 已作为 Alien Archive Game Editor 入口存在，当前落地工作区是 Overworld Map、Cutscenes 和 Events，分别读写 `assets/data/maps/*.ron`、`crates/content/data/cutscenes.ron` 与 `crates/content/data/events.ron`。
 - 编辑器菜单和工具栏支持“保存并运行当前地图”，用于快速验证当前 RON 和出生点。
 - `SceneStack` 已接入全局 Debug Overlay，可在运行时检查场景、地图、扫描目标、存档、人物状态和世界调试几何。
 - 游戏内菜单 `日志` 页会读取 `SaveData.objectives` 和 `SaveData.activity_log`，展示真实目标进度以及最近扫描、拾取、解锁和状态变化；新写入的日志事件文案已从本地化资产生成。

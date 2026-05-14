@@ -1,17 +1,18 @@
 use std::collections::BTreeSet;
 
 use content::semantics;
-use runtime::Rect;
+use runtime::{Rect, SceneCommand};
 
 use crate::world::{MapHazardRule, MapObjectiveRule, MapPromptRule, MapZone, World};
 
 use super::{
-    GameContext, Language, notice_system::NoticeState, profile_meter_label,
+    GameContext, Language, SceneId, notice_system::NoticeState, profile_meter_label,
     world_runtime::zone_progress_key,
 };
 
 #[derive(Default)]
 pub(super) struct ZoneRuntimeState {
+    events: ZoneActivationTracker,
     hazards: ZoneActivationTracker,
     prompts: ZoneActivationTracker,
     objectives: ZoneActivationTracker,
@@ -26,8 +27,9 @@ impl ZoneRuntimeState {
         map_path: &str,
         player_rect: Rect,
         dt: f32,
-    ) {
+    ) -> SceneCommand<SceneId> {
         self.begin_frame();
+        let mut command = SceneCommand::None;
         {
             let mut executor = ZoneRuleExecutor {
                 ctx,
@@ -37,6 +39,17 @@ impl ZoneRuntimeState {
             };
 
             for zone in world.overlapping_zones(player_rect) {
+                if let Some(event_id) = zone.event_id.as_deref()
+                    && !event_id.trim().is_empty()
+                {
+                    let presence = self.events.track(map_path, &zone.id);
+                    if presence.is_entered()
+                        && let Some(event_command) = executor.apply_event(zone, event_id)
+                    {
+                        command = event_command;
+                        break;
+                    }
+                }
                 match zone.zone_type.as_str() {
                     semantics::ZONE_HAZARD => {
                         if let Some(hazard) = effectful_hazard(zone) {
@@ -61,15 +74,18 @@ impl ZoneRuntimeState {
             }
         }
         self.finish_frame();
+        command
     }
 
     fn begin_frame(&mut self) {
+        self.events.begin_frame();
         self.hazards.begin_frame();
         self.prompts.begin_frame();
         self.objectives.begin_frame();
     }
 
     fn finish_frame(&mut self) {
+        self.events.finish_frame();
         self.hazards.finish_frame();
         self.prompts.finish_frame();
         self.objectives.finish_frame();
@@ -122,6 +138,12 @@ struct ZoneRuleExecutor<'a> {
 }
 
 impl ZoneRuleExecutor<'_> {
+    fn apply_event(&mut self, zone: &MapZone, event_id: &str) -> Option<SceneCommand<SceneId>> {
+        self.ctx
+            .execute_world_event(event_id, self.map_path, &zone.id, self.notice)
+            .scene_command()
+    }
+
     fn apply_hazard(&mut self, zone: &MapZone, hazard: &MapHazardRule, presence: ZonePresence) {
         if presence.is_entered() {
             let message = hazard_message(self.ctx.language, &zone.id, hazard);
@@ -294,6 +316,7 @@ mod tests {
         MapZone {
             id: "prompt".to_owned(),
             zone_type: "PromptZone".to_owned(),
+            event_id: None,
             points: Vec::new(),
             bounds: Rect::new(Vec2::ZERO, Vec2::new(1.0, 1.0)),
             hazard: None,

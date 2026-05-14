@@ -849,6 +849,7 @@ impl Map {
                 MapZone {
                     id: zone.id,
                     zone_type: zone.zone_type,
+                    event_id: clean_optional_string(zone.event_id),
                     points,
                     bounds,
                     hazard: MapHazardRule::from_content(zone.hazard),
@@ -1601,6 +1602,7 @@ pub struct MapEntity {
 pub struct MapZone {
     pub id: String,
     pub zone_type: String,
+    pub event_id: Option<String>,
     pub points: Vec<Vec2>,
     pub bounds: Rect,
     pub hazard: Option<MapHazardRule>,
@@ -2538,6 +2540,7 @@ mod tests {
         let zone = EditorZoneInstance {
             id: "mesa_wall".to_owned(),
             zone_type: "CollisionArea".to_owned(),
+            event_id: None,
             points: vec![[1.0, 1.0], [3.0, 1.0], [3.0, 3.0], [1.0, 3.0]],
             hazard: None,
             prompt: None,
@@ -2565,6 +2568,7 @@ mod tests {
         let zone = EditorZoneInstance {
             id: "cliff_edge".to_owned(),
             zone_type: "CollisionLine".to_owned(),
+            event_id: None,
             points: vec![[1.0, 1.0], [3.0, 1.0]],
             hazard: None,
             prompt: None,
@@ -2664,6 +2668,7 @@ mod tests {
             zones: vec![MapZone {
                 id: "ramp_surface".to_owned(),
                 zone_type: "WalkSurface".to_owned(),
+                event_id: None,
                 points: vec![
                     Vec2::new(0.0, 0.0),
                     Vec2::new(10.0, 0.0),
@@ -2735,6 +2740,7 @@ mod tests {
             zones: vec![MapZone {
                 id: "exit_zone".to_owned(),
                 zone_type: "MapTransition".to_owned(),
+                event_id: None,
                 points: vec![
                     Vec2::new(60.0, 60.0),
                     Vec2::new(90.0, 60.0),
@@ -2998,6 +3004,7 @@ mod tests {
             EditorZoneInstance {
                 id: "ground_wall".to_owned(),
                 zone_type: "CollisionArea".to_owned(),
+                event_id: None,
                 points: vec![[1.0, 1.0], [3.0, 1.0], [3.0, 3.0], [1.0, 3.0]],
                 hazard: None,
                 prompt: None,
@@ -3011,6 +3018,7 @@ mod tests {
             EditorZoneInstance {
                 id: "crystal_base".to_owned(),
                 zone_type: "CollisionArea".to_owned(),
+                event_id: None,
                 points: vec![[4.0, 1.0], [6.0, 1.0], [6.0, 3.0], [4.0, 3.0]],
                 hazard: None,
                 prompt: None,
@@ -3256,6 +3264,7 @@ mod tests {
         MapZone {
             id: id.to_owned(),
             zone_type: "WalkSurface".to_owned(),
+            event_id: None,
             points: vec![
                 origin,
                 Vec2::new(origin.x + size.x, origin.y),

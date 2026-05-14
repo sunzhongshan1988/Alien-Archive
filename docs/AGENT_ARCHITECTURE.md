@@ -50,6 +50,7 @@ assets/data/assets/overworld_assets.ron        asset database used by game/edito
 assets/data/codex/overworld_codex.ron          codex database loaded by game/editor
 assets/data/ui/localization.ron                runtime UI localization dictionary
 crates/content/data/cutscenes.ron              bundled cutscene/sequence database
+crates/content/data/events.ron                 open-world event database
 crates/content/data/items.ron                  item database fallback/source
 crates/content/data/objectives.ron             objective database fallback/source
 saves/profile_01.ron                           default save file
@@ -175,8 +176,11 @@ scan_system.rs
 cutscene_scene.rs
   fullscreen/overlay cutscene playback; consumes pending cutscenes from GameContext and marks seen/flags
 
+event_system.rs
+  open-world event execution for zone event_id triggers; checks flags/codex/objectives and runs cutscene/objective/notice actions
+
 zone_system.rs
-  hazard/prompt/objective zone execution and once-per-map scoped progress
+  event/hazard/prompt/objective zone execution and once-per-map scoped progress
 
 notice_system.rs
   transient in-world notices
@@ -248,6 +252,9 @@ codex.rs
 cutscenes.rs
   CutsceneDatabase, CutsceneDefinition, CutsceneStep, localized text, completion action
 
+events.rs
+  EventDatabase, WorldEventDefinition, event scope/trigger/conditions/actions
+
 items.rs
   ItemDatabase, item definitions, consumable effects, equipment module checks
 
@@ -278,6 +285,9 @@ assets/
 cutscenes.rs
   Cutscenes workspace UI; edits crates/content/data/cutscenes.ron through content::CutsceneDatabase; author source text only, not per-language translation fields
 
+events.rs
+  Events workspace UI; edits crates/content/data/events.ron through content::EventDatabase and links events to cutscenes/objectives
+
 canvas/
   editing operations and canvas rendering
 
@@ -291,7 +301,7 @@ inspector.rs, panels.rs, dialogs.rs
   editor side panels and modal flows
 ```
 
-Editor scope rule: this is the Alien Archive Game Editor. The shipped workspaces are Overworld Map and Cutscenes. New authoring surfaces such as dialogues, events, actors, and assets should live under the same game editor shell when they share runtime content. Do not turn it into a generic engine editor; prefer game-readback-compatible RON changes over schema-only UI.
+Editor scope rule: this is the Alien Archive Game Editor. The shipped workspaces are Overworld Map, Cutscenes, and Events. New authoring surfaces such as dialogues, actors, and assets should live under the same game editor shell when they share runtime content. Do not turn it into a generic engine editor; prefer game-readback-compatible RON changes over schema-only UI.
 
 ## Change Routing
 
@@ -313,6 +323,9 @@ Need new objective behavior
 
 Need new cutscene/flow sequence
   content/src/cutscenes.rs or crates/content/data/cutscenes.ron -> editor/src/cutscenes.rs for authoring -> GameContext::request_cutscene_once -> SceneCommand::Push(SceneId::Cutscene) -> cutscene_scene.rs
+
+Need new open-world event trigger/action
+  content/src/events.rs or crates/content/data/events.ron -> editor/src/events.rs for authoring -> map ZoneInstance.event_id -> zone_system.rs -> event_system.rs -> GameContext save/objective/cutscene helpers
 
 Need translation/localization editing
   Language workspace should own multi-language translation and proofreading for all authored text; do not add parallel English/Chinese text editors inside feature workspaces such as Cutscenes
@@ -404,10 +417,12 @@ Useful scoped tests:
 ```powershell
 cargo test -p alien_archive game_menu
 cargo test -p alien_archive cutscene
+cargo test -p alien_archive event_system
 cargo test -p alien_archive scan_system
 cargo test -p alien_archive zone_system
 cargo test -p alien_archive quick_items
 cargo test -p alien_archive_content cutscene
+cargo test -p alien_archive_content event
 cargo test -p alien_archive_content validation
 cargo test -p editor
 cargo check -p editor

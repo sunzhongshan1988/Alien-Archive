@@ -347,6 +347,7 @@ impl EditorApp {
         let codex_id_options = self.codex_id_options();
         let item_id_options = self.item_id_options();
         let map_path_options = self.map_path_options();
+        let event_id_options = self.event_id_options();
         let mut next = self.document.clone();
         let mut changed = false;
         let mut next_selection = selection.clone();
@@ -537,6 +538,19 @@ impl EditorApp {
                 {
                     changed |= labeled_text_edit(ui, "区域 ID", &mut zone.id);
                     changed |= labeled_text_edit(ui, "区域类型", &mut zone.zone_type);
+                    let mut event_id = zone.event_id.clone().unwrap_or_default();
+                    let event_text_changed = labeled_text_edit(ui, "Event", &mut event_id);
+                    let event_option_changed = property_options(
+                        ui,
+                        "Event 选项",
+                        "zone_event_id",
+                        &mut event_id,
+                        &event_id_options,
+                    );
+                    if event_text_changed || event_option_changed {
+                        set_optional_string(&mut zone.event_id, event_id);
+                        changed = true;
+                    }
                     changed |= draw_zone_type_preset_checkboxes(ui, zone);
 
                     if zone.zone_type == content::semantics::ZONE_WALK_SURFACE
@@ -925,6 +939,7 @@ fn apply_zone_type_preset(
         content::semantics::ZoneTypeKind::ScanArea
         | content::semantics::ZoneTypeKind::NoSpawn
         | content::semantics::ZoneTypeKind::CameraBounds
+        | content::semantics::ZoneTypeKind::EventTrigger
         | content::semantics::ZoneTypeKind::Trigger => {}
     }
 
@@ -1185,6 +1200,7 @@ mod tests {
             id: "zone_test".to_owned(),
             zone_type: zone_type.to_owned(),
             points: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]],
+            event_id: None,
             hazard: None,
             prompt: None,
             objective: None,

@@ -7,7 +7,8 @@ mod world;
 
 use anyhow::{Result, anyhow, bail};
 use content::{
-    CodexDatabase, CutsceneDatabase, DEFAULT_CODEX_DB_PATH, DEFAULT_CUTSCENE_DB_PATH, semantics,
+    CodexDatabase, CutsceneDatabase, DEFAULT_CODEX_DB_PATH, DEFAULT_CUTSCENE_DB_PATH,
+    DEFAULT_EVENT_DB_PATH, EventDatabase, semantics,
 };
 use runtime::{Camera2d, Game, InputState, Renderer, run};
 use save::{DEFAULT_SAVE_PATH, SaveData};
@@ -122,6 +123,7 @@ impl AlienArchiveApp {
         let save_data = SaveData::load_or_default(&save_path);
         let mut context = GameContext::from_save(save_path, save_data, load_codex_database());
         context.cutscene_database = load_cutscene_database();
+        context.event_database = load_event_database();
 
         let scenes = if let Some(scene_id) = options.scene {
             apply_launch_options_to_context(&mut context, scene_id, options);
@@ -178,6 +180,16 @@ fn load_cutscene_database() -> CutsceneDatabase {
         Err(error) => {
             eprintln!("cutscene database load failed: {error:?}");
             CutsceneDatabase::default()
+        }
+    }
+}
+
+fn load_event_database() -> EventDatabase {
+    match EventDatabase::load(std::path::Path::new(DEFAULT_EVENT_DB_PATH)) {
+        Ok(database) => database,
+        Err(error) => {
+            eprintln!("event database load failed: {error:?}");
+            EventDatabase::default()
         }
     }
 }
